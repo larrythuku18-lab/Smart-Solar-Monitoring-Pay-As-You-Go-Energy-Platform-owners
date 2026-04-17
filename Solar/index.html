@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Solar Pay-As-You-Go Dashboard</title>
+  <style>
+    :root {
+      --bg: #071b2b;
+      --surface: #0e334e;
+      --surface-2: #133f64;
+      --text: #f8fafc;
+      --muted: #a8c2d8;
+      --accent: #28d9a5;
+      --accent-2: #f7c948;
+      --danger: #ff6464;
+      --success: #22d173;
+      font-family: Inter, system-ui, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #183456 0%, #071b2b 45%, #020b14 100%);
+      color: var(--text);
+    }
+
+    .app {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 24px 18px 40px;
+    }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: clamp(1.8rem, 2.5vw, 2.7rem);
+      letter-spacing: -0.03em;
+    }
+
+    header p {
+      margin: 8px 0 0;
+      max-width: 560px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.08);
+      font-weight: 600;
+    }
+
+    .status-pill span {
+      width: 10px;
+      height: 10px;
+      display: block;
+      border-radius: 999px;
+    }
+
+    .status-online span { background: #22d173; }
+    .status-offline span { background: #ff6464; }
+
+    .summary-grid {
+      display: grid;
+      gap: 16px;
+      margin-top: 24px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+
+    .card {
+      padding: 20px;
+      border-radius: 24px;
+      background: rgba(16, 46, 67, 0.95);
+      border: 1px solid rgba(255,255,255,0.06);
+      box-shadow: 0 24px 80px rgba(0,0,0,0.18);
+    }
+
+    .card h2 {
+      margin: 0 0 14px;
+      font-size: 1rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    .metric {
+      font-size: clamp(2rem, 3.4vw, 3.2rem);
+      margin: 0;
+      line-height: 1;
+    }
+
+    .metric small {
+      color: var(--muted);
+      display: block;
+      margin-top: 6px;
+      font-size: 0.92rem;
+    }
+
+    .progress-ring {
+      position: relative;
+      width: 100%;
+      min-height: 110px;
+      display: grid;
+      place-items: center;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      overflow: hidden;
+      margin-top: 14px;
+    }
+
+    .progress-bar span {
+      display: block;
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent), #18947a);
+      width: 0;
+      transition: width 0.4s ease;
+    }
+
+    .panel {
+      display: grid;
+      gap: 18px;
+      margin-top: 26px;
+    }
+
+    .panel .section {
+      padding: 22px;
+      border-radius: 24px;
+      background: rgba(12, 27, 42, 0.92);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .panel h3 {
+      margin: 0 0 16px;
+      font-size: 1.1rem;
+      letter-spacing: 0.02em;
+      color: var(--text);
+    }
+
+    .trend-chart {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 6px;
+      align-items: end;
+      min-height: 140px;
+      padding: 18px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .trend-bar {
+      width: 100%;
+      border-radius: 12px 12px 0 0;
+      background: linear-gradient(180deg, var(--accent), rgba(40,217,165,0.35));
+      transition: height 0.3s ease;
+      position: relative;
+    }
+
+    .trend-bar span {
+      position: absolute;
+      top: -22px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.75rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .sim-control .secondary-btn {
+      min-width: 150px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    button,
+    .secondary-btn {
+      border: none;
+      border-radius: 14px;
+      padding: 14px 18px;
+      font-size: 0.98rem;
+      font-weight: 700;
+      cursor: pointer;
+      min-width: 170px;
+      will-change: transform, filter, box-shadow;
+      transition: transform 0.2s ease, opacity 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    button:hover,
+    .secondary-btn:hover {
+      transform: translateY(-2px);
+    }
+
+    button:active,
+    .secondary-btn:active {
+      transform: translateY(0) scale(0.98);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+      filter: grayscale(0.4);
+    }
+
+    .primary-btn {
+      background: linear-gradient(135deg, var(--accent), #06b084);
+      color: #021914;
+      box-shadow: 0 16px 32px rgba(2, 25, 27, 0.3);
+    }
+
+    .secondary-btn {
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+    }
+
+    .alert-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      color: #fff;
+      background: rgba(255, 100, 100, 0.15);
+      border: 1px solid rgba(255,100,100,0.25);
+      font-size: 0.96rem;
+    }
+
+    .alert-chip span {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #ff6464;
+      display: block;
+    }
+
+    .events-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 12px;
+    }
+
+    .event-item {
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.06);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      font-size: 0.96rem;
+    }
+
+    .event-item time {
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .trend-chart {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      align-items: end;
+      min-height: 150px;
+      padding: 16px;
+      background: rgba(255,255,255,0.04);
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .trend-bar {
+      width: 100%;
+      border-radius: 12px 12px 0 0;
+      background: linear-gradient(180deg, var(--accent), rgba(40,217,165,0.22));
+      transition: height 0.35s ease, background 0.35s ease;
+      position: relative;
+    }
+
+    .trend-bar span {
+      position: absolute;
+      top: -20px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.72rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .note-box {
+      border-radius: 22px;
+      padding: 20px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      color: var(--muted);
+      display: grid;
+      gap: 10px;
+    }
+
+    .note-box strong {
+      color: var(--text);
+    }
+
+    .small-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+
+    @media (max-width: 720px) {
+      .controls {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>Solar Pay-As-You-Go Dashboard</h1>
+        <p>Monitor battery health, energy generation, payments, and remote power control from one mobile-friendly dashboard.</p>
+      </div>
+      <span id="networkStatus" class="status-pill status-online"><span></span><strong>Online</strong></span>
+    </header>
+
+    <section class="card" style="margin-top: 20px;">
+      <h2>Platform Overview</h2>
+      <p style="margin: 0.6rem 0 0; color: var(--muted); line-height: 1.65;">
+        Interactive solar pay-as-you-go monitoring made for rural and off-grid communities.
+        Track battery status, energy flows, payments, and remote control actions in real time for a field-ready experience.
+      </p>
+      <div class="note-box" style="margin-top: 16px; padding: 18px; background: rgba(40,217,165,0.08); border-color: rgba(40,217,165,0.2);">
+        <strong>Next step:</strong> use the simulator controls below to generate live energy events and make the system feel truly interactive.
+      </div>
+    </section>
+
+    <div class="summary-grid">
+      <article class="card">
+        <h2>Battery Level</h2>
+        <p class="metric"><span id="batteryValue">0</span>%</p>
+        <div class="progress-bar"><span id="batteryBar"></span></div>
+      </article>
+
+      <article class="card">
+        <h2>Current Generation</h2>
+        <p class="metric"><span id="generationValue">0</span> W</p>
+        <small>Solar panel output</small>
+      </article>
+
+      <article class="card">
+        <h2>Current Consumption</h2>
+        <p class="metric"><span id="consumptionValue">0</span> W</p>
+        <small>Household usage</small>
+      </article>
+
+      <article class="card">
+        <h2>Payment Due</h2>
+        <p class="metric">KES <span id="dueValue">0.00</span></p>
+        <small>Requires payment to keep power active</small>
+      </article>
+
+      <article class="card">
+        <h2>Relay Status</h2>
+        <p class="metric" id="relayStatus">Enabled</p>
+        <small>Remote power control</small>
+      </article>
+
+      <article class="card">
+        <h2>Wallet Balance</h2>
+        <p class="metric">KES <span id="balanceValue">0.00</span></p>
+        <small>Simulated user balance</small>
+      </article>
+
+      <article class="card">
+        <h2>Signal Strength</h2>
+        <p class="metric"><span id="signalValue">0</span>%</p>
+        <small>GSM/WiFi connection level</small>
+      </article>
+    </div>
+
+    <div class="panel">
+      <section class="section">
+        <h3>Control Center</h3>
+        <div class="controls">
+          <button id="payButton" class="primary-btn">Send STK Push</button>
+          <button id="confirmPayment" class="secondary-btn">Confirm Payment</button>
+          <button id="togglePower" class="secondary-btn">Disable Power</button>
+        </div>
+        <div class="controls">
+          <button id="peakSun" class="secondary-btn">Simulate Peak Sun</button>
+          <button id="heavyLoad" class="secondary-btn">Simulate Heavy Load</button>
+          <button id="topUpWallet" class="secondary-btn">Top Up Wallet</button>
+          <button id="generateDue" class="secondary-btn">Generate New Bill</button>
+        </div>
+        <div class="small-grid">
+          <div class="note-box">
+            <strong>Low network support</strong>
+            <p>This dashboard simulates a real-world solar pay-as-you-go system with offline detection and SMS fallback.</p>
+          </div>
+          <div class="note-box">
+            <strong>SMS fallback</strong>
+            <p>If data is unavailable, use a local SMS service or USSD gateway for payment reminders and device commands.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h3>Alerts & Event Log</h3>
+        <div id="alertContainer" class="alert-chip" hidden><span></span><span id="alertText">Alert</span></div>
+        <ul id="eventsList" class="events-list"></ul>
+      </section>
+
+      <section class="section">
+        <h3>Live Trends</h3>
+        <div id="trendChart" class="trend-chart"></div>
+      </section>
+    </div>
+  </div>
+
+  <script src="index.js"></script>
+</body>
+</html>
