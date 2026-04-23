@@ -159,18 +159,6 @@
       color: var(--text);
     }
 
-    .trend-chart {
-      display: grid;
-      grid-template-columns: repeat(12, minmax(0, 1fr));
-      gap: 6px;
-      align-items: end;
-      min-height: 140px;
-      padding: 18px;
-      background: rgba(255,255,255,0.03);
-      border-radius: 18px;
-      border: 1px solid rgba(255,255,255,0.08);
-    }
-
     .trend-bar {
       width: 100%;
       border-radius: 12px 12px 0 0;
@@ -247,8 +235,8 @@
       gap: 10px;
       padding: 10px 14px;
       border-radius: 999px;
-      color: #fff;
-      background: rgba(255, 100, 100, 0.15);
+      color: #000;
+      background: rgba(255, 100, 100, 0.25);
       border: 1px solid rgba(255,100,100,0.25);
       font-size: 0.96rem;
     }
@@ -298,7 +286,7 @@
       border: 1px solid rgba(255,255,255,0.08);
     }
 
-    .trend-bar {
+    .trend-bars {
       width: 100%;
       border-radius: 12px 12px 0 0;
       background: linear-gradient(180deg, var(--accent), rgba(40,217,165,0.22));
@@ -306,7 +294,7 @@
       position: relative;
     }
 
-    .trend-bar span {
+    .trend-bars span {
       position: absolute;
       top: -20px;
       left: 50%;
@@ -334,6 +322,176 @@
       display: grid;
       gap: 12px;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+
+    /* ===== AI COMPONENT STYLES ===== */
+    .forecast-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+    }
+
+    .forecast-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(40,217,165,0.2);
+    }
+
+    .forecast-hour {
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .forecast-gen {
+      width: 100%;
+      min-height: 50px;
+      background: linear-gradient(180deg, var(--accent), rgba(40,217,165,0.3));
+      border-radius: 8px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--accent-2);
+    }
+
+    .forecast-label {
+      font-size: 0.75rem;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .alert-box {
+      padding: 16px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.04);
+      border-left: 4px solid;
+      margin-bottom: 12px;
+    }
+
+    .alert-box.severity-high {
+      background: rgba(255,100,100,0.1);
+      border-color: #ff6464;
+    }
+
+    .alert-box.severity-medium {
+      background: rgba(247,201,72,0.1);
+      border-color: var(--accent-2);
+    }
+
+    .alert-box.severity-low {
+      background: rgba(40,217,165,0.08);
+      border-color: var(--accent);
+    }
+
+    .alert-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .alert-type {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .severity-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.1);
+      text-transform: uppercase;
+    }
+
+    .alert-box p {
+      margin: 8px 0;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+
+    .alert-footer {
+      display: flex;
+      gap: 12px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 10px;
+    }
+
+    .recommendation-box {
+      padding: 16px;
+      border-radius: 14px;
+      background: rgba(40,217,165,0.08);
+      border: 1px solid rgba(40,217,165,0.2);
+      margin-bottom: 12px;
+    }
+
+    .rec-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .rec-type {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--accent);
+    }
+
+    .priority-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+
+    .priority-badge.priority-critical {
+      background: rgba(255,100,100,0.2);
+      color: #ff6464;
+    }
+
+    .priority-badge.priority-high {
+      background: rgba(247,201,72,0.2);
+      color: var(--accent-2);
+    }
+
+    .priority-badge.priority-medium {
+      background: rgba(255,255,255,0.1);
+      color: var(--text);
+    }
+
+    .priority-badge.priority-low {
+      background: rgba(40,217,165,0.2);
+      color: var(--accent);
+    }
+
+    .recommendation-box p {
+      margin: 6px 0;
+      font-size: 0.95rem;
+    }
+
+    .rec-time {
+      color: var(--accent-2);
+      font-weight: 600;
+    }
+
+    .rec-saving {
+      color: var(--accent);
+      font-weight: 600;
     }
 
     @media (max-width: 720px) {
@@ -436,13 +594,32 @@
 
       <section class="section">
         <h3>Alerts & Event Log</h3>
-        <div id="alertContainer" class="alert-chip" hidden><span></span><span id="alertText">Alert</span></div>
+        <div id="alertContainer" class="alert-chip" hidden><span></span>
+          <span id="alertText">Alert</span></div>
         <ul id="eventsList" class="events-list"></ul>
       </section>
 
       <section class="section">
         <h3>Live Trends</h3>
         <div id="trendChart" class="trend-chart"></div>
+      </section>
+
+      <section class="section">
+        <h3>🤖 Energy Forecast (AI Predictions)</h3>
+        <p style="color: var(--muted); font-size: 0.9rem; margin: 0 0 12px;">Next 6 hours of predicted generation, consumption, and surplus/deficit</p>
+        <div id="forecastChart" class="forecast-grid"></div>
+      </section>
+
+      <section class="section">
+        <h3>🔧 Predictive Maintenance Alerts</h3>
+        <p style="color: var(--muted); font-size: 0.9rem; margin: 0 0 12px;">AI-detected hardware anomalies and early fault warnings</p>
+        <div id="maintenanceSection"></div>
+      </section>
+
+      <section class="section">
+        <h3>💡 Usage Optimization Recommendations</h3>
+        <p style="color: var(--muted); font-size: 0.9rem; margin: 0 0 12px;">AI-powered load shifting and demand forecasting for rural contexts</p>
+        <div id="optimizationSection"></div>
       </section>
     </div>
   </div>

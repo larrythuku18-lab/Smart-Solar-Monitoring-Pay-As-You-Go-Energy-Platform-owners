@@ -10,7 +10,12 @@ const state = {
   signalStrength: 78,
   alerts: [],
   events: [],
-  trends: Array.from({ length: 12 }, () => 20 + Math.round(Math.random() * 60))
+  trends: Array.from({ length: 12 }, () => 20 + Math.round(Math.random() * 60)),
+  // AI predictions
+  forecast: [],
+  maintenanceAlerts: [],
+  fraudFlags: [],
+  optimization: []
 };
 
 const elements = {
@@ -33,13 +38,18 @@ const elements = {
   generateDue: document.getElementById('generateDue'),
   alertContainer: document.getElementById('alertContainer'),
   alertText: document.getElementById('alertText'),
-  eventsList: document.getElementById('eventsList')
+  eventsList: document.getElementById('eventsList'),
+  // AI elements
+  forecastChart: document.getElementById('forecastChart'),
+  maintenanceSection: document.getElementById('maintenanceSection'),
+  optimizationSection: document.getElementById('optimizationSection'),
+  aiInsightsTab: document.getElementById('aiInsightsTab')
 };
 
 function addEvent(message) {
   const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  state.events.unshift({ message, timestamp });
-  state.events = state.events.slice(0, 10);
+  state.events.push({ message, timestamp });
+  state.events = state.events.slice(-10);
   renderEvents();
 }
 
@@ -84,6 +94,79 @@ function renderEvents() {
     .join('');
 }
 
+// ============ AI RENDERING FUNCTIONS ============
+
+function renderForecast() {
+  if (!state.forecast || state.forecast.length === 0) {
+    if (elements.forecastChart) elements.forecastChart.innerHTML = '<p style="color: var(--muted);">Collecting forecast data...</p>';
+    return;
+  }
+  
+  const html = state.forecast.slice(0, 6).map((f, idx) => `
+    <div class="forecast-item">
+      <div class="forecast-hour">+${f.hour}h</div>
+      <div class="forecast-gen" style="height: ${Math.min(100, (f.predictedGeneration / 300) * 100)}%">${f.predictedGeneration}W</div>
+      <div class="forecast-label">${f.surplus > 0 ? '✅ Surplus' : '⚠️ Deficit'}</div>
+    </div>
+  `).join('');
+  
+  if (elements.forecastChart) {
+    elements.forecastChart.innerHTML = `<div class="forecast-grid">${html}</div>`;
+  }
+}
+
+function renderMaintenanceAlerts() {
+  if (!state.maintenanceAlerts || state.maintenanceAlerts.length === 0) {
+    if (elements.maintenanceSection) {
+      elements.maintenanceSection.innerHTML = '<p style="color: var(--success);">✅ All systems nominal</p>';
+    }
+    return;
+  }
+  
+  const html = state.maintenanceAlerts.map(alert => `
+    <div class="alert-box severity-${alert.severity}">
+      <div class="alert-header">
+        <span class="alert-type">${alert.type.replace(/_/g, ' ').toUpperCase()}</span>
+        <span class="severity-badge">${alert.severity}</span>
+      </div>
+      <p>${alert.message}</p>
+      <div class="alert-footer">
+        <small>Device: ${alert.device}</small>
+        <small>Action: ${alert.recommendation}</small>
+      </div>
+    </div>
+  `).join('');
+  
+  if (elements.maintenanceSection) {
+    elements.maintenanceSection.innerHTML = html;
+  }
+}
+
+function renderOptimization() {
+  if (!state.optimization || state.optimization.length === 0) {
+    if (elements.optimizationSection) {
+      elements.optimizationSection.innerHTML = '<p style="color: var(--muted);">Computing recommendations...</p>';
+    }
+    return;
+  }
+  
+  const html = state.optimization.slice(0, 3).map(rec => `
+    <div class="recommendation-box">
+      <div class="rec-header">
+        <span class="rec-type">${rec.type.replace(/_/g, ' ').toUpperCase()}</span>
+        <span class="priority-badge priority-${rec.priority}">${rec.priority}</span>
+      </div>
+      <p>${rec.message}</p>
+      ${rec.optimalTime ? `<p class="rec-time">⏱️ ${rec.optimalTime}</p>` : ''}
+      ${rec.expectedSavings ? `<p class="rec-saving">💰 ${rec.expectedSavings} potential saving</p>` : ''}
+    </div>
+  `).join('');
+  
+  if (elements.optimizationSection) {
+    elements.optimizationSection.innerHTML = html;
+  }
+}
+
 function renderNetworkStatus(isOnline) {
   elements.networkStatus.classList.toggle('status-online', isOnline);
   elements.networkStatus.classList.toggle('status-offline', !isOnline);
@@ -117,10 +200,36 @@ async function fetchState() {
     const data = await response.json();
     Object.assign(state, data);
     if (!Array.isArray(state.trends)) state.trends = Array.from({ length: 12 }, () => 20 + Math.round(Math.random() * 60));
+    
+    // Fetch AI predictions in parallel
+    const [forecastResp, maintenanceResp, optimizationResp] = await Promise.all([
+      fetch(`${API_BASE}/forecast`).catch(() => ({ ok: false })),
+      fetch(`${API_BASE}/maintenance-alerts`).catch(() => ({ ok: false })),
+      fetch(`${API_BASE}/optimization`).catch(() => ({ ok: false }))
+    ]);
+    
+    if (forecastResp.ok) {
+      const forecastData = await forecastResp.json();
+      state.forecast = forecastData.forecast?.predictions || [];
+    }
+    
+    if (maintenanceResp.ok) {
+      const maintenanceData = await maintenanceResp.json();
+      state.maintenanceAlerts = maintenanceData.maintenance?.alerts || [];
+    }
+    
+    if (optimizationResp.ok) {
+      const optimizationData = await optimizationResp.json();
+      state.optimization = optimizationData.optimization?.recommendations || [];
+    }
+    
     renderMetrics();
     renderAlerts();
     renderEvents();
     renderTrendChart();
+    renderForecast();
+    renderMaintenanceAlerts();
+    renderOptimization();
     renderNetworkStatus(true);
     return true;
   } catch (error) {
@@ -152,9 +261,9 @@ async function postCommand(path) {
 }
 
 function addOfflineEvent() {
-  if (!state.events.length || state.events[0].message !== 'Running in offline mode.') {
-    state.events.unshift({ message: 'Running in offline mode.', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
-    state.events = state.events.slice(0, 8);
+  if (!state.events.length || state.events.at(-1).message !== 'Running in offline mode.') {
+    state.events.push({ message: 'Running in offline mode.', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+    state.events = state.events.slice(-8);
     renderEvents();
   }
 }
@@ -216,12 +325,12 @@ function bootstrap() {
   elements.topUpWallet.addEventListener('click', topUpWallet);
   elements.generateDue.addEventListener('click', generateDue);
 
-  window.addEventListener('online', () => {
+  globalThis.addEventListener('online', () => {
     renderNetworkStatus(true);
     fetchState();
   });
 
-  window.addEventListener('offline', () => {
+  globalThis.addEventListener('offline', () => {
     renderNetworkStatus(false);
     addOfflineEvent();
   });
