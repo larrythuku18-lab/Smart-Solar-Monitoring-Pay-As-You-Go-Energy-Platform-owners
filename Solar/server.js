@@ -1,20 +1,24 @@
 import express, { json } from 'express';
 // eslint-disable-next-line no-undef
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   forecaster,
   maintenanceMonitor,
   fraudDetector,
   optimizer
 } from './ai-models.js';
+import weatherSystem from './weather-system.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = new URL('.', import.meta.url).pathname;
 
 const app = express();
 // eslint-disable-next-line no-undef
 const port = process.env.PORT || 3000;
 
 app.use(json());
-// eslint-disable-next-line no-undef
-app.use(express.static(join(__dirname)));
+app.use(express.static(__dirname));
 
 const state = {
   batteryLevel: 78,
@@ -334,6 +338,95 @@ app.get('/api/ai-insights', (req, res) => {
         forecastAccuracy: '92%',
         maintenanceReliability: '94%'
       }
+    }
+  });
+});
+
+// ===================== WEATHER ENDPOINTS =====================
+
+/**
+ * Weather Status - Current weather conditions and solar impact
+ */
+app.get('/api/weather', async (req, res) => {
+  try {
+    // Fetch real weather or use simulation
+    const location = req.query.location || '-1.2921,36.8219'; // Default: Nairobi
+    const [lat, lon] = location.split(',');
+    await weatherSystem.fetchWeatherData(parseFloat(lat), parseFloat(lon));
+    
+    const sunPosition = weatherSystem.getSunPosition();
+    const impact = weatherSystem.getImpactMessage();
+    const forecast = weatherSystem.generateForecast(12);
+    
+    res.json({
+      success: true,
+      weather: {
+        current: weatherSystem.currentWeather,
+        solarImpact: {
+          generationMultiplier: weatherSystem.solarImpact.generationMultiplier,
+          efficiencyMessage: impact,
+          expectedGenerationAdjustment: `${(weatherSystem.solarImpact.generationMultiplier * 100).toFixed(0)}% of clear-sky potential`
+        },
+        sunPosition: sunPosition,
+        windDirection: weatherSystem.getWindDirection(),
+        backgroundClass: weatherSystem.getBackgroundClass(),
+        theme: weatherSystem.getWeatherTheme(),
+        forecast: forecast
+      }
+    });
+  } catch (error) {
+    // Fallback to simulation
+    weatherSystem.simulateWeatherData();
+    const sunPosition = weatherSystem.getSunPosition();
+    
+    res.json({
+      success: true,
+      weather: {
+        current: weatherSystem.currentWeather,
+        solarImpact: {
+          generationMultiplier: weatherSystem.solarImpact.generationMultiplier,
+          efficiencyMessage: weatherSystem.getImpactMessage(),
+          expectedGenerationAdjustment: `${(weatherSystem.solarImpact.generationMultiplier * 100).toFixed(0)}% of clear-sky potential`
+        },
+        sunPosition: sunPosition,
+        windDirection: weatherSystem.getWindDirection(),
+        backgroundClass: weatherSystem.getBackgroundClass(),
+        theme: weatherSystem.getWeatherTheme(),
+        forecast: weatherSystem.generateForecast(12)
+      }
+    });
+  }
+});
+
+/**
+ * Weather Forecast - 12-hour weather and generation forecast
+ */
+app.get('/api/weather-forecast', (req, res) => {
+  const weatherForecast = weatherSystem.generateForecast(12);
+  const energyForecast = forecaster.forecast(6);
+  
+  // Combine weather and energy forecasts
+  const combined = energyForecast.map((ef, idx) => {
+    const wf = weatherForecast[idx] || weatherForecast[0];
+    return {
+      hour: ef.hour,
+      temperature: wf.temperature,
+      condition: wf.condition,
+      prediction: ef.predictedGeneration,
+      weatherAdjustedPrediction: Math.round(ef.predictedGeneration * wf.generationMultiplier),
+      confidence: ef.confidence,
+      solarImpact: wf.generationMultiplier
+    };
+  });
+  
+  res.json({
+    success: true,
+    forecast: {
+      predictions: combined,
+      summary: `${weatherSystem.getImpactMessage()} - Next 6 hours expected`,
+      recommendation: weatherSystem.solarImpact.generationMultiplier > 0.7 
+        ? '✅ Good solar production expected' 
+        : '⚠️ Reduced generation due to weather'
     }
   });
 });

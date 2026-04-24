@@ -1,0 +1,484 @@
+const API_BASE = '/api';
+
+const state = {
+  batteryLevel: 0,
+  generation: 0,
+  consumption: 0,
+  powerEnabled: false,
+  dueAmount: 0,
+  walletBalance: 0,
+  signalStrength: 78,
+  alerts: [],
+  events: [],
+  trends: Array.from({ length: 12 }, () => 20 + Math.round(Math.random() * 60)),
+  // AI predictions
+  forecast: [],
+  maintenanceAlerts: [],
+  fraudFlags: [],
+  optimization: [],
+  // Weather state
+  weather: {
+    condition: 'sunny',
+    temperature: 28,
+    humidity: 60,
+    cloudCover: 15,
+    windSpeed: 5,
+    sunPosition: { visible: true, angle: 45 },
+    backgroundClass: 'weather-sunny',
+    solarImpact: 1.0,
+    forecast: []
+  }
+};
+
+const elements = {
+  batteryValue: document.getElementById('batteryValue'),
+  batteryBar: document.getElementById('batteryBar'),
+  generationValue: document.getElementById('generationValue'),
+  consumptionValue: document.getElementById('consumptionValue'),
+  dueValue: document.getElementById('dueValue'),
+  balanceValue: document.getElementById('balanceValue'),
+  relayStatus: document.getElementById('relayStatus'),
+  signalValue: document.getElementById('signalValue'),
+  trendChart: document.getElementById('trendChart'),
+  networkStatus: document.getElementById('networkStatus'),
+  payButton: document.getElementById('payButton'),
+  confirmPayment: document.getElementById('confirmPayment'),
+  togglePower: document.getElementById('togglePower'),
+  peakSun: document.getElementById('peakSun'),
+  heavyLoad: document.getElementById('heavyLoad'),
+  topUpWallet: document.getElementById('topUpWallet'),
+  generateDue: document.getElementById('generateDue'),
+  alertContainer: document.getElementById('alertContainer'),
+  alertText: document.getElementById('alertText'),
+  eventsList: document.getElementById('eventsList'),
+  // AI elements
+  forecastChart: document.getElementById('forecastChart'),
+  maintenanceSection: document.getElementById('maintenanceSection'),
+  optimizationSection: document.getElementById('optimizationSection'),
+  aiInsightsTab: document.getElementById('aiInsightsTab'),
+  // Weather elements
+  weatherBackground: document.getElementById('weatherBackground'),
+  weatherWidget: document.getElementById('weatherWidget'),
+  weatherCondition: document.getElementById('weatherCondition'),
+  weatherTemp: document.getElementById('weatherTemp'),
+  weatherHumidity: document.getElementById('weatherHumidity'),
+  weatherTempDisplay: document.getElementById('weatherTempDisplay'),
+  weatherCloudCover: document.getElementById('weatherCloudCover'),
+  weatherHumidityDisplay: document.getElementById('weatherHumidityDisplay'),
+  weatherWind: document.getElementById('weatherWind'),
+  weatherImpact: document.getElementById('weatherImpact'),
+  weatherForecast: document.getElementById('weatherForecast'),
+  weatherRain: document.getElementById('weatherRain')
+};
+
+function addEvent(message) {
+  const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  state.events.push({ message, timestamp });
+  state.events = state.events.slice(-10);
+  renderEvents();
+}
+
+function addTrendPoint(value) {
+  state.trends.push(Math.max(4, Math.min(100, Math.round(value))));
+  if (state.trends.length > 12) state.trends.shift();
+}
+
+function renderTrendChart() {
+  if (!elements.trendChart) return;
+  elements.trendChart.innerHTML = state.trends
+    .map(value => `<div class="trend-bar" style="height: ${value}%"><span>${value}</span></div>`)
+    .join('');
+}
+
+function renderMetrics() {
+  if (elements.batteryValue) elements.batteryValue.textContent = Math.round(state.batteryLevel);
+  if (elements.batteryBar) elements.batteryBar.style.width = `${state.batteryLevel}%`;
+  if (elements.generationValue) elements.generationValue.textContent = state.generation;
+  if (elements.consumptionValue) elements.consumptionValue.textContent = state.consumption;
+  if (elements.dueValue) elements.dueValue.textContent = state.dueAmount.toFixed(2);
+  if (elements.balanceValue) elements.balanceValue.textContent = state.walletBalance.toFixed(2);
+  if (elements.relayStatus) elements.relayStatus.textContent = state.powerEnabled ? 'Enabled' : 'Disabled';
+  if (elements.signalValue) elements.signalValue.textContent = state.signalStrength;
+  if (elements.togglePower) elements.togglePower.textContent = state.powerEnabled ? 'Disable Power' : 'Restore Power';
+  if (elements.payButton) elements.payButton.disabled = state.dueAmount <= 0 || !navigator.onLine;
+  if (elements.confirmPayment) elements.confirmPayment.disabled = state.dueAmount <= 0;
+  if (elements.payButton) elements.payButton.textContent = state.dueAmount <= 0 ? 'Paid' : 'Run STK Push';
+}
+
+function renderAlerts() {
+  if (!elements.alertContainer || !elements.alertText) return;
+  if (state.alerts.length > 0) {
+    elements.alertContainer.hidden = false;
+    elements.alertText.textContent = state.alerts[0];
+  } else {
+    elements.alertContainer.hidden = true;
+  }
+}
+
+function renderEvents() {
+  if (!elements.eventsList) return;
+  elements.eventsList.innerHTML = state.events
+    .map(event => `<li class="event-item"><span>${event.message}</span><time>${event.timestamp}</time></li>`)
+    .join('');
+}
+
+// ============ AI RENDERING FUNCTIONS ============
+
+function renderForecast() {
+  if (!state.forecast || state.forecast.length === 0) {
+    if (elements.forecastChart) elements.forecastChart.innerHTML = '<p style="color: var(--muted);">Collecting forecast data...</p>';
+    return;
+  }
+  
+  const html = state.forecast.slice(0, 6).map((f) => `
+    <div class="forecast-item">
+      <div class="forecast-hour">+${f.hour}h</div>
+      <div class="forecast-gen" style="height: ${Math.min(100, (f.predictedGeneration / 300) * 100)}%">${f.predictedGeneration}W</div>
+      <div class="forecast-label">${f.surplus > 0 ? '✅ Surplus' : '⚠️ Deficit'}</div>
+    </div>
+  `).join('');
+  
+  if (elements.forecastChart) {
+    elements.forecastChart.innerHTML = `<div class="forecast-grid">${html}</div>`;
+  }
+}
+
+function renderMaintenanceAlerts() {
+  if (!state.maintenanceAlerts || state.maintenanceAlerts.length === 0) {
+    if (elements.maintenanceSection) {
+      elements.maintenanceSection.innerHTML = '<p style="color: var(--success);">✅ All systems nominal</p>';
+    }
+    return;
+  }
+  
+  const html = state.maintenanceAlerts.map(alert => `
+    <div class="alert-box severity-${alert.severity}">
+      <div class="alert-header">
+        <span class="alert-type">${alert.type.replaceAll('_', ' ').toUpperCase()}</span>
+        <span class="severity-badge">${alert.severity}</span>
+      </div>
+      <p>${alert.message}</p>
+      <div class="alert-footer">
+        <small>Device: ${alert.device}</small>
+        <small>Action: ${alert.recommendation}</small>
+      </div>
+    </div>
+  `).join('');
+  
+  if (elements.maintenanceSection) {
+    elements.maintenanceSection.innerHTML = html;
+  }
+}
+
+function renderOptimization() {
+  if (!state.optimization || state.optimization.length === 0) {
+    if (elements.optimizationSection) {
+      elements.optimizationSection.innerHTML = '<p style="color: var(--muted);">Computing recommendations...</p>';
+    }
+    return;
+  }
+  
+  const html = state.optimization.slice(0, 3).map(rec => `
+    <div class="recommendation-box">
+      <div class="rec-header">
+        <span class="rec-type">${rec.type.replaceAll('_', ' ').toUpperCase()}</span>
+        <span class="priority-badge priority-${rec.priority}">${rec.priority}</span>
+      </div>
+      <p>${rec.message}</p>
+      ${rec.optimalTime ? `<p class="rec-time">⏱️ ${rec.optimalTime}</p>` : ''}
+      ${rec.expectedSavings ? `<p class="rec-saving">💰 ${rec.expectedSavings} potential saving</p>` : ''}
+    </div>
+  `).join('');
+  
+  if (elements.optimizationSection) {
+    elements.optimizationSection.innerHTML = html;
+  }
+}
+
+/**
+ * Render dynamic weather background and display
+ */
+function renderWeather() {
+  if (!state.weather) return;
+  
+  const weather = state.weather;
+  
+  // Update background class
+  if (elements.weatherBackground) {
+    const bgClasses = Array.from(elements.weatherBackground.classList).filter(c => !c.startsWith('weather-'));
+    elements.weatherBackground.className = 'weather-background ' + (weather.backgroundClass || 'weather-sunny');
+  }
+  
+  // Update weather widget in header
+  const weatherEmojis = {
+    'sunny': '☀️',
+    'partly-cloudy': '🌤️',
+    'cloudy': '☁️',
+    'rainy': '🌧️',
+    'thunderstorm': '⛈️',
+    'foggy': '🌫️',
+    'snowy': '❄️'
+  };
+  
+  const emoji = weatherEmojis[weather.condition] || '🌤️';
+  
+  if (elements.weatherCondition) {
+    const condition = (weather.condition || weather.current?.condition || 'sunny');
+    elements.weatherCondition.textContent = condition.replaceAll('-', ' ').toUpperCase();
+  }
+  if (elements.weatherTemp) {
+    elements.weatherTemp.textContent = `${weather.current?.temperature || weather.temperature || 28}°C`;
+  }
+  if (elements.weatherHumidity) {
+    elements.weatherHumidity.textContent = `${weather.current?.humidity || weather.humidity || 60}% H`;
+  }
+  
+  // Update detailed weather stats
+  if (elements.weatherTempDisplay) {
+    elements.weatherTempDisplay.textContent = weather.current?.temperature || weather.temperature || 28;
+  }
+  if (elements.weatherCloudCover) {
+    elements.weatherCloudCover.textContent = weather.current?.cloudCover || weather.cloudCover || 15;
+  }
+  if (elements.weatherHumidityDisplay) {
+    elements.weatherHumidityDisplay.textContent = weather.current?.humidity || weather.humidity || 60;
+  }
+  if (elements.weatherWind) {
+    elements.weatherWind.textContent = weather.current?.windSpeed || weather.windSpeed || 5;
+  }
+  
+  // Update weather impact message
+  if (elements.weatherImpact) {
+    const multiplier = weather.solarImpact?.generationMultiplier || weather.solarImpact || 0.8;
+    let message = '';
+    if (multiplier >= 0.9) message = '☀️ Excellent solar conditions - peak generation';
+    else if (multiplier >= 0.75) message = '🌤️ Good solar conditions - strong generation';
+    else if (multiplier >= 0.5) message = '⛅ Moderate solar conditions - decent generation';
+    else if (multiplier >= 0.25) message = '☁️ Poor solar conditions - reduced generation';
+    else message = '🌧️ Very poor conditions - minimal generation';
+    
+    elements.weatherImpact.textContent = message;
+  }
+  
+  // Render 12-hour forecast
+  if (elements.weatherForecast && weather.forecast && weather.forecast.length > 0) {
+    const forecastHtml = weather.forecast.slice(0, 12).map((item, idx) => {
+      const conditionEmoji = weatherEmojis[item.condition] || '🌤️';
+      return `
+        <div class="weather-forecast-item">
+          <div class="weather-forecast-hour">${item.hour || idx + 1}h</div>
+          <div class="weather-forecast-condition">${conditionEmoji}</div>
+          <div class="weather-forecast-temp">${item.temperature || item.temp || 28}°</div>
+        </div>
+      `;
+    }).join('');
+    elements.weatherForecast.innerHTML = forecastHtml;
+  }
+  
+  // Render rain drops if raining
+  if (elements.weatherRain) {
+    const isRainy = weather.condition === 'rainy' || weather.condition === 'thunderstorm';
+    if (isRainy && elements.weatherRain.children.length === 0) {
+      // Create rain drops
+      for (let i = 0; i < 50; i++) {
+        const drop = document.createElement('div');
+        drop.className = 'raindrop';
+        drop.style.left = Math.random() * 100 + '%';
+        drop.style.delay = Math.random() * 0.6 + 's';
+        drop.style.animationDelay = Math.random() * 0.6 + 's';
+        elements.weatherRain.appendChild(drop);
+      }
+    } else if (!isRainy) {
+      elements.weatherRain.innerHTML = '';
+    }
+  }
+}
+
+function renderNetworkStatus(isOnline) {
+  elements.networkStatus.classList.toggle('status-online', isOnline);
+  elements.networkStatus.classList.toggle('status-offline', !isOnline);
+  elements.networkStatus.querySelector('strong').textContent = isOnline ? 'Online' : 'Offline';
+}
+
+function syncLocalSimulation() {
+  state.signalStrength = Math.min(100, Math.max(18, state.signalStrength + Math.round((Math.random() - 0.5) * 10)));
+  const generationDrift = Math.round(state.generation + (Math.random() - 0.5) * 12);
+  const consumptionDrift = Math.max(12, Math.round(state.consumption + (Math.random() - 0.5) * 12));
+  state.generation = Math.max(8, generationDrift);
+  state.consumption = consumptionDrift;
+  state.batteryLevel = Math.min(100, Math.max(6, state.batteryLevel + (state.generation - state.consumption) * 0.06));
+  addTrendPoint(state.generation);
+  if (state.batteryLevel < 25) {
+    state.alerts = ['Battery low: consider charging soon.'];
+  } else if (state.generation < state.consumption && state.powerEnabled) {
+    state.alerts = ['Generation below load. Monitoring system performance.'];
+  } else {
+    state.alerts = [];
+  }
+  renderMetrics();
+  renderAlerts();
+  renderTrendChart();
+}
+
+async function fetchState() {
+  try {
+    const response = await fetch(`${API_BASE}/state`);
+    if (!response.ok) throw new Error('Failed to load state');
+    const data = await response.json();
+    Object.assign(state, data);
+    if (!Array.isArray(state.trends)) state.trends = Array.from({ length: 12 }, () => 20 + Math.round(Math.random() * 60));
+    
+    // Fetch AI predictions and weather in parallel
+    const [forecastResp, maintenanceResp, optimizationResp, weatherResp] = await Promise.all([
+      fetch(`${API_BASE}/forecast`).catch(() => ({ ok: false })),
+      fetch(`${API_BASE}/maintenance-alerts`).catch(() => ({ ok: false })),
+      fetch(`${API_BASE}/optimization`).catch(() => ({ ok: false })),
+      fetch(`${API_BASE}/weather`).catch(() => ({ ok: false }))
+    ]);
+    
+    if (forecastResp.ok) {
+      const forecastData = await forecastResp.json();
+      state.forecast = forecastData.forecast?.predictions || [];
+    }
+    
+    if (maintenanceResp.ok) {
+      const maintenanceData = await maintenanceResp.json();
+      state.maintenanceAlerts = maintenanceData.maintenance?.alerts || [];
+    }
+    
+    if (optimizationResp.ok) {
+      const optimizationData = await optimizationResp.json();
+      state.optimization = optimizationData.optimization?.recommendations || [];
+    }
+    
+    if (weatherResp.ok) {
+      const weatherData = await weatherResp.json();
+      if (weatherData.weather) {
+        state.weather = weatherData.weather;
+      }
+    }
+    
+    renderMetrics();
+    renderAlerts();
+    renderEvents();
+    renderTrendChart();
+    renderForecast();
+    renderMaintenanceAlerts();
+    renderOptimization();
+    renderWeather();
+    renderNetworkStatus(true);
+    return true;
+  } catch (error) {
+    renderNetworkStatus(false);
+    console.warn('API unreachable:', error);
+    return false;
+  }
+}
+
+async function postCommand(path) {
+  try {
+    const response = await fetch(`${API_BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const result = await response.json();
+    if (!response.ok || !result.success) {
+      alert(result.message || 'Command failed');
+      return false;
+    }
+    Object.assign(state, result.state || state);
+    renderMetrics();
+    renderAlerts();
+    renderEvents();
+    renderTrendChart();
+    return true;
+  } catch (error) {
+    console.warn('Command error:', error);
+    renderNetworkStatus(false);
+    return false;
+  }
+}
+
+function addOfflineEvent() {
+  if (!state.events.length || state.events.at(-1).message !== 'Running in offline mode.') {
+    state.events.push({ message: 'Running in offline mode.', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+    state.events = state.events.slice(-8);
+    renderEvents();
+  }
+}
+
+async function sendStkPush() {
+  elements.payButton.disabled = true;
+  await postCommand('/payment/stk');
+}
+
+async function confirmPayment() {
+  await postCommand('/payment/confirm');
+}
+
+async function togglePower() {
+  await postCommand('/device/toggle');
+}
+
+function simulatePeakSun() {
+  state.generation = Math.min(320, state.generation + 40);
+  state.batteryLevel = Math.min(100, state.batteryLevel + 18);
+  state.signalStrength = Math.min(100, state.signalStrength + 8);
+  addTrendPoint(state.generation);
+  addEvent('Peak sun simulation boosted solar output.');
+  renderMetrics();
+  renderTrendChart();
+}
+
+function simulateHeavyLoad() {
+  state.consumption = Math.min(280, state.consumption + 35);
+  state.batteryLevel = Math.max(6, state.batteryLevel - 15);
+  addTrendPoint(state.consumption);
+  addEvent('Heavy load simulation increased household demand.');
+  renderMetrics();
+  renderTrendChart();
+}
+
+function topUpWallet() {
+  const amount = 100 + Math.round(Math.random() * 120);
+  state.walletBalance += amount;
+  addEvent(`Wallet topped up by KES ${amount}.`);
+  renderMetrics();
+}
+
+function generateDue() {
+  state.dueAmount = 30 + Math.round(Math.random() * 80);
+  addEvent(`New billing cycle created: KES ${state.dueAmount}.`);
+  renderMetrics();
+}
+
+function bootstrap() {
+  renderNetworkStatus(navigator.onLine);
+  fetchState();
+
+  elements.payButton.addEventListener('click', sendStkPush);
+  elements.confirmPayment.addEventListener('click', confirmPayment);
+  elements.togglePower.addEventListener('click', togglePower);
+  elements.peakSun.addEventListener('click', simulatePeakSun);
+  elements.heavyLoad.addEventListener('click', simulateHeavyLoad);
+  elements.topUpWallet.addEventListener('click', topUpWallet);
+  elements.generateDue.addEventListener('click', generateDue);
+
+  globalThis.addEventListener('online', () => {
+    renderNetworkStatus(true);
+    fetchState();
+  });
+
+  globalThis.addEventListener('offline', () => {
+    renderNetworkStatus(false);
+    addOfflineEvent();
+  });
+
+  setInterval(async () => {
+    if (navigator.onLine) {
+      await fetchState();
+    } else {
+      syncLocalSimulation();
+      addOfflineEvent();
+    }
+  }, 4500);
+}
+
+bootstrap();

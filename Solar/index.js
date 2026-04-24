@@ -15,183 +15,255 @@ const state = {
   forecast: [],
   maintenanceAlerts: [],
   fraudFlags: [],
-  optimization: []
+  optimization: [],
+  // Weather state
+  weather: {
+    condition: 'sunny',
+    temperature: 28,
+    humidity: 60,
+    cloudCover: 15,
+    windSpeed: 5,
+    sunPosition: { visible: true, angle: 45 },
+    backgroundClass: 'weather-sunny',
+    solarImpact: 1.0,
+    forecast: []
+  }
 };
 
 const elements = {
-  batteryValue: document.getElementById('batteryValue'),
-  batteryBar: document.getElementById('batteryBar'),
-  generationValue: document.getElementById('generationValue'),
-  consumptionValue: document.getElementById('consumptionValue'),
-  dueValue: document.getElementById('dueValue'),
-  balanceValue: document.getElementById('balanceValue'),
-  relayStatus: document.getElementById('relayStatus'),
-  signalValue: document.getElementById('signalValue'),
-  trendChart: document.getElementById('trendChart'),
-  networkStatus: document.getElementById('networkStatus'),
-  payButton: document.getElementById('payButton'),
-  confirmPayment: document.getElementById('confirmPayment'),
-  togglePower: document.getElementById('togglePower'),
-  peakSun: document.getElementById('peakSun'),
-  heavyLoad: document.getElementById('heavyLoad'),
-  topUpWallet: document.getElementById('topUpWallet'),
-  generateDue: document.getElementById('generateDue'),
-  alertContainer: document.getElementById('alertContainer'),
-  alertText: document.getElementById('alertText'),
-  eventsList: document.getElementById('eventsList'),
-  // AI elements
-  forecastChart: document.getElementById('forecastChart'),
-  maintenanceSection: document.getElementById('maintenanceSection'),
-  optimizationSection: document.getElementById('optimizationSection'),
-  aiInsightsTab: document.getElementById('aiInsightsTab')
+  // New dashboard KPIs
+  kpiSolar: document.getElementById('kpi-solar'),
+  kpiSolarD: document.getElementById('kpi-solar-d'),
+  kpiCustomers: document.getElementById('kpi-customers'),
+  kpiRevenue: document.getElementById('kpi-revenue'),
+  kpiOffline: document.getElementById('kpi-offline'),
+  
+  // Weather widget
+  weatherBackground: document.getElementById('weatherBackground'),
+  weatherTemp: document.getElementById('weather-temp'),
+  weatherClouds: document.getElementById('weather-clouds'),
+  weatherHumidity: document.getElementById('weather-humidity'),
+  weatherWind: document.getElementById('weather-wind'),
+  weatherMessage: document.getElementById('weather-message'),
+  weatherRain: document.getElementById('weatherRain'),
+  weatherImpactBadge: document.getElementById('weather-impact-badge'),
+  
+  // Forecast panel
+  forecastCells: document.getElementById('forecast-cells'),
+  aiReco: document.getElementById('ai-reco'),
+  
+  // Alerts
+  alertList: document.getElementById('alert-list'),
+  badgeAlerts: document.getElementById('badge-alerts'),
+  
+  // M-Pesa transactions
+  txOk: document.getElementById('tx-ok'),
+  txPend: document.getElementById('tx-pend'),
+  txBlock: document.getElementById('tx-block'),
+  
+  // Clock
+  clock: document.getElementById('clock'),
+  topbarDate: document.getElementById('topbar-date')
 };
 
-function addEvent(message) {
-  const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  state.events.push({ message, timestamp });
-  state.events = state.events.slice(-10);
-  renderEvents();
+// ===== UTILITY FUNCTIONS =====
+
+function getWeatherEmoji(condition) {
+  const emojis = {
+    'sunny': '☀️',
+    'partly-cloudy': '🌤️',
+    'cloudy': '☁️',
+    'rainy': '🌧️',
+    'thunderstorm': '⛈️',
+    'foggy': '🌫️',
+    'snowy': '❄️'
+  };
+  return emojis[condition] || '🌤️';
 }
 
-function addTrendPoint(value) {
-  state.trends.push(Math.max(4, Math.min(100, Math.round(value))));
-  if (state.trends.length > 12) state.trends.shift();
-}
-
-function renderTrendChart() {
-  elements.trendChart.innerHTML = state.trends
-    .map(value => `<div class="trend-bar" style="height: ${value}%"><span>${value}</span></div>`)
-    .join('');
-}
-
-function renderMetrics() {
-  elements.batteryValue.textContent = Math.round(state.batteryLevel);
-  elements.batteryBar.style.width = `${state.batteryLevel}%`;
-  elements.generationValue.textContent = state.generation;
-  elements.consumptionValue.textContent = state.consumption;
-  elements.dueValue.textContent = state.dueAmount.toFixed(2);
-  elements.balanceValue.textContent = state.walletBalance.toFixed(2);
-  elements.relayStatus.textContent = state.powerEnabled ? 'Enabled' : 'Disabled';
-  elements.signalValue.textContent = state.signalStrength;
-  elements.togglePower.textContent = state.powerEnabled ? 'Disable Power' : 'Restore Power';
-  elements.payButton.disabled = state.dueAmount <= 0 || !navigator.onLine;
-  elements.confirmPayment.disabled = state.dueAmount <= 0;
-  elements.payButton.textContent = state.dueAmount <= 0 ? 'Paid' : 'Run STK Push';
-}
-
-function renderAlerts() {
-  if (state.alerts.length > 0) {
-    elements.alertContainer.hidden = false;
-    elements.alertText.textContent = state.alerts[0];
-  } else {
-    elements.alertContainer.hidden = true;
+function updateClock() {
+  if (!elements.topbarDate) return;
+  const now = new Date();
+  const date = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  elements.topbarDate.textContent = date;
+  
+  if (elements.clock) {
+    elements.clock.textContent = `${now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} • Nairobi, KE`;
   }
 }
 
-function renderEvents() {
-  elements.eventsList.innerHTML = state.events
-    .map(event => `<li class="event-item"><span>${event.message}</span><time>${event.timestamp}</time></li>`)
-    .join('');
+// ===== RENDERING FUNCTIONS =====
+
+function renderDashboardMetrics() {
+  // Solar generation KPI with weather impact
+  if (elements.kpiSolar) {
+    const weatherMultiplier = state.weather?.solarImpact || 1.0;
+    const adjustedGen = Math.round(state.generation * weatherMultiplier);
+    elements.kpiSolar.textContent = `${adjustedGen}W`;
+  }
+  
+  if (elements.kpiSolarD) {
+    const trend = state.trends.length > 1 ? (state.trends[state.trends.length - 1] - state.trends[state.trends.length - 2]) : 0;
+    const direction = trend > 0 ? '↑' : trend < 0 ? '↓' : '→';
+    elements.kpiSolarD.textContent = `${direction} ${Math.abs(trend)}W vs 5m ago`;
+    elements.kpiSolarD.style.color = trend > 0 ? 'var(--green)' : 'var(--amber)';
+  }
+  
+  // Customers KPI (simulated)
+  if (elements.kpiCustomers) elements.kpiCustomers.textContent = '247';
+  
+  // Revenue KPI (simulated)
+  if (elements.kpiRevenue) elements.kpiRevenue.textContent = 'KES 12.4K';
+  
+  // Offline devices
+  if (elements.kpiOffline) {
+    const offlineCount = state.maintenanceAlerts.filter(a => a.severity === 'high').length;
+    elements.kpiOffline.textContent = offlineCount;
+  }
 }
 
-// ============ AI RENDERING FUNCTIONS ============
+function renderWeatherWidget() {
+  if (!state.weather) return;
+  
+  const weather = state.weather;
+  
+  // Update background class
+  if (elements.weatherBackground) {
+    elements.weatherBackground.className = 'weather-background ' + (weather.backgroundClass || 'weather-sunny');
+  }
+  
+  // Update weather stats
+  if (elements.weatherTemp) {
+    elements.weatherTemp.textContent = (weather.temperature || 28) + '°C';
+  }
+  if (elements.weatherClouds) {
+    elements.weatherClouds.textContent = (weather.cloudCover || 15) + '%';
+  }
+  if (elements.weatherHumidity) {
+    elements.weatherHumidity.textContent = (weather.humidity || 60) + '%';
+  }
+  if (elements.weatherWind) {
+    elements.weatherWind.textContent = (weather.windSpeed || 5) + ' km/h';
+  }
+  
+  // Update impact badge and message
+  if (elements.weatherImpactBadge) {
+    const multiplier = weather.solarImpact || 0.8;
+    if (multiplier >= 0.9) elements.weatherImpactBadge.textContent = '☀️ Excellent';
+    else if (multiplier >= 0.75) elements.weatherImpactBadge.textContent = '🌤️ Good';
+    else if (multiplier >= 0.5) elements.weatherImpactBadge.textContent = '⛅ Moderate';
+    else if (multiplier >= 0.25) elements.weatherImpactBadge.textContent = '☁️ Poor';
+    else elements.weatherImpactBadge.textContent = '🌧️ Very Poor';
+  }
+  
+  if (elements.weatherMessage) {
+    const multiplier = weather.solarImpact || 0.8;
+    let message = '';
+    if (multiplier >= 0.9) message = '☀️ Excellent solar conditions — peak generation expected';
+    else if (multiplier >= 0.75) message = '🌤️ Good solar conditions — strong generation';
+    else if (multiplier >= 0.5) message = '⛅ Moderate solar conditions — decent generation';
+    else if (multiplier >= 0.25) message = '☁️ Poor solar conditions — reduced generation';
+    else message = '🌧️ Very poor conditions — minimal generation';
+    elements.weatherMessage.textContent = message;
+  }
+  
+  // Render rain drops if needed
+  if (elements.weatherRain) {
+    const isRainy = weather.condition === 'rainy' || weather.condition === 'thunderstorm';
+    if (isRainy && elements.weatherRain.children.length < 30) {
+      for (let i = 0; i < 30; i++) {
+        const drop = document.createElement('div');
+        drop.className = 'raindrop';
+        drop.style.left = Math.random() * 100 + '%';
+        drop.style.top = -10 + 'px';
+        drop.style.animationDelay = Math.random() * 0.6 + 's';
+        elements.weatherRain.appendChild(drop);
+      }
+    } else if (!isRainy) {
+      elements.weatherRain.innerHTML = '';
+    }
+  }
+}
 
 function renderForecast() {
+  if (!elements.forecastCells) return;
+  
   if (!state.forecast || state.forecast.length === 0) {
-    if (elements.forecastChart) elements.forecastChart.innerHTML = '<p style="color: var(--muted);">Collecting forecast data...</p>';
+    elements.forecastCells.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:10px;grid-column:1/-1">Loading forecast…</div>';
     return;
   }
   
-  const html = state.forecast.slice(0, 6).map((f, idx) => `
-    <div class="forecast-item">
-      <div class="forecast-hour">+${f.hour}h</div>
-      <div class="forecast-gen" style="height: ${Math.min(100, (f.predictedGeneration / 300) * 100)}%">${f.predictedGeneration}W</div>
-      <div class="forecast-label">${f.surplus > 0 ? '✅ Surplus' : '⚠️ Deficit'}</div>
-    </div>
-  `).join('');
+  const html = state.forecast.slice(0, 6).map((f) => {
+    const surplus = f.surplus !== undefined ? f.surplus : (f.predictedGeneration > f.consumption);
+    const genValue = f.predictedGeneration || f.generation || 0;
+    const consValue = f.consumption || 0;
+    return `
+      <div class="fc-cell ${surplus ? 'surplus' : 'deficit'}">
+        <div class="fc-time">+${f.hour || '?'}h</div>
+        <div class="fc-icon">${surplus ? '✅' : '⚠️'}</div>
+        <div class="fc-gen">${genValue}W</div>
+        <div class="fc-cons" style="color:var(--red)">${consValue}W</div>
+      </div>
+    `;
+  }).join('');
   
-  if (elements.forecastChart) {
-    elements.forecastChart.innerHTML = `<div class="forecast-grid">${html}</div>`;
+  elements.forecastCells.innerHTML = html;
+  
+  // AI recommendation
+  if (elements.aiReco) {
+    const topSurplus = state.forecast.find(f => f.surplus || (f.predictedGeneration > f.consumption));
+    if (topSurplus) {
+      elements.aiReco.textContent = `💡 Peak generation at +${topSurplus.hour}h — optimal time to charge batteries`;
+    } else {
+      elements.aiReco.textContent = '⚡ Load shifting recommended across all hours';
+    }
   }
 }
 
 function renderMaintenanceAlerts() {
+  if (!elements.alertList) return;
+  
   if (!state.maintenanceAlerts || state.maintenanceAlerts.length === 0) {
-    if (elements.maintenanceSection) {
-      elements.maintenanceSection.innerHTML = '<p style="color: var(--success);">✅ All systems nominal</p>';
-    }
+    elements.alertList.innerHTML = '<div style="padding:16px;color:var(--green);font-size:11px">✅ All systems nominal</div>';
+    if (elements.badgeAlerts) elements.badgeAlerts.textContent = '0 Alerts';
     return;
   }
   
-  const html = state.maintenanceAlerts.map(alert => `
-    <div class="alert-box severity-${alert.severity}">
-      <div class="alert-header">
-        <span class="alert-type">${alert.type.replace(/_/g, ' ').toUpperCase()}</span>
-        <span class="severity-badge">${alert.severity}</span>
+  const html = state.maintenanceAlerts.slice(0, 5).map(alert => {
+    const icons = {
+      high: '🔴',
+      medium: '🟠',
+      low: '🟡'
+    };
+    const bgColor = alert.severity === 'high' ? 'rgba(239,68,68,.08)' : alert.severity === 'medium' ? 'rgba(245,158,11,.08)' : 'rgba(59,130,246,.08)';
+    const borderColor = alert.severity === 'high' ? 'rgba(239,68,68,.25)' : alert.severity === 'medium' ? 'rgba(245,158,11,.25)' : 'rgba(59,130,246,.25)';
+    
+    return `
+      <div class="alert-row" style="background:${bgColor};border:1px solid ${borderColor};margin:6px 0;border-radius:6px">
+        <div class="alert-icon" style="font-size:14px">${icons[alert.severity]}</div>
+        <div class="alert-body">
+          <div class="alert-title">${alert.type.replaceAll('_', ' ').toUpperCase()}</div>
+          <div class="alert-desc">${alert.message}</div>
+          <div style="font-size:9px;color:var(--teal);margin-top:4px">→ ${alert.recommendation || 'Monitor'}</div>
+        </div>
       </div>
-      <p>${alert.message}</p>
-      <div class="alert-footer">
-        <small>Device: ${alert.device}</small>
-        <small>Action: ${alert.recommendation}</small>
-      </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
   
-  if (elements.maintenanceSection) {
-    elements.maintenanceSection.innerHTML = html;
+  elements.alertList.innerHTML = html;
+  if (elements.badgeAlerts) {
+    elements.badgeAlerts.textContent = state.maintenanceAlerts.length + ' Alert' + (state.maintenanceAlerts.length !== 1 ? 's' : '');
   }
 }
 
-function renderOptimization() {
-  if (!state.optimization || state.optimization.length === 0) {
-    if (elements.optimizationSection) {
-      elements.optimizationSection.innerHTML = '<p style="color: var(--muted);">Computing recommendations...</p>';
-    }
-    return;
-  }
-  
-  const html = state.optimization.slice(0, 3).map(rec => `
-    <div class="recommendation-box">
-      <div class="rec-header">
-        <span class="rec-type">${rec.type.replace(/_/g, ' ').toUpperCase()}</span>
-        <span class="priority-badge priority-${rec.priority}">${rec.priority}</span>
-      </div>
-      <p>${rec.message}</p>
-      ${rec.optimalTime ? `<p class="rec-time">⏱️ ${rec.optimalTime}</p>` : ''}
-      ${rec.expectedSavings ? `<p class="rec-saving">💰 ${rec.expectedSavings} potential saving</p>` : ''}
-    </div>
-  `).join('');
-  
-  if (elements.optimizationSection) {
-    elements.optimizationSection.innerHTML = html;
-  }
+function renderTransactionCounts() {
+  // Simulate transaction counts
+  if (elements.txOk) elements.txOk.textContent = '47';
+  if (elements.txPend) elements.txPend.textContent = '3';
+  if (elements.txBlock) elements.txBlock.textContent = (state.fraudFlags?.length || 0);
 }
 
-function renderNetworkStatus(isOnline) {
-  elements.networkStatus.classList.toggle('status-online', isOnline);
-  elements.networkStatus.classList.toggle('status-offline', !isOnline);
-  elements.networkStatus.querySelector('strong').textContent = isOnline ? 'Online' : 'Offline';
-}
-
-function syncLocalSimulation() {
-  state.signalStrength = Math.min(100, Math.max(18, state.signalStrength + Math.round((Math.random() - 0.5) * 10)));
-  const generationDrift = Math.round(state.generation + (Math.random() - 0.5) * 12);
-  const consumptionDrift = Math.max(12, Math.round(state.consumption + (Math.random() - 0.5) * 12));
-  state.generation = Math.max(8, generationDrift);
-  state.consumption = consumptionDrift;
-  state.batteryLevel = Math.min(100, Math.max(6, state.batteryLevel + (state.generation - state.consumption) * 0.06));
-  addTrendPoint(state.generation);
-  if (state.batteryLevel < 25) {
-    state.alerts = ['Battery low: consider charging soon.'];
-  } else if (state.generation < state.consumption && state.powerEnabled) {
-    state.alerts = ['Generation below load. Monitoring system performance.'];
-  } else {
-    state.alerts = [];
-  }
-  renderMetrics();
-  renderAlerts();
-  renderTrendChart();
-}
+// ===== STATE FETCH =====
 
 async function fetchState() {
   try {
@@ -199,13 +271,12 @@ async function fetchState() {
     if (!response.ok) throw new Error('Failed to load state');
     const data = await response.json();
     Object.assign(state, data);
-    if (!Array.isArray(state.trends)) state.trends = Array.from({ length: 12 }, () => 20 + Math.round(Math.random() * 60));
     
-    // Fetch AI predictions in parallel
-    const [forecastResp, maintenanceResp, optimizationResp] = await Promise.all([
+    // Fetch AI predictions and weather in parallel
+    const [forecastResp, maintenanceResp, weatherResp] = await Promise.all([
       fetch(`${API_BASE}/forecast`).catch(() => ({ ok: false })),
       fetch(`${API_BASE}/maintenance-alerts`).catch(() => ({ ok: false })),
-      fetch(`${API_BASE}/optimization`).catch(() => ({ ok: false }))
+      fetch(`${API_BASE}/weather`).catch(() => ({ ok: false }))
     ]);
     
     if (forecastResp.ok) {
@@ -218,131 +289,48 @@ async function fetchState() {
       state.maintenanceAlerts = maintenanceData.maintenance?.alerts || [];
     }
     
-    if (optimizationResp.ok) {
-      const optimizationData = await optimizationResp.json();
-      state.optimization = optimizationData.optimization?.recommendations || [];
+    if (weatherResp.ok) {
+      const weatherData = await weatherResp.json();
+      if (weatherData.weather) {
+        state.weather = weatherData.weather;
+      }
     }
     
-    renderMetrics();
-    renderAlerts();
-    renderEvents();
-    renderTrendChart();
+    // Render all components
+    updateClock();
+    renderDashboardMetrics();
+    renderWeatherWidget();
     renderForecast();
     renderMaintenanceAlerts();
-    renderOptimization();
-    renderNetworkStatus(true);
+    renderTransactionCounts();
+    
     return true;
   } catch (error) {
-    renderNetworkStatus(false);
     console.warn('API unreachable:', error);
     return false;
   }
 }
 
-async function postCommand(path) {
-  try {
-    const response = await fetch(`${API_BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-    const result = await response.json();
-    if (!response.ok || !result.success) {
-      alert(result.message || 'Command failed');
-      return false;
-    }
-    Object.assign(state, result.state || state);
-    renderMetrics();
-    renderAlerts();
-    renderEvents();
-    renderTrendChart();
-    return true;
-  } catch (error) {
-    console.warn('Command error:', error);
-    renderNetworkStatus(false);
-    return false;
-  }
-}
-
-function addOfflineEvent() {
-  if (!state.events.length || state.events.at(-1).message !== 'Running in offline mode.') {
-    state.events.push({ message: 'Running in offline mode.', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
-    state.events = state.events.slice(-8);
-    renderEvents();
-  }
-}
-
-async function sendStkPush() {
-  elements.payButton.disabled = true;
-  await postCommand('/payment/stk');
-}
-
-async function confirmPayment() {
-  await postCommand('/payment/confirm');
-}
-
-async function togglePower() {
-  await postCommand('/device/toggle');
-}
-
-function simulatePeakSun() {
-  state.generation = Math.min(320, state.generation + 40);
-  state.batteryLevel = Math.min(100, state.batteryLevel + 18);
-  state.signalStrength = Math.min(100, state.signalStrength + 8);
-  addTrendPoint(state.generation);
-  addEvent('Peak sun simulation boosted solar output.');
-  renderMetrics();
-  renderTrendChart();
-}
-
-function simulateHeavyLoad() {
-  state.consumption = Math.min(280, state.consumption + 35);
-  state.batteryLevel = Math.max(6, state.batteryLevel - 15);
-  addTrendPoint(state.consumption);
-  addEvent('Heavy load simulation increased household demand.');
-  renderMetrics();
-  renderTrendChart();
-}
-
-function topUpWallet() {
-  const amount = 100 + Math.round(Math.random() * 120);
-  state.walletBalance += amount;
-  addEvent(`Wallet topped up by KES ${amount}.`);
-  renderMetrics();
-}
-
-function generateDue() {
-  state.dueAmount = 30 + Math.round(Math.random() * 80);
-  addEvent(`New billing cycle created: KES ${state.dueAmount}.`);
-  renderMetrics();
-}
+// ===== INITIALIZATION =====
 
 function bootstrap() {
-  renderNetworkStatus(navigator.onLine);
+  updateClock();
   fetchState();
-
-  elements.payButton.addEventListener('click', sendStkPush);
-  elements.confirmPayment.addEventListener('click', confirmPayment);
-  elements.togglePower.addEventListener('click', togglePower);
-  elements.peakSun.addEventListener('click', simulatePeakSun);
-  elements.heavyLoad.addEventListener('click', simulateHeavyLoad);
-  elements.topUpWallet.addEventListener('click', topUpWallet);
-  elements.generateDue.addEventListener('click', generateDue);
-
-  globalThis.addEventListener('online', () => {
-    renderNetworkStatus(true);
-    fetchState();
-  });
-
-  globalThis.addEventListener('offline', () => {
-    renderNetworkStatus(false);
-    addOfflineEvent();
-  });
-
+  
+  // Update every 4.5 seconds
   setInterval(async () => {
     if (navigator.onLine) {
       await fetchState();
-    } else {
-      syncLocalSimulation();
-      addOfflineEvent();
     }
   }, 4500);
+  
+  // Update clock every minute
+  setInterval(updateClock, 60000);
 }
 
-bootstrap();
+// Start app
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootstrap);
+} else {
+  bootstrap();
+}
