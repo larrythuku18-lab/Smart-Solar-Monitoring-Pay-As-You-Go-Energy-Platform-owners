@@ -9,6 +9,7 @@ import {
   optimizer
 } from './ai-models.js';
 import weatherSystem from './weather-system.js';
+import { PanelCompatibility, MultiPanelSetup, panelDatabase } from './solar-panel-config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = new URL('.', import.meta.url).pathname;
@@ -19,6 +20,15 @@ const port = process.env.PORT || 3000;
 
 app.use(json());
 app.use(express.static(__dirname));
+
+// Multi-panel setup and compatibility tracking
+const panelSetup = new MultiPanelSetup();
+let panelValidator = new PanelCompatibility('Monocrystalline_400W');
+
+// Add default panel
+panelSetup.addPanel('Monocrystalline_400W', 1);
+panelSetup.configuration = 'series';
+panelSetup.calculateTotalPower();
 
 const state = {
   batteryLevel: 78,
@@ -40,7 +50,22 @@ const state = {
   },
   // Simulated hardware metrics for maintenance monitoring
   voltage: 48,
-  current: 8
+  current: 8,
+  // Solar panel data
+  solarPanel: {
+    type: 'Monocrystalline_400W',
+    panelValidator: panelValidator,
+    panelSetup: panelSetup,
+    validationResults: [],
+    faults: []
+  },
+  // Device info
+  device: {
+    id: 'SOLAR_DEVICE_001',
+    connected: false,
+    lastTelemetry: null,
+    connectionType: 'none'  // 'wifi', 'gsm', 'none'
+  }
 };
 
 function timeString() {
@@ -181,6 +206,261 @@ app.post('/api/device/toggle', (req, res) => {
   res.json({ success: true, state });
 });
 
+// ===================== ESP32 TELEMETRY ENDPOINTS =====================
+
+/**
+ * Receive real telemetry data from ESP32 hardware
+ * POST /api/telemetry
+ * Body: { deviceId, voltage, current, generation, battery, consumption, temperature, panelType }
+ */
+app.post('/api/telemetry', (req, res) => {
+  const { deviceId, voltage, current, generation, battery, consumption, temperature, panelType } = req.body;
+  
+  if (!voltage || !current || generation === undefined || battery === undefined) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing required telemetry fields: voltage, current, generation, battery' 
+    });
+  }
+
+  // Update device connection status
+  state.device.id = deviceId || state.device.id;
+  state.device.connected = true;
+  state.device.lastTelemetry = new Date().toISOString();
+  
+  // Update panel type if provided
+  if (panelType && panelDatabase[panelType]) {
+    state.solarPanel.type = panelType;
+    panelValidator = new PanelCompatibility(panelType);
+    state.solarPanel.panelValidator = panelValidator;
+  }
+  
+  // Update system state with real data
+  state.voltage = voltage;
+  state.current = current;
+  state.generation = generation;
+  state.batteryLevel = battery;
+  state.consumption = consumption || state.consumption;
+  
+  // Validate sensor data against panel specifications
+  const validation = panelValidator.validateReading(voltage, current, temperature || 25);
+  state.solarPanel.validationResults = validation.issues;
+  
+  // Detect faults
+  const efficiency = generation > 0 ? consumption / generation : 0;
+  const faults = panelValidator.detectFaults(voltage, current, efficiency);
+  state.solarPanel.faults = faults;
+  
+  // Log any issues
+  if (!validation.isValid) {
+    validation.issues.forEach(issue => {
+      pushEvent(`⚠️ SENSOR: ${issue.message}`);
+    });
+  }
+  
+  if (faults.length > 0) {
+    faults.forEach(fault => {
+      const icon = fault.severity === 'high' ? '🚨' : '⚠️';
+      pushEvent(`${icon} PANEL: ${fault.message}`);
+    });
+  }
+  
+  // Trigger AI updates
+  forecaster.addDataPoint(state.generation, state.consumption, Date.now());
+  const maintenanceAlerts = maintenanceMonitor.detectAnomalies(
+    state.voltage,
+    state.current,
+    efficiency
+  );
+  state.aiPredictions.maintenanceAlerts = maintenanceAlerts;
+  state.aiPredictions.optimization = optimizer.getOptimizationRecommendations(
+    state.generation,
+    state.consumption,
+    state.batteryLevel
+  );
+  
+  // Push event
+  pushEvent(`📡 Telemetry: ${generation}W gen | ${battery}% bat | V=${voltage} I=${current}A`);
+  
+  res.json({ 
+    success: true, 
+    message: 'Telemetry received',
+    validation: {
+      isValid: validation.isValid,
+      issues: validation.issues
+    },
+    faults: faults,
+    state 
+  });
+});
+
+// ===================== SOLAR PANEL CONFIGURATION ENDPOINTS =====================
+
+/**
+ * Get available solar panel types and specs
+ * GET /api/panels/catalog
+ */
+app.get('/api/panels/catalog', (req, res) => {
+  const catalog = Object.entries(panelDatabase).map(([key, value]) => ({
+    id: key,
+    ...value
+  }));
+  
+  res.json({
+    success: true,
+    panels: catalog,
+    count: catalog.length
+  });
+});
+
+/**
+ * Get current panel configuration and validation
+ * GET /api/panels/config
+ */
+app.get('/api/panels/config', (req, res) => {
+  const specs = panelSetup.getSystemSpecs();
+  const maintenance = panelValidator.getMaintenanceSchedule();
+  const optimalTimes = panelValidator.getOptimalLoadTimes();
+  
+  res.json({
+    success: true,
+    configuration: {
+      currentPanel: state.solarPanel.type,
+      panelSpecs: panelDatabase[state.solarPanel.type],
+      systemSpecs: specs,
+      validationStatus: state.solarPanel.validationResults,
+      detectedFaults: state.solarPanel.faults,
+      maintenanceSchedule: maintenance,
+      optimalLoadTimes: optimalTimes,
+      estimatedDailyEnergy: panelValidator.estimateDailyEnergy(5) + ' Wh',
+      panelHealth: {
+        efficiency: state.generation > 0 ? (state.consumption / state.generation * 100).toFixed(1) + '%' : 'N/A',
+        estimatedDegradation: '0.5% per year (typical)',
+        nextServiceDue: 'Monthly cleaning recommended'
+      }
+    }
+  });
+});
+
+/**
+ * Configure a new panel type
+ * POST /api/panels/configure
+ * Body: { panelType: 'Monocrystalline_400W' }
+ */
+app.post('/api/panels/configure', (req, res) => {
+  const { panelType } = req.body;
+  
+  if (!panelDatabase[panelType]) {
+    return res.status(400).json({
+      success: false,
+      message: `Unknown panel type: ${panelType}`,
+      availableTypes: Object.keys(panelDatabase)
+    });
+  }
+  
+  // Update configuration
+  state.solarPanel.type = panelType;
+  panelValidator = new PanelCompatibility(panelType);
+  state.solarPanel.panelValidator = panelValidator;
+  
+  pushEvent(`🔧 Panel configured: ${panelType}`);
+  
+  res.json({
+    success: true,
+    message: `Panel type changed to ${panelType}`,
+    panelSpecs: panelDatabase[panelType]
+  });
+});
+
+/**
+ * Configure multi-panel setup
+ * POST /api/panels/multi-setup
+ * Body: { panels: [{type, quantity}, ...], configuration: 'series'|'parallel' }
+ */
+app.post('/api/panels/multi-setup', (req, res) => {
+  const { panels, configuration } = req.body;
+  
+  if (!panels || !Array.isArray(panels)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid panels array'
+    });
+  }
+  
+  try {
+    const newSetup = new MultiPanelSetup();
+    panels.forEach(p => newSetup.addPanel(p.type, p.quantity || 1));
+    newSetup.configuration = configuration || 'series';
+    newSetup.calculateTotalPower();
+    
+    // Update state
+    Object.assign(panelSetup, newSetup);
+    state.solarPanel.panelSetup = newSetup;
+    
+    pushEvent(`🔌 Multi-panel setup configured: ${configuration} with ${newSetup.getSystemSpecs().totalPanels} panels`);
+    
+    res.json({
+      success: true,
+      message: 'Multi-panel setup configured',
+      setup: newSetup.getSystemSpecs()
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Validate panel sensor readings
+ * POST /api/panels/validate
+ * Body: { voltage, current, temperature }
+ */
+app.post('/api/panels/validate', (req, res) => {
+  const { voltage, current, temperature = 25 } = req.body;
+  
+  if (voltage === undefined || current === undefined) {
+    return res.status(400).json({
+      success: false,
+      message: 'Missing voltage or current'
+    });
+  }
+  
+  const validation = panelValidator.validateReading(voltage, current, temperature);
+  
+  res.json({
+    success: true,
+    validation: validation,
+    temperatureEffect: {
+      currentEfficiency: panelValidator.config.efficiency,
+      temperatureAdjusted: panelValidator.getTemperatureAdjustedPower(temperature),
+      efficiencyAt25C: panelValidator.config.efficiency,
+      message: temperature > 45 ? '⚠️ High temperature reducing efficiency' : '✅ Optimal temperature'
+    }
+  });
+});
+
+/**
+ * Get panel maintenance recommendations
+ * GET /api/panels/maintenance
+ */
+app.get('/api/panels/maintenance', (req, res) => {
+  const schedule = panelValidator.getMaintenanceSchedule();
+  const faults = state.solarPanel.faults;
+  
+  res.json({
+    success: true,
+    maintenance: {
+      schedule: schedule,
+      currentFaults: faults,
+      urgentActions: faults.filter(f => f.severity === 'high').map(f => f.recommendation),
+      lastChecked: state.device.lastTelemetry,
+      status: faults.length === 0 ? '✅ HEALTHY' : '⚠️ ISSUES DETECTED'
+    }
+  });
+});
+
 // ===================== AI ENDPOINTS =====================
 
 /**
@@ -196,13 +476,13 @@ app.get('/api/forecast', (req, res) => {
       predictions: forecast,
       optimalPaymentTime: optimalPayTime,
       summary: {
-        expectedPeakGeneration: forecast.reduce((max, f) => 
-          f.predictedGeneration > max ? f.predictedGeneration : max, 0),
+        expectedPeakGeneration: forecast && forecast.length > 0 ? forecast.reduce((max, f) => 
+          f.predictedGeneration > max ? f.predictedGeneration : max, 0) : 0,
         expectedMinimumBattery: Math.round(
-          state.batteryLevel + forecast.reduce((sum, f) => 
-            sum + (f.surplus * 0.08), 0)
+          state.batteryLevel + (forecast && forecast.length > 0 ? forecast.reduce((sum, f) => 
+            sum + (f.surplus * 0.08), 0) : 0)
         ),
-        recommendation: forecast[0].surplus > 0 
+        recommendation: forecast && forecast.length > 0 && forecast[0].surplus > 0 
           ? '✅ Excess generation expected - good time for charging'
           : '⚠️ Deficit expected - consider load reduction'
       }
@@ -313,8 +593,8 @@ app.get('/api/ai-insights', (req, res) => {
     insights: {
       energyForecasting: {
         module: 'TensorFlow.js Linear Regression',
-        nextHourPrediction: forecast[0],
-        confidence: forecast[0].confidence
+        nextHourPrediction: forecast && forecast.length > 0 ? forecast[0] : null,
+        confidence: forecast && forecast.length > 0 ? forecast[0].confidence : 'No data yet'
       },
       predictiveMaintenance: {
         module: 'Anomaly Detection (Z-score + Pattern Analysis)',
@@ -374,19 +654,29 @@ app.get('/api/weather', async (req, res) => {
         forecast: forecast
       }
     });
-  } catch (error) {
+  } try {
+  // your main logic here (e.g. fetching real weather data)
+  
+} catch (error) {
+  console.error("Weather fetch failed, falling back to simulation:", error);
+
+  try {
     // Fallback to simulation
     weatherSystem.simulateWeatherData();
+
     const sunPosition = weatherSystem.getSunPosition();
-    
-    res.json({
+
+    return res.status(200).json({
       success: true,
+      fallback: true,
       weather: {
         current: weatherSystem.currentWeather,
         solarImpact: {
           generationMultiplier: weatherSystem.solarImpact.generationMultiplier,
           efficiencyMessage: weatherSystem.getImpactMessage(),
-          expectedGenerationAdjustment: `${(weatherSystem.solarImpact.generationMultiplier * 100).toFixed(0)}% of clear-sky potential`
+          expectedGenerationAdjustment: `${
+            (weatherSystem.solarImpact.generationMultiplier * 100).toFixed(0)
+          }% of clear-sky potential`
         },
         sunPosition: sunPosition,
         windDirection: weatherSystem.getWindDirection(),
@@ -395,8 +685,16 @@ app.get('/api/weather', async (req, res) => {
         forecast: weatherSystem.generateForecast(12)
       }
     });
+
+  } catch (fallbackError) {
+    console.error("Simulation fallback also failed:", fallbackError);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve weather data",
+    });
   }
-});
+}
 
 /**
  * Weather Forecast - 12-hour weather and generation forecast
@@ -433,4 +731,4 @@ app.get('/api/weather-forecast', (req, res) => {
 
 app.listen(port, () => {
   console.log(`Solar Pay-Go simulator running at http://localhost:${port}`);
-});
+}); 

@@ -34,6 +34,126 @@ This platform now includes **4 AI services** optimized for rural African context
 
 ---
 
+## 🔧 ESP32 Hardware Integration & Solar Panel Compatibility (NEW! April 2026)
+
+Real-time solar panel monitoring with complete hardware support for ESP32 microcontrollers.
+
+### ⚡ What's New
+
+#### 1. Complete ESP32 Firmware
+- **`esp32-firmware.ino`** - Production-ready Arduino code for real hardware
+- Real-time sensor monitoring (voltage, current, battery, temperature)
+- Multi-panel configuration support (5 panel types included)
+- Automatic fault detection (panel dust, wiring issues, shading)
+- WiFi primary + GSM fallback for rural areas
+- Relay control with automatic power cut at critical battery levels
+
+#### 2. Multi-Panel Support
+Support for 5 different solar panel technologies:
+| Panel Type | Power | Efficiency | Best For |
+|-----------|-------|-----------|----------|
+| **Monocrystalline_400W** | 400W | 21% | Premium efficiency, limited space |
+| **Polycrystalline_300W** | 300W | 17% | Cost-effective, good durability |
+| **Thin_Film_250W** | 250W | 11% | Best low-light, cheaper |
+| **Bifacial_450W** | 450W | 22% | Reflective surfaces, higher output |
+| **Half_Cell_380W** | 380W | 20% | Partial shading, reduced hotspots |
+
+Series/parallel configuration for scalable power output.
+
+#### 3. Intelligent Sensor Validation
+Automatic validation against panel specifications:
+- ✅ Overvoltage/overcurrent detection
+- ✅ Panel fault identification (dust, degradation, wiring)
+- ✅ Temperature effect calculations (efficiency adjustment per °C)
+- ✅ Shading impact analysis
+- ✅ Real-time anomaly alerts
+
+#### 4. Hardware Requirements (~$41)
+```
+ESP32 Dev Board          $10
+ACS712 Current Sensor    $5
+Voltage Divider          $3
+Battery Monitor          $1
+SIM800L GSM Module       $15
+Relay Module             $2
+Wires & Connectors       $5
+```
+
+### 📱 New API Endpoints
+
+**Panel Configuration:**
+- `GET /api/panels/catalog` - List all available panel types
+- `GET /api/panels/config` - Get current panel setup & health status
+- `POST /api/panels/configure` - Switch to different panel type
+- `POST /api/panels/multi-setup` - Configure multiple panels (series/parallel)
+
+**Telemetry & Validation:**
+- `POST /api/telemetry` - Receive real ESP32 sensor data with auto-validation
+- `POST /api/panels/validate` - Validate sensor readings against specs
+- `GET /api/panels/maintenance` - Get maintenance schedule & fault status
+
+### 🚀 Quick Integration
+
+```bash
+# 1. Flash ESP32 firmware
+# → Upload esp32-firmware.ino via Arduino IDE
+
+# 2. Configure WiFi in firmware
+#define BACKEND_URL "http://your-backend.com/api/telemetry"
+const char* ssid = "YOUR_SSID";
+const char* password = "YOUR_PASSWORD";
+
+# 3. Start backend
+npm start
+
+# 4. Verify hardware connection
+curl http://localhost:3000/api/panels/config
+```
+
+### 🔍 Automatic Fault Detection
+
+System detects and alerts on:
+- 🔌 **Panel Dust/Dirt** - Power loss >40% (recommendation: clean panels)
+- ⚠️ **Wiring Issues** - Voltage drops indicate resistive losses
+- 🌤️ **Shading** - Power <30% of nominal (recommendation: reposition panels)
+- 🔥 **Degradation** - Power <50% nominal (recommendation: test/replace)
+- 🌡️ **Temperature** - Efficiency reduced at high temps (recommendation: improve ventilation)
+
+### 📊 Documentation
+
+Complete setup guides included:
+- **[ESP32_SETUP.md](ESP32_SETUP.md)** - 600+ line installation & integration guide
+- **[IMPLEMENTATION_COMPLETE.md](IMPLEMENTATION_COMPLETE.md)** - Feature summary & testing checklist
+- Wiring diagrams, pin configurations, calibration instructions
+- Hardware components list with sources
+- Troubleshooting guide for common issues
+
+### 💡 Example: Real Telemetry
+
+```bash
+curl -X POST http://localhost:3000/api/telemetry \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deviceId": "SOLAR_DEVICE_001",
+    "panelType": "Monocrystalline_400W",
+    "voltage": 48.2,
+    "current": 8.3,
+    "generation": 400,
+    "battery": 85,
+    "consumption": 300,
+    "temperature": 28
+  }'
+
+# Response includes:
+# ✅ Validation status
+# ✅ Detected faults (if any)
+# ✅ Temperature effects
+# ✅ Maintenance alerts
+# ✅ AI predictions
+```
+
+---
+
 ## Component Breakdown
 
 ### 🟢 A. IoT Layer (Hardware)
@@ -128,7 +248,9 @@ This platform now includes **4 AI services** optimized for rural African context
 
 ## Getting Started
 
-### Local Development
+### Option 1: Simulator Mode (No Hardware)
+
+Perfect for testing the AI and payment integration:
 
 ```bash
 # 1. Install dependencies
@@ -144,7 +266,34 @@ open http://localhost:3000
 curl http://localhost:3000/api/forecast
 curl http://localhost:3000/api/maintenance-alerts
 curl http://localhost:3000/api/optimization
+curl http://localhost:3000/api/ai-insights
 ```
+
+### Option 2: Real Hardware (ESP32 + Sensors)
+
+Connect actual solar panels and monitoring hardware:
+
+```bash
+# 1. Setup ESP32 hardware
+# → See ESP32_SETUP.md for complete guide
+# → Flash esp32-firmware.ino to your board
+# → Configure WiFi & backend URL in firmware
+
+# 2. Start backend server
+npm start
+
+# 3. Verify hardware connection
+curl http://localhost:3000/api/panels/config
+
+# 4. Monitor real telemetry
+curl http://localhost:3000/api/state
+```
+
+**Hardware Setup Time:** ~2 hours  
+**Cost:** ~$41 (see component list above)  
+**Supported Panels:** 5 types with specs included  
+
+👉 **[Complete ESP32 Setup Guide →](ESP32_SETUP.md)**
 
 ### Deploy to Production
 
@@ -157,6 +306,8 @@ curl http://localhost:3000/api/optimization
 
 | Document | Purpose |
 |----------|---------|
+| **[ESP32_SETUP.md](ESP32_SETUP.md)** | Hardware integration, wiring, firmware installation, calibration |
+| **[IMPLEMENTATION_COMPLETE.md](IMPLEMENTATION_COMPLETE.md)** | Feature summary, testing checklist, multi-panel examples |
 | **[AI_INTEGRATION.md](AI_INTEGRATION.md)** | Complete AI feature guide, algorithms, rural context optimization |
 | **[DEPLOYMENT.md](DEPLOYMENT.md)** | Deploy to Render, AWS, Azure, Docker - with CI/CD setup |
 | **[ADVANCED_ML_OPTIONAL.md](ADVANCED_ML_OPTIONAL.md)** | Python FastAPI microservice for advanced forecasting (optional) |
@@ -165,8 +316,11 @@ curl http://localhost:3000/api/optimization
 
 - `index.html` — dashboard UI with AI visualizations
 - `index.js` — frontend application logic (fetches AI predictions)
-- `server.js` — backend API simulator + AI engine
-- `ai-models.js` — **NEW:** 4 AI services (forecasting, maintenance, fraud, optimization)
+- `server.js` — backend API simulator + AI engine + ESP32 integration
+- `ai-models.js` — 4 AI services (forecasting, maintenance, fraud, optimization)
+- `solar-panel-config.js` — **NEW:** Panel validation, multi-panel support, fault detection
+- `esp32-firmware.ino` — **NEW:** Production Arduino code for ESP32 microcontroller
+- `weather-system.js` — Weather simulation & solar impact calculations
 - `package.json` — Node.js package manifest with TensorFlow.js
 
 ## 🤖 AI Architecture

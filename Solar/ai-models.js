@@ -387,7 +387,7 @@ class UsageOptimizer {
 
     // Recommendation 1: Demand shifting
     if (currentConsumption > currentGeneration) {
-      const surplusHours = forecast.filter(f => f.surplus > 20);
+      const surplusHours = forecast && forecast.length > 0 ? forecast.filter(f => f.surplus > 20) : [];
       if (surplusHours.length > 0) {
         recommendations.push({
           type: 'demand_shift',
@@ -406,7 +406,7 @@ class UsageOptimizer {
 
     // Recommendation 2: Battery charging optimization
     if (batteryLevel < 60) {
-      const peakHours = forecast.filter(f => f.surplus > 50);
+      const peakHours = forecast && forecast.length > 0 ? forecast.filter(f => f.surplus > 50) : [];
       if (peakHours.length > 0) {
         recommendations.push({
           type: 'battery_charging',
@@ -431,9 +431,9 @@ class UsageOptimizer {
     });
 
     // Recommendation 4: Predictive low-battery alert
-    const avgConsumption = forecast.reduce((sum, f) => sum + f.predictedConsumption, 0) / forecast.length;
+    const avgConsumption = forecast && forecast.length > 0 ? forecast.reduce((sum, f) => sum + f.predictedConsumption, 0) / forecast.length : 0;
     const projectedBatteryIn6h = batteryLevel + 
-      ((forecast[0].surplus + forecast[1].surplus + forecast[2].surplus) / 3 * 0.8);
+      (forecast && forecast.length >= 3 ? ((forecast[0].surplus + forecast[1].surplus + forecast[2].surplus) / 3 * 0.8) : 0);
     
     if (projectedBatteryIn6h < 20) {
       recommendations.push({
