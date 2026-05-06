@@ -654,47 +654,44 @@ app.get('/api/weather', async (req, res) => {
         forecast: forecast
       }
     });
-  } try {
-  // your main logic here (e.g. fetching real weather data)
-  
-} catch (error) {
-  console.error("Weather fetch failed, falling back to simulation:", error);
+  } catch (error) {
+    console.error("Weather fetch failed, falling back to simulation:", error);
 
-  try {
-    // Fallback to simulation
-    weatherSystem.simulateWeatherData();
+    try {
+      // Fallback to simulation
+      weatherSystem.simulateWeatherData();
 
-    const sunPosition = weatherSystem.getSunPosition();
+      const sunPosition = weatherSystem.getSunPosition();
 
-    return res.status(200).json({
-      success: true,
-      fallback: true,
-      weather: {
-        current: weatherSystem.currentWeather,
-        solarImpact: {
-          generationMultiplier: weatherSystem.solarImpact.generationMultiplier,
-          efficiencyMessage: weatherSystem.getImpactMessage(),
-          expectedGenerationAdjustment: `${
-            (weatherSystem.solarImpact.generationMultiplier * 100).toFixed(0)
-          }% of clear-sky potential`
-        },
-        sunPosition: sunPosition,
-        windDirection: weatherSystem.getWindDirection(),
-        backgroundClass: weatherSystem.getBackgroundClass(),
-        theme: weatherSystem.getWeatherTheme(),
-        forecast: weatherSystem.generateForecast(12)
-      }
-    });
+      return res.status(200).json({
+        success: true,
+        fallback: true,
+        weather: {
+          current: weatherSystem.currentWeather,
+          solarImpact: {
+            generationMultiplier: weatherSystem.solarImpact.generationMultiplier,
+            efficiencyMessage: weatherSystem.getImpactMessage(),
+            expectedGenerationAdjustment: `${
+              (weatherSystem.solarImpact.generationMultiplier * 100).toFixed(0)
+            }% of clear-sky potential`
+          },
+          sunPosition: sunPosition,
+          windDirection: weatherSystem.getWindDirection(),
+          backgroundClass: weatherSystem.getBackgroundClass(),
+          theme: weatherSystem.getWeatherTheme(),
+          forecast: weatherSystem.generateForecast(12)
+        }
+      });
+    } catch (fallbackError) {
+      console.error("Simulation fallback also failed:", fallbackError);
 
-  } catch (fallbackError) {
-    console.error("Simulation fallback also failed:", fallbackError);
-
-    return res.status(500).json({
-      success: false,
-      message: "Unable to retrieve weather data",
-    });
+      return res.status(500).json({
+        success: false,
+        message: "Unable to retrieve weather data",
+      });
+    }
   }
-}
+});
 
 /**
  * Weather Forecast - 12-hour weather and generation forecast

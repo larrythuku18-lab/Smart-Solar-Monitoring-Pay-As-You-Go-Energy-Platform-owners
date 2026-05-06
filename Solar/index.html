@@ -199,7 +199,7 @@
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
     
     .main { display: flex; flex-direction: column; }
-    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 10; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--surface); position: fixed; top: 0; left: 200px; right: 0; z-index: 10; }
     .topbar-title { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 14px; }
     .topbar-right { display: flex; align-items: center; gap: 8px; }
     .badge { font-size: 10px; padding: 3px 8px; border-radius: 20px; font-weight: 500; }
@@ -208,10 +208,10 @@
     .badge-blue { background: rgba(59,130,246,.12); color: var(--blue); border: 1px solid rgba(59,130,246,.25); }
     .badge-red { background: rgba(239,68,68,.12); color: var(--red); border: 1px solid rgba(239,68,68,.25); }
     
-    .content { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+    .content { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; padding-top: 220px; }
     
     /* KPI */
-    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; position: fixed; top: 50px; left: 200px; right: 0; z-index: 8; background: var(--bg); padding: 20px 24px; border-bottom: 1px solid var(--border); }
     .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; position: relative; overflow: hidden; }
     .kpi::before { content:''; position: absolute; top:0; left:0; right:0; height: 2px; border-radius: 10px 10px 0 0; }
     .kpi.amber::before { background: var(--amber); }
@@ -260,19 +260,19 @@
     .mini-chart { height: 36px; display: flex; align-items: flex-end; gap: 3px; padding: 0 16px 10px; }
     .mini-bar { flex: 1; border-radius: 2px 2px 0 0; }
 
-    /* Weather Widget */
-    .weather-widget-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 10px;
-      border-radius: 8px;
-      background: rgba(245,158,11,.12);
-      color: var(--amber);
-      border: 1px solid rgba(245,158,11,.25);
-      font-size: 10px;
-      margin-top: 8px;
-    }
+    /* AI Models Grid */
+    .ai-models-grid { margin-top: 8px; }
+    .ai-model-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .ai-model-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .ai-model-title { font-size: 12px; font-weight: 500; color: var(--sub); }
+    .ai-model-status { display: flex; align-items: center; gap: 6px; font-size: 10px; padding: 3px 8px; border-radius: 20px; font-weight: 500; }
+    .ai-model-status.loading { background: rgba(245,158,11,.15); color: var(--amber); }
+    .ai-model-status.success { background: rgba(16,185,129,.12); color: var(--green); }
+    .ai-model-status.error { background: rgba(239,68,68,.12); color: var(--red); }
+    .ai-model-spinner { width: 8px; height: 8px; border: 1px solid rgba(245,158,11,.3); border-top-color: var(--amber); border-radius: 50%; animation: spin 1s linear infinite; }
+    .ai-model-body { padding: 12px 16px; max-height: 200px; overflow-y: auto; font-size: 11px; color: var(--text); line-height: 1.5; }
+    .ai-model-error { color: var(--red); font-weight: 500; }
+    .ai-model-output { white-space: pre-wrap; font-family: 'Space Grotesk', monospace; font-size: 10px; }
   </style>
 </head>
 <body>
@@ -486,10 +486,26 @@
           </div>
         </div>
       </div>
+
+      <!-- AI Models Dashboard -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">AI Models Execution</span>
+          <span class="ai-tag">Real-time Processing</span>
+        </div>
+        <!-- Global Status Bar -->
+        <div id="ai-status-bar" style="padding:12px 16px;border-bottom:1px solid var(--border);background:rgba(245,158,11,.05);color:var(--amber);font-size:12px;font-weight:500;text-align:center">
+          Initializing AI models...
+        </div>
+        <!-- Models Grid -->
+        <div id="ai-models-grid" class="ai-models-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;padding:16px">
+          <!-- Cards will be inserted here -->
+        </div>
+      </div>
     </div><!-- /content -->
   </main>
 </div>
 
-<script src="index.js"></script>
+<script type="module" src="index.js"></script>
 </body>
 </html>

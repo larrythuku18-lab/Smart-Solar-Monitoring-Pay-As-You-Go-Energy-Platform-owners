@@ -4,6 +4,9 @@ const LOAD_TIMEOUT = 50000;
 const CRITICAL_TIMEOUT = 8000;
 const NON_CRITICAL_TIMEOUT = 15000;
 
+// Import AI models
+import { forecaster, maintenanceMonitor, fraudDetector, optimizer } from './ai-models.js';
+
 // Performance tracking
 const loadingTracker = {
   startTime: Date.now(),
@@ -71,6 +74,12 @@ const state = {
     backgroundClass: 'weather-sunny',
     solarImpact: 1,
     forecast: []
+  },
+  // AI Models state
+  aiModels: {
+    completed: 0,
+    total: 4,
+    results: {}
   }
 };
 
@@ -107,7 +116,11 @@ const elements = {
   
   // Clock
   clock: document.getElementById('clock'),
-  topbarDate: document.getElementById('topbar-date')
+  topbarDate: document.getElementById('topbar-date'),
+  
+  // AI Models
+  aiStatusBar: document.getElementById('ai-status-bar'),
+  aiModelsGrid: document.getElementById('ai-models-grid')
 };
 
 // ===== UTILITY FUNCTIONS =====
@@ -121,6 +134,196 @@ function updateClock() {
   if (elements.clock) {
     elements.clock.textContent = `${now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} • Nairobi, KE`;
   }
+}
+
+const aiModelsConfig = [
+  {
+    id: 'energy-forecast',
+    name: 'Energy Forecast',
+    description: 'Predicts next 6 hours of solar generation and consumption',
+    color: 'var(--amber)',
+    run: async () => {
+      // Add some sample data first
+      forecaster.addDataPoint(state.generation || 150, state.consumption || 120, Date.now());
+      const forecast = forecaster.forecast(6);
+      return {
+        forecast: forecast.map(f => `${f.hour}h: Gen ${f.predictedGeneration}W, Cons ${f.predictedConsumption}W, Surplus ${f.surplus > 0 ? '+' : ''}${f.surplus}W`).join('\n'),
+        summary: `Next 6 hours forecast complete`
+      };
+    }
+  },
+  {
+    id: 'maintenance-monitor',
+    name: 'Predictive Maintenance',
+    description: 'Detects anomalies in voltage, current, and efficiency patterns',
+    color: 'var(--green)',
+    run: async () => {
+      const alerts = maintenanceMonitor.detectAnomalies(
+        state.batteryLevel || 48,
+        state.generation || 10,
+        state.batteryLevel || 0.92
+      );
+      return {
+        alerts: alerts.map(a => `[${a.severity.toUpperCase()}] ${a.message}`).join('\n'),
+        summary: `${alerts.length} maintenance alerts detected`
+      };
+    }
+  },
+  {
+    id: 'fraud-detector',
+    name: 'Fraud Shield',
+    description: 'Monitors M-Pesa transactions for suspicious patterns',
+    color: 'var(--red)',
+    run: async () => {
+      // Simulate some transactions
+      const flags = [];
+      for (let i = 0; i < 3; i++) {
+        const fraud = fraudDetector.recordPayment(
+          `user${i + 1}`,
+          `device${i + 1}`,
+          Math.floor(Math.random() * 500) + 100,
+          Date.now() - Math.random() * 3600000
+        );
+        if (fraud) flags.push(fraud);
+      }
+      return {
+        flags: flags.map(f => `[${f.severity.toUpperCase()}] ${f.message}`).join('\n'),
+        summary: `${flags.length} suspicious patterns detected`
+      };
+    }
+  },
+  {
+    id: 'usage-optimizer',
+    name: 'Usage Optimizer',
+    description: 'Provides recommendations for optimal energy usage and charging',
+    color: 'var(--purple)',
+    run: async () => {
+      const recommendations = optimizer.getOptimizationRecommendations(
+        state.generation || 150,
+        state.consumption || 120,
+        state.batteryLevel || 75
+      );
+      return {
+        recommendations: recommendations.map(r => `[${r.priority.toUpperCase()}] ${r.message}`).join('\n'),
+        summary: `${recommendations.length} optimization recommendations`
+      };
+    }
+  }
+];
+
+// ===== AI MODELS FUNCTIONS =====
+
+function updateAIStatusBar() {
+  const { completed, total } = state.aiModels;
+  const percentage = Math.round((completed / total) * 100);
+  
+  if (elements.aiStatusBar) {
+    if (completed === 0) {
+      elements.aiStatusBar.textContent = 'Initializing AI models...';
+      elements.aiStatusBar.style.background = 'rgba(245,158,11,.05)';
+      elements.aiStatusBar.style.color = 'var(--amber)';
+    } else if (completed < total) {
+      elements.aiStatusBar.textContent = `${completed} / ${total} models complete`;
+      elements.aiStatusBar.style.background = 'rgba(245,158,11,.05)';
+      elements.aiStatusBar.style.color = 'var(--amber)';
+    } else {
+      elements.aiStatusBar.textContent = `All ${total} models completed successfully`;
+      elements.aiStatusBar.style.background = 'rgba(16,185,129,.05)';
+      elements.aiStatusBar.style.color = 'var(--green)';
+    }
+  }
+}
+
+function createAIModelCard(model) {
+  const card = document.createElement('div');
+  card.className = 'ai-model-card';
+  card.id = `ai-card-${model.id}`;
+  
+  card.innerHTML = `
+    <div class="ai-model-header">
+      <div class="ai-model-title">${model.name}</div>
+      <div class="ai-model-status loading">
+        <div class="ai-model-spinner"></div>
+        Loading...
+      </div>
+    </div>
+    <div class="ai-model-body">
+      <div style="color: var(--muted); margin-bottom: 8px;">${model.description}</div>
+      <div class="ai-model-output" id="output-${model.id}">Initializing...</div>
+    </div>
+  `;
+  
+  return card;
+}
+
+function updateAIModelCard(modelId, status, content) {
+  const card = document.getElementById(`ai-card-${modelId}`);
+  if (!card) return;
+  
+  const statusEl = card.querySelector('.ai-model-status');
+  const outputEl = card.querySelector('.ai-model-output');
+  
+  if (status === 'loading') {
+    statusEl.className = 'ai-model-status loading';
+    statusEl.innerHTML = '<div class="ai-model-spinner"></div>Loading...';
+    outputEl.textContent = 'Processing...';
+  } else if (status === 'success') {
+    statusEl.className = 'ai-model-status success';
+    statusEl.innerHTML = '✓ Success';
+    outputEl.textContent = content;
+  } else if (status === 'error') {
+    statusEl.className = 'ai-model-status error';
+    statusEl.innerHTML = '✗ Error';
+    outputEl.innerHTML = `<div class="ai-model-error">${content}</div>`;
+  }
+}
+
+async function runAIModels() {
+  // Reset state
+  state.aiModels.completed = 0;
+  state.aiModels.results = {};
+  updateAIStatusBar();
+  
+  // Create cards
+  if (elements.aiModelsGrid) {
+    elements.aiModelsGrid.innerHTML = '';
+    aiModelsConfig.forEach(model => {
+      const card = createAIModelCard(model);
+      elements.aiModelsGrid.appendChild(card);
+      updateAIModelCard(model.id, 'loading', '');
+    });
+  }
+  
+  // Run all models in parallel using Promise.allSettled
+  const promises = aiModelsConfig.map(async (model) => {
+    try {
+      const result = await model.run();
+      state.aiModels.results[model.id] = { status: 'success', data: result };
+      updateAIModelCard(model.id, 'success', 
+        result.summary + '\n\n' + 
+        (result.forecast || result.alerts || result.flags || result.recommendations || ''));
+      return { modelId: model.id, success: true, result };
+    } catch (error) {
+      console.error(`AI Model ${model.name} failed:`, error);
+      state.aiModels.results[model.id] = { status: 'error', error: error.message };
+      updateAIModelCard(model.id, 'error', `Failed to execute: ${error.message}`);
+      return { modelId: model.id, success: false, error: error.message };
+    }
+  });
+  
+  const results = await Promise.allSettled(promises);
+  
+  // Update completion count
+  results.forEach(result => {
+    if (result.status === 'fulfilled' && result.value.success) {
+      state.aiModels.completed++;
+    } else if (result.status === 'rejected') {
+      // Promise.allSettled shouldn't reject, but just in case
+      state.aiModels.completed++;
+    }
+  });
+  
+  updateAIStatusBar();
 }
 
 // ===== RENDERING FUNCTIONS =====
@@ -451,12 +654,16 @@ function bootstrap() {
   const loadTimeout = setTimeout(() => {
     loadingTracker.updateProgress(100, 'Loaded (timeout)');
     hideLoadingOverlay();
+    // Run AI models even on timeout
+    runAIModels();
   }, LOAD_TIMEOUT);
   
   fetchState().then(() => {
     clearTimeout(loadTimeout);
     loadingTracker.updateProgress(100, 'Ready');
     hideLoadingOverlay();
+    // Run AI models after successful load
+    runAIModels();
   });
   
   // Update every 4.5 seconds (but use cache)
