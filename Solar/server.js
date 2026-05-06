@@ -1,731 +1,894 @@
-import express, { json } from 'express';
-// eslint-disable-next-line no-undef
-import { join } from 'node:path';
+import express from 'express';
+import { createServer } from 'http';
 import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { config } from 'dotenv';
+
+// Import our modules
+import { testConnection } from './db.js';
+import {
+  authenticateToken,
+  authorizeRoles,
+  refreshAccessToken,
+  createUser,
+  authenticateUser
+} from './auth.js';
+import { initiateSTKPush, processCallback, validateCallback } from './mpesa.js';
+import { generateToken, calculateKwhValue, tokenManager } from './token-engine.js';
+import { sendPaymentConfirmation, sendLowCreditWarning, sendPowerCutNotice, sendTokenDelivery, handleUSSDRequest } from './africastalking.js';
+import { mqttManager } from './mqtt.js';
+import { wsManager, WS_EVENTS } from './websocket.js';
 import {
   forecaster,
   maintenanceMonitor,
   fraudDetector,
   optimizer
 } from './ai-models.js';
-import weatherSystem from './weather-system.js';
-import { PanelCompatibility, MultiPanelSetup, panelDatabase } from './solar-panel-config.js';
+import { query, transaction } from './db.js';
+
+// Load environment variables
+config();
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = new URL('.', import.meta.url).pathname;
+const __dirname = dirname(__filename);
 
 const app = express();
-// eslint-disable-next-line no-undef
+const server = createServer(app);
 const port = process.env.PORT || 3000;
 
-app.use(json());
+// Initialize WebSocket server
+wsManager.initialize(server);
+
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "ws:", "wss:"]
+    }
+  }
+}));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
+  message: {
+    error: 'Too many requests',
+    message: 'Rate limit exceeded',
+    code: 'RATE_LIMIT_EXCEEDED'
+  }
+});
+
+app.use('/api/', limiter);
+
+// CORS
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL : true,
+  credentials: true
+}));
+
+// Body parsing
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// Static files
 app.use(express.static(__dirname));
 
-// Multi-panel setup and compatibility tracking
-const panelSetup = new MultiPanelSetup();
-let panelValidator = new PanelCompatibility('Monocrystalline_400W');
-
-// Add default panel
-panelSetup.addPanel('Monocrystalline_400W', 1);
-panelSetup.configuration = 'series';
-panelSetup.calculateTotalPower();
-
-const state = {
-  batteryLevel: 78,
-  generation: 180,
-  consumption: 135,
-  powerEnabled: true,
-  dueAmount: 55,
-  walletBalance: 220,
-  alerts: [],
-  events: [
-    { message: 'System online. Awaiting new telemetry...', timestamp: timeString() }
-  ],
-  // AI-powered predictions
-  aiPredictions: {
-    forecast: [],
-    maintenanceAlerts: [],
-    fraudFlags: [],
-    optimization: []
-  },
-  // Simulated hardware metrics for maintenance monitoring
-  voltage: 48,
-  current: 8,
-  // Solar panel data
-  solarPanel: {
-    type: 'Monocrystalline_400W',
-    panelValidator: panelValidator,
-    panelSetup: panelSetup,
-    validationResults: [],
-    faults: []
-  },
-  // Device info
-  device: {
-    id: 'SOLAR_DEVICE_001',
-    connected: false,
-    lastTelemetry: null,
-    connectionType: 'none'  // 'wifi', 'gsm', 'none'
-  }
-};
-
-function timeString() {
-  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function pushEvent(message) {
-  state.events.push({ message, timestamp: timeString() });
-  state.events = state.events.slice(-10);
-}
-
-function updateTelemetry() {
-  const drift = (Math.random() * 16 - 8);
-  const newGeneration = Math.max(0, Math.round(state.generation + drift));
-  const newConsumption = Math.max(20, Math.round(state.consumption + (Math.random() * 12 - 6)));
-  const batteryDelta = (newGeneration - newConsumption) * 0.08;
-
-  state.generation = newGeneration;
-  state.consumption = newConsumption;
-  state.batteryLevel = Math.min(100, Math.max(8, Math.round(state.batteryLevel + batteryDelta)));
-
-  // Update hardware metrics for predictive maintenance
-  state.voltage = Math.round((48 + (Math.random() * 4 - 2)) * 10) / 10; // 46-50V range
-  state.current = Math.max(0, Math.round((state.generation / 50 + Math.random() * 3) * 10) / 10);
-
-  // === AI MODEL UPDATES ===
-  // 1. Energy Forecasting
-  forecaster.addDataPoint(state.generation, state.consumption, Date.now());
-  state.aiPredictions.forecast = forecaster.forecast(6);
-
-  // 2. Predictive Maintenance - Anomaly Detection
-  const efficiency = state.generation > 0 ? state.consumption / state.generation : 0;
-  const maintenanceAlerts = maintenanceMonitor.detectAnomalies(
-    state.voltage,
-    state.current,
-    efficiency
-  );
-  state.aiPredictions.maintenanceAlerts = maintenanceAlerts;
-  
-  // Update critical alerts in main alerts array
-  const criticalMaintenance = maintenanceAlerts.filter(a => a.severity === 'high');
-  if (criticalMaintenance.length > 0) {
-    const maintenanceMsg = criticalMaintenance.map(a => a.message).join(' | ');
-    if (!state.alerts.includes(maintenanceMsg)) {
-      state.alerts = [maintenanceMsg, ...state.alerts.slice(0, 1)];
-      pushEvent(`🚨 MAINTENANCE ALERT: ${maintenanceMsg}`);
-    }
-  }
-
-  // 3. Usage Optimization Recommendations
-  state.aiPredictions.optimization = optimizer.getOptimizationRecommendations(
-    state.generation,
-    state.consumption,
-    state.batteryLevel
-  );
-
-  // Standard alerts
-  if (state.batteryLevel <= 20) {
-    if (!state.alerts.find(a => a.includes('Battery low'))) {
-      state.alerts = ['⚠️ Battery low: charge soon. (AI: Best time in 2 hours)'];
-      pushEvent('Battery low warning generated.');
-    }
-  } else if (state.generation < state.consumption && state.powerEnabled) {
-    if (!state.alerts.find(a => a.includes('Consumption'))) {
-      state.alerts = ['Consumption exceeds generation.'];
-    }
-  } else if (!criticalMaintenance.length && state.batteryLevel > 25) {
-    state.alerts = [];
-  }
-
-  if (state.dueAmount > 0 && state.walletBalance < state.dueAmount) {
-    if (!state.alerts.find(a => a.includes('Payment required'))) {
-      state.alerts = ['Payment required: insufficient balance for automatic billing.', ...state.alerts.slice(0, 1)];
-      pushEvent('Payment reminder generated due to low wallet balance.');
-    }
-  }
-}
-
-setInterval(updateTelemetry, 5000);
-
-app.get('/api/state', (req, res) => {
-  res.json(state);
-});
-
-app.post('/api/payment/stk', (req, res) => {
-  if (state.dueAmount <= 0) {
-    return res.status(400).json({ success: false, message: 'No outstanding payment due.' });
-  }
-
-  // AI: Check for fraud patterns
-  const userId = req.body.userId || 'user_default';
-  const deviceId = req.body.deviceId || 'device_default';
-  const fraudCheck = fraudDetector.recordPayment(userId, deviceId, state.dueAmount, Date.now());
-  
-  if (fraudCheck && fraudCheck.severity === 'high') {
-    pushEvent(`🚨 FRAUD ALERT: ${fraudCheck.message}`);
-    return res.json({ 
-      success: false, 
-      message: 'Transaction blocked - fraud detection triggered.',
-      fraud: fraudCheck,
-      state 
-    });
-  }
-
-  const success = Math.random() > 0.15;
-  if (success) {
-    const paidAmount = state.dueAmount;
-    state.walletBalance = Math.max(0, state.walletBalance - paidAmount);
-    state.dueAmount = 0;
-    state.powerEnabled = true;
-    state.alerts = [];
-    pushEvent(`STK Push successful. KES ${paidAmount.toFixed(2)} paid.`);
-    return res.json({ success: true, message: 'Payment completed.', state });
-  }
-
-  pushEvent('STK Push failed. Customer did not complete payment.');
-  state.alerts = ['Payment failed. Retry with mobile money.'];
-  return res.json({ success: false, message: 'STK Push failed.', state });
-});
-
-app.post('/api/payment/confirm', (req, res) => {
-  if (state.dueAmount <= 0) {
-    return res.status(400).json({ success: false, message: 'Nothing to confirm.' });
-  }
-
-  const paidAmount = state.dueAmount;
-  state.walletBalance = Math.max(0, state.walletBalance - paidAmount);
-  state.dueAmount = 0;
-  state.powerEnabled = true;
-  state.alerts = [];
-  pushEvent(`Manual payment confirmed. KES ${paidAmount.toFixed(2)} cleared.`);
-  res.json({ success: true, message: 'Payment confirmed.', state });
-});
-
-app.post('/api/device/toggle', (req, res) => {
-  state.powerEnabled = !state.powerEnabled;
-  pushEvent(state.powerEnabled ? 'Power restored by remote control.' : 'Power disabled remotely.');
-  res.json({ success: true, state });
-});
-
-// ===================== ESP32 TELEMETRY ENDPOINTS =====================
-
-/**
- * Receive real telemetry data from ESP32 hardware
- * POST /api/telemetry
- * Body: { deviceId, voltage, current, generation, battery, consumption, temperature, panelType }
- */
-app.post('/api/telemetry', (req, res) => {
-  const { deviceId, voltage, current, generation, battery, consumption, temperature, panelType } = req.body;
-  
-  if (!voltage || !current || generation === undefined || battery === undefined) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Missing required telemetry fields: voltage, current, generation, battery' 
-    });
-  }
-
-  // Update device connection status
-  state.device.id = deviceId || state.device.id;
-  state.device.connected = true;
-  state.device.lastTelemetry = new Date().toISOString();
-  
-  // Update panel type if provided
-  if (panelType && panelDatabase[panelType]) {
-    state.solarPanel.type = panelType;
-    panelValidator = new PanelCompatibility(panelType);
-    state.solarPanel.panelValidator = panelValidator;
-  }
-  
-  // Update system state with real data
-  state.voltage = voltage;
-  state.current = current;
-  state.generation = generation;
-  state.batteryLevel = battery;
-  state.consumption = consumption || state.consumption;
-  
-  // Validate sensor data against panel specifications
-  const validation = panelValidator.validateReading(voltage, current, temperature || 25);
-  state.solarPanel.validationResults = validation.issues;
-  
-  // Detect faults
-  const efficiency = generation > 0 ? consumption / generation : 0;
-  const faults = panelValidator.detectFaults(voltage, current, efficiency);
-  state.solarPanel.faults = faults;
-  
-  // Log any issues
-  if (!validation.isValid) {
-    validation.issues.forEach(issue => {
-      pushEvent(`⚠️ SENSOR: ${issue.message}`);
-    });
-  }
-  
-  if (faults.length > 0) {
-    faults.forEach(fault => {
-      const icon = fault.severity === 'high' ? '🚨' : '⚠️';
-      pushEvent(`${icon} PANEL: ${fault.message}`);
-    });
-  }
-  
-  // Trigger AI updates
-  forecaster.addDataPoint(state.generation, state.consumption, Date.now());
-  const maintenanceAlerts = maintenanceMonitor.detectAnomalies(
-    state.voltage,
-    state.current,
-    efficiency
-  );
-  state.aiPredictions.maintenanceAlerts = maintenanceAlerts;
-  state.aiPredictions.optimization = optimizer.getOptimizationRecommendations(
-    state.generation,
-    state.consumption,
-    state.batteryLevel
-  );
-  
-  // Push event
-  pushEvent(`📡 Telemetry: ${generation}W gen | ${battery}% bat | V=${voltage} I=${current}A`);
-  
-  res.json({ 
-    success: true, 
-    message: 'Telemetry received',
-    validation: {
-      isValid: validation.isValid,
-      issues: validation.issues
-    },
-    faults: faults,
-    state 
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Global error:', err);
+  res.status(500).json({
+    error: 'Internal server error',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong',
+    code: 'INTERNAL_ERROR'
   });
 });
 
-// ===================== SOLAR PANEL CONFIGURATION ENDPOINTS =====================
+// ==================== AUTHENTICATION ROUTES ====================
 
-/**
- * Get available solar panel types and specs
- * GET /api/panels/catalog
- */
-app.get('/api/panels/catalog', (req, res) => {
-  const catalog = Object.entries(panelDatabase).map(([key, value]) => ({
-    id: key,
-    ...value
-  }));
-  
-  res.json({
-    success: true,
-    panels: catalog,
-    count: catalog.length
-  });
-});
-
-/**
- * Get current panel configuration and validation
- * GET /api/panels/config
- */
-app.get('/api/panels/config', (req, res) => {
-  const specs = panelSetup.getSystemSpecs();
-  const maintenance = panelValidator.getMaintenanceSchedule();
-  const optimalTimes = panelValidator.getOptimalLoadTimes();
-  
-  res.json({
-    success: true,
-    configuration: {
-      currentPanel: state.solarPanel.type,
-      panelSpecs: panelDatabase[state.solarPanel.type],
-      systemSpecs: specs,
-      validationStatus: state.solarPanel.validationResults,
-      detectedFaults: state.solarPanel.faults,
-      maintenanceSchedule: maintenance,
-      optimalLoadTimes: optimalTimes,
-      estimatedDailyEnergy: panelValidator.estimateDailyEnergy(5) + ' Wh',
-      panelHealth: {
-        efficiency: state.generation > 0 ? (state.consumption / state.generation * 100).toFixed(1) + '%' : 'N/A',
-        estimatedDegradation: '0.5% per year (typical)',
-        nextServiceDue: 'Monthly cleaning recommended'
-      }
-    }
-  });
-});
-
-/**
- * Configure a new panel type
- * POST /api/panels/configure
- * Body: { panelType: 'Monocrystalline_400W' }
- */
-app.post('/api/panels/configure', (req, res) => {
-  const { panelType } = req.body;
-  
-  if (!panelDatabase[panelType]) {
-    return res.status(400).json({
-      success: false,
-      message: `Unknown panel type: ${panelType}`,
-      availableTypes: Object.keys(panelDatabase)
-    });
-  }
-  
-  // Update configuration
-  state.solarPanel.type = panelType;
-  panelValidator = new PanelCompatibility(panelType);
-  state.solarPanel.panelValidator = panelValidator;
-  
-  pushEvent(`🔧 Panel configured: ${panelType}`);
-  
-  res.json({
-    success: true,
-    message: `Panel type changed to ${panelType}`,
-    panelSpecs: panelDatabase[panelType]
-  });
-});
-
-/**
- * Configure multi-panel setup
- * POST /api/panels/multi-setup
- * Body: { panels: [{type, quantity}, ...], configuration: 'series'|'parallel' }
- */
-app.post('/api/panels/multi-setup', (req, res) => {
-  const { panels, configuration } = req.body;
-  
-  if (!panels || !Array.isArray(panels)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid panels array'
-    });
-  }
-  
+// Login
+app.post('/api/auth/login', async (req, res) => {
   try {
-    const newSetup = new MultiPanelSetup();
-    panels.forEach(p => newSetup.addPanel(p.type, p.quantity || 1));
-    newSetup.configuration = configuration || 'series';
-    newSetup.calculateTotalPower();
-    
-    // Update state
-    Object.assign(panelSetup, newSetup);
-    state.solarPanel.panelSetup = newSetup;
-    
-    pushEvent(`🔌 Multi-panel setup configured: ${configuration} with ${newSetup.getSystemSpecs().totalPanels} panels`);
-    
-    res.json({
-      success: true,
-      message: 'Multi-panel setup configured',
-      setup: newSetup.getSystemSpecs()
-    });
-  } catch (error) {
-    res.status(400).json({
-      success: false,
-      message: error.message
-    });
-  }
-});
+    const { email, password } = req.body;
 
-/**
- * Validate panel sensor readings
- * POST /api/panels/validate
- * Body: { voltage, current, temperature }
- */
-app.post('/api/panels/validate', (req, res) => {
-  const { voltage, current, temperature = 25 } = req.body;
-  
-  if (voltage === undefined || current === undefined) {
-    return res.status(400).json({
-      success: false,
-      message: 'Missing voltage or current'
-    });
-  }
-  
-  const validation = panelValidator.validateReading(voltage, current, temperature);
-  
-  res.json({
-    success: true,
-    validation: validation,
-    temperatureEffect: {
-      currentEfficiency: panelValidator.config.efficiency,
-      temperatureAdjusted: panelValidator.getTemperatureAdjustedPower(temperature),
-      efficiencyAt25C: panelValidator.config.efficiency,
-      message: temperature > 45 ? '⚠️ High temperature reducing efficiency' : '✅ Optimal temperature'
-    }
-  });
-});
-
-/**
- * Get panel maintenance recommendations
- * GET /api/panels/maintenance
- */
-app.get('/api/panels/maintenance', (req, res) => {
-  const schedule = panelValidator.getMaintenanceSchedule();
-  const faults = state.solarPanel.faults;
-  
-  res.json({
-    success: true,
-    maintenance: {
-      schedule: schedule,
-      currentFaults: faults,
-      urgentActions: faults.filter(f => f.severity === 'high').map(f => f.recommendation),
-      lastChecked: state.device.lastTelemetry,
-      status: faults.length === 0 ? '✅ HEALTHY' : '⚠️ ISSUES DETECTED'
-    }
-  });
-});
-
-// ===================== AI ENDPOINTS =====================
-
-/**
- * Energy Forecasting - Predicts next 6 hours of generation and consumption
- */
-app.get('/api/forecast', (req, res) => {
-  const forecast = state.aiPredictions.forecast;
-  const optimalPayTime = forecaster.getNextPayOptimalTime();
-  
-  res.json({
-    success: true,
-    forecast: {
-      predictions: forecast,
-      optimalPaymentTime: optimalPayTime,
-      summary: {
-        expectedPeakGeneration: forecast && forecast.length > 0 ? forecast.reduce((max, f) => 
-          f.predictedGeneration > max ? f.predictedGeneration : max, 0) : 0,
-        expectedMinimumBattery: Math.round(
-          state.batteryLevel + (forecast && forecast.length > 0 ? forecast.reduce((sum, f) => 
-            sum + (f.surplus * 0.08), 0) : 0)
-        ),
-        recommendation: forecast && forecast.length > 0 && forecast[0].surplus > 0 
-          ? '✅ Excess generation expected - good time for charging'
-          : '⚠️ Deficit expected - consider load reduction'
-      }
-    }
-  });
-});
-
-/**
- * Predictive Maintenance - Detects hardware anomalies early
- */
-app.get('/api/maintenance-alerts', (req, res) => {
-  const alerts = maintenanceMonitor.getAlerts();
-  
-  res.json({
-    success: true,
-    maintenance: {
-      alerts: alerts,
-      totalAlerts: alerts.length,
-      criticalCount: alerts.filter(a => a.severity === 'high').length,
-      deviceStatus: {
-        voltage: {
-          current: state.voltage,
-          status: state.voltage > 55 || state.voltage < 40 ? '❌ OUT OF RANGE' : '✅ NORMAL',
-          range: '44-52V'
-        },
-        current: {
-          current: state.current,
-          status: state.current > 20 ? '⚠️ HIGH' : '✅ NORMAL',
-          limit: '20A'
-        },
-        efficiency: {
-          current: (state.generation > 0 ? (state.consumption / state.generation * 100) : 0).toFixed(1) + '%',
-          status: 'Monitoring...'
-        }
-      },
-      nextCheckIn: '5 minutes'
-    }
-  });
-});
-
-/**
- * Fraud Detection - Real-time payment anomaly detection
- */
-app.post('/api/fraud-check', (req, res) => {
-  const { userId, deviceId, amount } = req.body;
-  
-  if (!userId || !deviceId || !amount) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Missing required fields: userId, deviceId, amount' 
-    });
-  }
-
-  const fraudAlert = fraudDetector.recordPayment(userId, deviceId, amount, Date.now());
-  
-  res.json({
-    success: true,
-    fraud: {
-      isFlagged: !!fraudAlert,
-      alert: fraudAlert || null,
-      riskLevel: fraudAlert ? fraudAlert.severity : 'low',
-      action: fraudAlert ? fraudAlert.action : 'allow',
-      timestamp: new Date().toISOString()
-    }
-  });
-});
-
-/**
- * Usage Optimization - AI-powered load shifting recommendations
- */
-app.get('/api/optimization', (req, res) => {
-  const recommendations = state.aiPredictions.optimization;
-  
-  res.json({
-    success: true,
-    optimization: {
-      recommendations: recommendations,
-      demandShiftingPotential: {
-        shifablWattage: 1200, // 10A + 5A + 2A
-        estimatedSavings: (recommendations
-          .filter(r => r.type === 'demand_shift')
-          .reduce((sum, r) => sum + (r.expectedSavings ? parseInt(r.expectedSavings) : 0), 0)) + 'Wh',
-        implementationEase: 'Easy - controlled via relay switches'
-      },
-      nextOptimalLoadTime: recommendations
-        .filter(r => r.type === 'battery_charging')[0]?.optimalTime || 'Computing...',
-      expectedCostSavings: '5-15% monthly (via optimized charging)'
-    }
-  });
-});
-
-/**
- * AI Insights Dashboard - Unified view of all AI services
- */
-app.get('/api/ai-insights', (req, res) => {
-  const forecast = forecaster.forecast(6);
-  const maintenance = maintenanceMonitor.getAlerts();
-  const fraudFlags = fraudDetector.getFlags();
-  const recommendations = optimizer.getOptimizationRecommendations(
-    state.generation,
-    state.consumption,
-    state.batteryLevel
-  );
-
-  res.json({
-    success: true,
-    timestamp: new Date().toISOString(),
-    insights: {
-      energyForecasting: {
-        module: 'TensorFlow.js Linear Regression',
-        nextHourPrediction: forecast && forecast.length > 0 ? forecast[0] : null,
-        confidence: forecast && forecast.length > 0 ? forecast[0].confidence : 'No data yet'
-      },
-      predictiveMaintenance: {
-        module: 'Anomaly Detection (Z-score + Pattern Analysis)',
-        alerts: maintenance,
-        criticalIssues: maintenance.filter(a => a.severity === 'high').length,
-        status: maintenance.length > 0 ? '⚠️ ISSUES DETECTED' : '✅ ALL NORMAL'
-      },
-      fraudDetection: {
-        module: 'Graph Analytics + Statistical Anomaly Detection',
-        recentFlags: fraudFlags,
-        riskLevel: fraudFlags.length > 2 ? 'HIGH' : (fraudFlags.length > 0 ? 'MEDIUM' : 'LOW')
-      },
-      usageOptimization: {
-        module: 'Demand Forecasting + Load Optimization',
-        recommendations: recommendations.slice(0, 3),
-        potentialSavings: '5-15% monthly'
-      },
-      systemHealth: {
-        aiModelsActive: 4,
-        dataPointsCollected: 288,
-        forecastAccuracy: '92%',
-        maintenanceReliability: '94%'
-      }
-    }
-  });
-});
-
-// ===================== WEATHER ENDPOINTS =====================
-
-/**
- * Weather Status - Current weather conditions and solar impact
- */
-app.get('/api/weather', async (req, res) => {
-  try {
-    // Fetch real weather or use simulation
-    const location = req.query.location || '-1.2921,36.8219'; // Default: Nairobi
-    const [lat, lon] = location.split(',');
-    await weatherSystem.fetchWeatherData(parseFloat(lat), parseFloat(lon));
-    
-    const sunPosition = weatherSystem.getSunPosition();
-    const impact = weatherSystem.getImpactMessage();
-    const forecast = weatherSystem.generateForecast(12);
-    
-    res.json({
-      success: true,
-      weather: {
-        current: weatherSystem.currentWeather,
-        solarImpact: {
-          generationMultiplier: weatherSystem.solarImpact.generationMultiplier,
-          efficiencyMessage: impact,
-          expectedGenerationAdjustment: `${(weatherSystem.solarImpact.generationMultiplier * 100).toFixed(0)}% of clear-sky potential`
-        },
-        sunPosition: sunPosition,
-        windDirection: weatherSystem.getWindDirection(),
-        backgroundClass: weatherSystem.getBackgroundClass(),
-        theme: weatherSystem.getWeatherTheme(),
-        forecast: forecast
-      }
-    });
-  } catch (error) {
-    console.error("Weather fetch failed, falling back to simulation:", error);
-
-    try {
-      // Fallback to simulation
-      weatherSystem.simulateWeatherData();
-
-      const sunPosition = weatherSystem.getSunPosition();
-
-      return res.status(200).json({
-        success: true,
-        fallback: true,
-        weather: {
-          current: weatherSystem.currentWeather,
-          solarImpact: {
-            generationMultiplier: weatherSystem.solarImpact.generationMultiplier,
-            efficiencyMessage: weatherSystem.getImpactMessage(),
-            expectedGenerationAdjustment: `${
-              (weatherSystem.solarImpact.generationMultiplier * 100).toFixed(0)
-            }% of clear-sky potential`
-          },
-          sunPosition: sunPosition,
-          windDirection: weatherSystem.getWindDirection(),
-          backgroundClass: weatherSystem.getBackgroundClass(),
-          theme: weatherSystem.getWeatherTheme(),
-          forecast: weatherSystem.generateForecast(12)
-        }
+    if (!email || !password) {
+      return res.status(400).json({
+        error: 'Bad request',
+        message: 'Email and password required',
+        code: 'MISSING_CREDENTIALS'
       });
-    } catch (fallbackError) {
-      console.error("Simulation fallback also failed:", fallbackError);
+    }
 
-      return res.status(500).json({
-        success: false,
-        message: "Unable to retrieve weather data",
+    const user = await authenticateUser(email, password);
+
+    // Generate tokens
+    const accessToken = generateAccessToken({
+      id: user.id,
+      email: user.email,
+      role: user.role
+    });
+
+    const refreshToken = generateRefreshToken({
+      id: user.id,
+      email: user.email
+    });
+
+    // Store refresh token in database
+    await query(
+      'UPDATE users SET refresh_token = $1, token_expires_at = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+      [refreshToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), user.id]
+    );
+
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        firstName: user.firstName,
+        lastName: user.lastName
+      },
+      accessToken,
+      refreshToken
+    });
+
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(401).json({
+      error: 'Authentication failed',
+      message: err.message,
+      code: 'LOGIN_FAILED'
+    });
+  }
+});
+
+// Refresh token
+app.post('/api/auth/refresh', refreshAccessToken);
+
+// Register (admin only)
+app.post('/api/auth/register', authenticateToken, authorizeRoles('admin'), async (req, res) => {
+  try {
+    const { email, phone, password, role = 'customer', firstName, lastName } = req.body;
+
+    if (!email || !phone || !password) {
+      return res.status(400).json({
+        error: 'Bad request',
+        message: 'Email, phone, and password required',
+        code: 'MISSING_FIELDS'
+      });
+    }
+
+    const user = await createUser({
+      email,
+      phone,
+      password,
+      role,
+      firstName,
+      lastName
+    });
+
+    res.status(201).json({
+      message: 'User created successfully',
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        firstName: user.first_name,
+        lastName: user.last_name
+      }
+    });
+
+  } catch (err) {
+    console.error('Registration error:', err);
+    if (err.code === '23505') { // Unique constraint violation
+      res.status(409).json({
+        error: 'Conflict',
+        message: 'User already exists',
+        code: 'USER_EXISTS'
+      });
+    } else {
+      res.status(500).json({
+        error: 'Registration failed',
+        message: err.message,
+        code: 'REGISTRATION_FAILED'
       });
     }
   }
 });
 
-/**
- * Weather Forecast - 12-hour weather and generation forecast
- */
-app.get('/api/weather-forecast', (req, res) => {
-  const weatherForecast = weatherSystem.generateForecast(12);
-  const energyForecast = forecaster.forecast(6);
-  
-  // Combine weather and energy forecasts
-  const combined = energyForecast.map((ef, idx) => {
-    const wf = weatherForecast[idx] || weatherForecast[0];
-    return {
-      hour: ef.hour,
-      temperature: wf.temperature,
-      condition: wf.condition,
-      prediction: ef.predictedGeneration,
-      weatherAdjustedPrediction: Math.round(ef.predictedGeneration * wf.generationMultiplier),
-      confidence: ef.confidence,
-      solarImpact: wf.generationMultiplier
+// ==================== M-PESA INTEGRATION ====================
+
+// Initiate STK Push payment
+app.post('/api/mpesa/stkpush', authenticateToken, async (req, res) => {
+  try {
+    const { amount, accountReference = 'SolarPAYG' } = req.body;
+    const userId = req.user.id;
+
+    if (!amount || amount < 1) {
+      return res.status(400).json({
+        error: 'Bad request',
+        message: 'Valid amount required',
+        code: 'INVALID_AMOUNT'
+      });
+    }
+
+    // Get user phone number
+    const userResult = await query('SELECT phone FROM users WHERE id = $1', [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Not found',
+        message: 'User not found',
+        code: 'USER_NOT_FOUND'
+      });
+    }
+
+    const phoneNumber = userResult.rows[0].phone;
+
+    // Initiate STK Push
+    const stkResult = await initiateSTKPush(phoneNumber, amount, accountReference);
+
+    if (!stkResult.success) {
+      return res.status(400).json({
+        error: 'Payment failed',
+        message: stkResult.error,
+        code: 'STK_PUSH_FAILED'
+      });
+    }
+
+    // Store payment record
+    const paymentResult = await query(
+      `INSERT INTO payments (user_id, transaction_id, merchant_request_id, checkout_request_id, amount_kes, phone_number, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+       RETURNING id`,
+      [userId, `TXN_${Date.now()}`, stkResult.merchantRequestId, stkResult.checkoutRequestId, amount, phoneNumber]
+    );
+
+    res.json({
+      message: 'Payment initiated',
+      paymentId: paymentResult.rows[0].id,
+      merchantRequestId: stkResult.merchantRequestId,
+      checkoutRequestId: stkResult.checkoutRequestId,
+      customerMessage: stkResult.customerMessage
+    });
+
+  } catch (err) {
+    console.error('STK Push error:', err);
+    res.status(500).json({
+      error: 'Payment initiation failed',
+      message: err.message,
+      code: 'STK_PUSH_ERROR'
+    });
+  }
+});
+
+// M-Pesa callback handler
+app.post('/api/mpesa/callback', async (req, res) => {
+  try {
+    const callbackData = req.body;
+
+    // Validate callback
+    if (!validateCallback(callbackData)) {
+      return res.status(400).json({ error: 'Invalid callback data' });
+    }
+
+    // Process callback
+    const transactionData = processCallback(callbackData);
+
+    if (transactionData.success && transactionData.resultCode === '0') {
+      // Payment successful - update database
+      await transaction(async (client) => {
+        // Update payment status
+        await client.query(
+          `UPDATE payments
+           SET status = 'completed', mpesa_receipt_number = $1, result_code = $2,
+               result_desc = $3, updated_at = CURRENT_TIMESTAMP, processed_at = CURRENT_TIMESTAMP
+           WHERE checkout_request_id = $4`,
+          [transactionData.mpesaReceiptNumber, transactionData.resultCode,
+           transactionData.resultDesc, transactionData.checkoutRequestId]
+        );
+
+        // Get payment details
+        const paymentResult = await client.query(
+          'SELECT user_id, amount_kes FROM payments WHERE checkout_request_id = $1',
+          [transactionData.checkoutRequestId]
+        );
+
+        if (paymentResult.rows.length > 0) {
+          const { user_id, amount_kes } = paymentResult.rows[0];
+
+          // Generate PAYG token
+          const kwhValue = calculateKwhValue(amount_kes);
+          const tokenData = generateToken(user_id, null, amount_kes, kwhValue);
+
+          // Store token
+          await client.query(
+            `INSERT INTO tokens (user_id, token_value, amount_kes, kwh_value, expires_at)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [user_id, tokenData.tokenValue, amount_kes, kwhValue, tokenData.expiresAt]
+          );
+
+          // Add to token manager
+          tokenManager.addToken({
+            tokenValue: tokenData.tokenValue,
+            payload: tokenData.payload,
+            signature: tokenData.signature
+          });
+
+          // Send SMS notification
+          const userResult = await client.query('SELECT phone FROM users WHERE id = $1', [user_id]);
+          if (userResult.rows.length > 0) {
+            const phoneNumber = userResult.rows[0].phone;
+
+            // Send payment confirmation
+            await sendPaymentConfirmation(phoneNumber, amount_kes, tokenData.tokenValue, kwhValue);
+
+            // Send token delivery
+            await sendTokenDelivery(phoneNumber, tokenData.tokenValue, kwhValue);
+          }
+
+          // Broadcast to WebSocket clients
+          wsManager.broadcastPaymentConfirmation(user_id, {
+            amount: amount_kes,
+            token: tokenData.tokenValue,
+            kwhValue
+          });
+
+          // Broadcast token generation
+          wsManager.broadcastTokenGenerated(user_id, {
+            token: tokenData.tokenValue,
+            amount: amount_kes,
+            kwhValue,
+            expiresAt: tokenData.expiresAt
+          });
+        }
+      });
+    } else {
+      // Payment failed - update status
+      await query(
+        `UPDATE payments
+         SET status = 'failed', result_code = $1, result_desc = $2,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE checkout_request_id = $3`,
+        [transactionData.resultCode, transactionData.resultDesc, transactionData.checkoutRequestId]
+      );
+    }
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error('M-Pesa callback error:', err);
+    res.status(500).json({
+      error: 'Callback processing failed',
+      message: err.message
+    });
+  }
+});
+
+// ==================== PAYG TOKEN MANAGEMENT ====================
+
+// Validate token
+app.post('/api/token/validate', async (req, res) => {
+  try {
+    const { token, deviceId } = req.body;
+
+    if (!token || !deviceId) {
+      return res.status(400).json({
+        error: 'Bad request',
+        message: 'Token and device ID required',
+        code: 'MISSING_FIELDS'
+      });
+    }
+
+    // Get token data from database
+    const tokenResult = await query(
+      'SELECT * FROM tokens WHERE token_value = $1 AND is_used = false AND expires_at > CURRENT_TIMESTAMP',
+      [token]
+    );
+
+    if (tokenResult.rows.length === 0) {
+      return res.status(400).json({
+        error: 'Invalid token',
+        message: 'Token not found, expired, or already used',
+        code: 'INVALID_TOKEN'
+      });
+    }
+
+    const tokenData = tokenResult.rows[0];
+
+    // Mark token as used
+    await query(
+      'UPDATE tokens SET is_used = true, used_at = CURRENT_TIMESTAMP WHERE id = $1',
+      [tokenData.id]
+    );
+
+    // Send MQTT command to unlock relay
+    if (mqttManager.isConnected()) {
+      await mqttManager.controlRelay(deviceId, true);
+    }
+
+    res.json({
+      valid: true,
+      kwhValue: tokenData.kwh_value,
+      amount: tokenData.amount_kes,
+      message: 'Token validated successfully. Relay unlocked.'
+    });
+
+  } catch (err) {
+    console.error('Token validation error:', err);
+    res.status(500).json({
+      error: 'Token validation failed',
+      message: err.message,
+      code: 'VALIDATION_ERROR'
+    });
+  }
+});
+
+// Get user tokens
+app.get('/api/tokens', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const limit = parseInt(req.query.limit) || 10;
+
+    const result = await query(
+      `SELECT id, token_value, amount_kes, kwh_value, is_used, used_at, expires_at, created_at
+       FROM tokens
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [userId, limit]
+    );
+
+    res.json({
+      tokens: result.rows
+    });
+
+  } catch (err) {
+    console.error('Get tokens error:', err);
+    res.status(500).json({
+      error: 'Failed to retrieve tokens',
+      message: err.message,
+      code: 'GET_TOKENS_ERROR'
+    });
+  }
+});
+
+// ==================== DEVICE MANAGEMENT ====================
+
+// Get user devices
+app.get('/api/devices', authenticateToken, async (req, res) => {
+  try {
+    let queryText, params;
+
+    if (req.user.role === 'admin') {
+      // Admin sees all devices
+      queryText = `
+        SELECT d.*, u.email as user_email, u.first_name, u.last_name
+        FROM devices d
+        LEFT JOIN users u ON d.user_id = u.id
+        ORDER BY d.created_at DESC
+      `;
+      params = [];
+    } else {
+      // Customers see only their devices
+      queryText = 'SELECT * FROM devices WHERE user_id = $1 ORDER BY created_at DESC';
+      params = [req.user.id];
+    }
+
+    const result = await query(queryText, params);
+    res.json({ devices: result.rows });
+
+  } catch (err) {
+    console.error('Get devices error:', err);
+    res.status(500).json({
+      error: 'Failed to retrieve devices',
+      message: err.message,
+      code: 'GET_DEVICES_ERROR'
+    });
+  }
+});
+
+// Add device (admin only)
+app.post('/api/devices', authenticateToken, authorizeRoles('admin'), async (req, res) => {
+  try {
+    const { deviceId, userId, name, locationLat, locationLng, locationAddress, panelType, batteryCapacityKwh } = req.body;
+
+    const result = await query(
+      `INSERT INTO devices (device_id, user_id, name, location_lat, location_lng, location_address, panel_type, battery_capacity_kwh)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [deviceId, userId, name, locationLat, locationLng, locationAddress, panelType, batteryCapacityKwh]
+    );
+
+    res.status(201).json({
+      message: 'Device added successfully',
+      device: result.rows[0]
+    });
+
+  } catch (err) {
+    console.error('Add device error:', err);
+    if (err.code === '23505') {
+      res.status(409).json({
+        error: 'Conflict',
+        message: 'Device ID already exists',
+        code: 'DEVICE_EXISTS'
+      });
+    } else {
+      res.status(500).json({
+        error: 'Failed to add device',
+        message: err.message,
+        code: 'ADD_DEVICE_ERROR'
+      });
+    }
+  }
+});
+
+// Control device relay
+app.post('/api/devices/:deviceId/control', authenticateToken, async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const { relay } = req.body; // true = ON, false = OFF
+
+    // Check device ownership (unless admin)
+    if (req.user.role !== 'admin') {
+      const deviceResult = await query('SELECT user_id FROM devices WHERE device_id = $1', [deviceId]);
+      if (deviceResult.rows.length === 0 || deviceResult.rows[0].user_id !== req.user.id) {
+        return res.status(403).json({
+          error: 'Access denied',
+          message: 'Device not found or access denied',
+          code: 'DEVICE_ACCESS_DENIED'
+        });
+      }
+    }
+
+    // Send MQTT command
+    if (mqttManager.isConnected()) {
+      await mqttManager.controlRelay(deviceId, relay);
+      res.json({
+        message: `Relay ${relay ? 'activated' : 'deactivated'} successfully`,
+        deviceId,
+        relay
+      });
+    } else {
+      res.status(503).json({
+        error: 'Service unavailable',
+        message: 'MQTT broker not connected',
+        code: 'MQTT_DISCONNECTED'
+      });
+    }
+
+  } catch (err) {
+    console.error('Device control error:', err);
+    res.status(500).json({
+      error: 'Device control failed',
+      message: err.message,
+      code: 'DEVICE_CONTROL_ERROR'
+    });
+  }
+});
+
+// ==================== ENERGY DATA & ANALYTICS ====================
+
+// Get energy readings
+app.get('/api/energy/:deviceId', authenticateToken, async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const limit = parseInt(req.query.limit) || 100;
+
+    // Check device access
+    if (req.user.role !== 'admin') {
+      const deviceResult = await query('SELECT user_id FROM devices WHERE device_id = $1', [deviceId]);
+      if (deviceResult.rows.length === 0 || deviceResult.rows[0].user_id !== req.user.id) {
+        return res.status(403).json({
+          error: 'Access denied',
+          message: 'Device access denied',
+          code: 'DEVICE_ACCESS_DENIED'
+        });
+      }
+    }
+
+    const result = await query(
+      `SELECT * FROM energy_readings
+       WHERE device_id = $1
+       ORDER BY timestamp DESC
+       LIMIT $2`,
+      [deviceId, limit]
+    );
+
+    res.json({
+      deviceId,
+      readings: result.rows
+    });
+
+  } catch (err) {
+    console.error('Get energy data error:', err);
+    res.status(500).json({
+      error: 'Failed to retrieve energy data',
+      message: err.message,
+      code: 'GET_ENERGY_ERROR'
+    });
+  }
+});
+
+// Get AI predictions
+app.get('/api/ai/predictions/:deviceId', authenticateToken, async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+
+    // Check device access
+    if (req.user.role !== 'admin') {
+      const deviceResult = await query('SELECT user_id FROM devices WHERE device_id = $1', [deviceId]);
+      if (deviceResult.rows.length === 0 || deviceResult.rows[0].user_id !== req.user.id) {
+        return res.status(403).json({
+          error: 'Access denied',
+          message: 'Device access denied',
+          code: 'DEVICE_ACCESS_DENIED'
+        });
+      }
+    }
+
+    const result = await query(
+      `SELECT * FROM ai_predictions
+       WHERE device_id = $1
+       ORDER BY created_at DESC
+       LIMIT 10`,
+      [deviceId]
+    );
+
+    res.json({
+      deviceId,
+      predictions: result.rows
+    });
+
+  } catch (err) {
+    console.error('Get AI predictions error:', err);
+    res.status(500).json({
+      error: 'Failed to retrieve AI predictions',
+      message: err.message,
+      code: 'GET_AI_PREDICTIONS_ERROR'
+    });
+  }
+});
+
+// ==================== USSD INTEGRATION ====================
+
+// USSD handler
+app.post('/api/ussd', handleUSSDRequest);
+
+// ==================== DASHBOARD DATA ====================
+
+// Get dashboard data
+app.get('/api/dashboard', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    let dashboardData = {
+      user: req.user,
+      stats: {},
+      recentActivity: []
     };
-  });
-  
+
+    if (userRole === 'admin') {
+      // Admin dashboard - system-wide stats
+      const statsResult = await query(`
+        SELECT
+          COUNT(DISTINCT u.id) as total_users,
+          COUNT(DISTINCT d.id) as total_devices,
+          COUNT(CASE WHEN d.is_active THEN 1 END) as active_devices,
+          SUM(p.amount_kes) as total_revenue,
+          COUNT(CASE WHEN p.status = 'completed' THEN 1 END) as completed_payments
+        FROM users u
+        LEFT JOIN devices d ON u.id = d.user_id
+        LEFT JOIN payments p ON u.id = p.user_id AND p.status = 'completed'
+      `);
+
+      dashboardData.stats = statsResult.rows[0] || {};
+
+      // Recent payments
+      const paymentsResult = await query(`
+        SELECT p.*, u.first_name, u.last_name, u.email
+        FROM payments p
+        JOIN users u ON p.user_id = u.id
+        ORDER BY p.created_at DESC
+        LIMIT 10
+      `);
+
+      dashboardData.recentPayments = paymentsResult.rows;
+
+    } else {
+      // Customer dashboard - personal data
+      const userStatsResult = await query(`
+        SELECT
+          COUNT(d.id) as device_count,
+          COALESCE(SUM(CASE WHEN p.status = 'completed' THEN p.amount_kes END), 0) as total_paid,
+          COALESCE(SUM(CASE WHEN t.is_used = false AND t.expires_at > CURRENT_TIMESTAMP THEN t.kwh_value END), 0) as available_kwh,
+          COUNT(CASE WHEN t.is_used = false AND t.expires_at > CURRENT_TIMESTAMP THEN 1 END) as active_tokens
+        FROM users u
+        LEFT JOIN devices d ON u.id = d.user_id
+        LEFT JOIN payments p ON u.id = p.user_id
+        LEFT JOIN tokens t ON u.id = t.user_id
+        WHERE u.id = $1
+      `, [userId]);
+
+      dashboardData.stats = userStatsResult.rows[0] || {};
+
+      // User's devices with latest readings
+      const devicesResult = await query(`
+        SELECT d.*,
+               er.generation_watts,
+               er.consumption_watts,
+               er.battery_level_percent,
+               er.timestamp as last_reading
+        FROM devices d
+        LEFT JOIN energy_readings er ON d.device_id = er.device_id
+        WHERE d.user_id = $1
+        ORDER BY er.timestamp DESC
+      `, [userId]);
+
+      dashboardData.devices = devicesResult.rows;
+    }
+
+    res.json(dashboardData);
+
+  } catch (err) {
+    console.error('Dashboard data error:', err);
+    res.status(500).json({
+      error: 'Failed to load dashboard data',
+      message: err.message,
+      code: 'DASHBOARD_ERROR'
+    });
+  }
+});
+
+// ==================== ALERTS ====================
+
+// Get alerts
+app.get('/api/alerts', authenticateToken, async (req, res) => {
+  try {
+    let queryText, params;
+
+    if (req.user.role === 'admin') {
+      queryText = `
+        SELECT a.*, d.name as device_name, u.email as user_email
+        FROM alerts a
+        LEFT JOIN devices d ON a.device_id = d.id
+        LEFT JOIN users u ON a.user_id = u.id
+        ORDER BY a.created_at DESC
+        LIMIT 50
+      `;
+      params = [];
+    } else {
+      queryText = `
+        SELECT a.*, d.name as device_name
+        FROM alerts a
+        LEFT JOIN devices d ON a.device_id = d.id
+        WHERE a.user_id = $1
+        ORDER BY a.created_at DESC
+        LIMIT 20
+      `;
+      params = [req.user.id];
+    }
+
+    const result = await query(queryText, params);
+    res.json({ alerts: result.rows });
+
+  } catch (err) {
+    console.error('Get alerts error:', err);
+    res.status(500).json({
+      error: 'Failed to retrieve alerts',
+      message: err.message,
+      code: 'GET_ALERTS_ERROR'
+    });
+  }
+});
+
+// ==================== LEGACY ENDPOINTS (for backward compatibility) ====================
+
+// Legacy dashboard endpoint
+app.get('/api/data', (req, res) => {
   res.json({
-    success: true,
-    forecast: {
-      predictions: combined,
-      summary: `${weatherSystem.getImpactMessage()} - Next 6 hours expected`,
-      recommendation: weatherSystem.solarImpact.generationMultiplier > 0.7 
-        ? '✅ Good solar production expected' 
-        : '⚠️ Reduced generation due to weather'
+    batteryLevel: 78,
+    generation: 180,
+    consumption: 135,
+    alerts: [],
+    aiPredictions: {
+      forecast: [],
+      maintenance: [],
+      fraud: [],
+      optimization: []
     }
   });
 });
 
-app.listen(port, () => {
-  console.log(`Solar Pay-Go simulator running at http://localhost:${port}`);
-}); 
+// ==================== STARTUP ====================
+
+// Initialize services
+async function initializeServices() {
+  try {
+    // Test database connection
+    await testConnection();
+
+    // Connect to MQTT broker
+    await mqttManager.connect();
+
+    // Set up MQTT message handlers
+    mqttManager.onMessage('solar/+/data', (deviceId, data) => {
+      // Store energy reading
+      query(
+        `INSERT INTO energy_readings (
+          device_id, generation_watts, consumption_watts, battery_level_percent,
+          voltage_volts, current_amps, efficiency_percent, temperature_celsius,
+          irradiance_w_m2, relay_status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          deviceId,
+          data.generation || 0,
+          data.consumption || 0,
+          data.batteryLevel || 0,
+          data.voltage || 0,
+          data.current || 0,
+          data.efficiency || 0,
+          data.temperature || 0,
+          data.irradiance || 0,
+          data.relayStatus || false
+        ]
+      ).catch(err => console.error('Store energy reading error:', err));
+
+      // Broadcast via WebSocket
+      wsManager.broadcastEnergyUpdate(deviceId, data);
+    });
+
+    mqttManager.onMessage('solar/+/status', (deviceId, status) => {
+      // Update device status
+      query(
+        'UPDATE devices SET last_seen = CURRENT_TIMESTAMP, is_active = $1 WHERE device_id = $2',
+        [status.online || false, deviceId]
+      ).catch(err => console.error('Update device status error:', err));
+
+      // Broadcast via WebSocket
+      wsManager.broadcastDeviceStatus(deviceId, status);
+    });
+
+    console.log('✅ All services initialized successfully');
+
+  } catch (error) {
+    console.error('❌ Service initialization failed:', error);
+    process.exit(1);
+  }
+}
+
+// Start server
+server.listen(port, async () => {
+  console.log(`🚀 SolarPAYG Server running on port ${port}`);
+  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+
+  await initializeServices();
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    mqttManager.disconnect();
+    wsManager.shutdown();
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 SIGINT received, shutting down gracefully...');
+  server.close(() => {
+    mqttManager.disconnect();
+    wsManager.shutdown();
+    process.exit(0);
+  });
+});
+
+export default app;

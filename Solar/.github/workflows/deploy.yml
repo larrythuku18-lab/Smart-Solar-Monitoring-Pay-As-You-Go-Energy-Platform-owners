@@ -1,0 +1,159 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run database migrations
+      run: npm run db:migrate
+      env:
+        DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
+
+    - name: Run tests
+      run: npm test
+      env:
+        DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
+        JWT_SECRET: test-jwt-secret
+        JWT_REFRESH_SECRET: test-refresh-secret
+        REDIS_URL: redis://localhost:6379
+
+    - name: Generate test coverage report
+      run: npm run test:coverage
+      continue-on-error: true
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci --only=production
+
+    - name: Build Docker image
+      run: |
+        docker build -t solarpayg-platform:${{ github.sha }} .
+        docker tag solarpayg-platform:${{ github.sha }} solarpayg-platform:latest
+
+    - name: Run security scan
+      run: |
+        docker run --rm -v $(pwd):/app solarpayg-platform:${{ github.sha }} npm audit --audit-level=moderate
+      continue-on-error: true
+
+    - name: Login to Docker Hub
+      if: env.DOCKERHUB_USERNAME != null
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+    - name: Push Docker image
+      if: env.DOCKERHUB_USERNAME != null
+      run: |
+        docker tag solarpayg-platform:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/solarpayg-platform:${{ github.sha }}
+        docker tag solarpayg-platform:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/solarpayg-platform:latest
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/solarpayg-platform:${{ github.sha }}
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/solarpayg-platform:latest
+
+    - name: Deploy to production
+      if: env.RENDER_API_KEY != null
+      run: |
+        curl -X POST \
+          -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+          -H "Content-Type: application/json" \
+          -d '{"clearCache": "do_not_clear"}' \
+          https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys
+
+  security-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run ESLint
+      run: npx eslint . --ext .js
+      continue-on-error: true
+
+    - name: Check code formatting
+      run: npx prettier --check .
+      continue-on-error: true
