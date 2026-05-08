@@ -73,3 +73,5 @@ node_module
 *.so
 node_modules/
 *.so
+node_modules/
+*.so
