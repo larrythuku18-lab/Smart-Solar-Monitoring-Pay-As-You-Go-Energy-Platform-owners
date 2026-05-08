@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SolarPAYG — Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    :root {
+      --bg: #0a0f1e;
+      --surface: #111827;
+      --card: #161e2e;
+      --border: #1e2d47;
+      --amber: #f59e0b;
+      --green: #10b981;
+      --text: #f1f5f9;
+      --muted: #64748b;
+      --red: #ef4444;
+    }
+
+    body {
+      font-family: 'Space Grotesk', sans-serif;
+      background: linear-gradient(135deg, #0a0f1e 0%, #1a2a3a 100%);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .login-container {
+      width: 100%;
+      max-width: 420px;
+      padding: 20px;
+    }
+
+    .login-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 40px;
+      box-shadow: 0 20px 60px rgba(10, 15, 30, 0.5);
+    }
+
+    .logo-section {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .logo {
+      font-family: 'Syne', sans-serif;
+      font-size: 36px;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--amber), var(--green));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 8px;
+    }
+
+    .tagline {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+      font-size: 14px;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      transition: all 0.3s;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: var(--amber);
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+      background: rgba(245, 158, 11, 0.02);
+    }
+
+    .form-input::placeholder {
+      color: var(--muted);
+    }
+
+    .btn {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      font-size: 14px;
+    }
+
+    .btn-primary {
+      background: var(--amber);
+      color: var(--bg);
+      margin-bottom: 12px;
+    }
+
+    .btn-primary:hover {
+      background: #f08f23;
+      transform: translateY(-2px);
+    }
+
+    .btn-primary:active {
+      transform: translateY(0);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    .alert {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      display: flex;
+      gap: 8px;
+    }
+
+    .alert-error {
+      background: rgba(239, 68, 68, 0.1);
+      color: var(--red);
+      border-left: 3px solid var(--red);
+    }
+
+    .alert-success {
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--green);
+      border-left: 3px solid var(--green);
+    }
+
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(245, 158, 11, 0.2);
+      border-top-color: var(--amber);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .demo-credentials {
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 20px;
+      font-size: 12px;
+      color: #60a5fa;
+    }
+
+    .demo-credentials strong {
+      display: block;
+      margin-bottom: 6px;
+      color: #93c5fd;
+    }
+
+    .demo-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+    }
+
+    .demo-row:last-child {
+      border-bottom: none;
+    }
+
+    .loading {
+      display: inline-block;
+      margin-left: 6px;
+    }
+
+    @media (max-width: 480px) {
+      .login-box {
+        padding: 30px 20px;
+      }
+
+      .logo {
+        font-size: 28px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <div class="login-box">
+      <!-- Logo Section -->
+      <div class="logo-section">
+        <div class="logo">⚡ SolarPAYG</div>
+        <div class="tagline">Smart Solar Monitoring & Pay-As-You-Go Energy</div>
+      </div>
+
+      <!-- Alert Messages -->
+      <div id="alertContainer"></div>
+
+      <!-- Login Form -->
+      <form id="loginForm" onsubmit="handleLogin(event)">
+        <!-- Email Field -->
+        <div class="form-group">
+          <label class="form-label">Email Address</label>
+          <input 
+            type="email" 
+            class="form-input" 
+            id="email" 
+            placeholder="admin@solarpayg.com" 
+            required
+            autocomplete="email"
+          >
+        </div>
+
+        <!-- Password Field -->
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input 
+            type="password" 
+            class="form-input" 
+            id="password" 
+            placeholder="••••••••" 
+            required
+            autocomplete="current-password"
+          >
+        </div>
+
+        <!-- Submit Button -->
+        <button 
+          type="submit" 
+          class="btn btn-primary" 
+          id="loginBtn"
+        >
+          Sign In
+        </button>
+      </form>
+
+      <!-- Demo Credentials -->
+      <div class="demo-credentials">
+        <strong>Demo Credentials (Development Only):</strong>
+        <div class="demo-row">
+          <span>Admin:</span>
+          <span style="text-align: right;">admin@solarpayg.com / Admin@12345</span>
+        </div>
+        <div class="demo-row">
+          <span>Customer:</span>
+          <span style="text-align: right;">customer@example.com / Customer@12345</span>
+        </div>
+        <p style="margin-top: 8px; color: #475569;">⚠️ Change credentials immediately in production!</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '/api';
+
+    // Check if already logged in
+    window.addEventListener('load', () => {
+      const token = localStorage.getItem('accessToken');
+      if (token) {
+        verifyToken(token);
+      }
+    });
+
+    async function verifyToken(token) {
+      try {
+        const res = await fetch(`${API_BASE}/auth/me`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+          const user = await res.json();
+          // Redirect based on role
+          window.location.href = user.role === 'admin' 
+            ? '/admin-dashboard.html' 
+            : '/customer-portal.html';
+        } else {
+          localStorage.removeItem('accessToken');
+        }
+      } catch (error) {
+        console.error('Token verification error:', error);
+      }
+    }
+
+    async function handleLogin(event) {
+      event.preventDefault();
+
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const loginBtn = document.getElementById('loginBtn');
+      const alertContainer = document.getElementById('alertContainer');
+
+      // Validation
+      if (!email || !password) {
+        showAlert('Email and password are required', 'error');
+        return;
+      }
+
+      // Disable button and show loading state
+      loginBtn.disabled = true;
+      const originalText = loginBtn.textContent;
+      loginBtn.innerHTML = '<span class="spinner loading"></span>';
+
+      try {
+        const response = await fetch(`${API_BASE}/auth/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email, password })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.accessToken) {
+          // Store tokens
+          localStorage.setItem('accessToken', data.accessToken);
+          localStorage.setItem('refreshToken', data.refreshToken);
+
+          // Show success message
+          showAlert('✅ Login successful! Redirecting...', 'success');
+
+          // Redirect based on role
+          setTimeout(() => {
+            const dashboardUrl = data.user.role === 'admin'
+              ? '/admin-dashboard.html'
+              : '/customer-portal.html';
+            window.location.href = dashboardUrl;
+          }, 1500);
+        } else {
+          showAlert(data.message || 'Login failed. Please check your credentials.', 'error');
+          loginBtn.disabled = false;
+          loginBtn.textContent = originalText;
+        }
+      } catch (error) {
+        console.error('Login error:', error);
+        showAlert('Network error. Please try again.', 'error');
+        loginBtn.disabled = false;
+        loginBtn.textContent = originalText;
+      }
+    }
+
+    function showAlert(message, type) {
+      const alertContainer = document.getElementById('alertContainer');
+      alertContainer.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+      
+      // Auto-hide errors after 5 seconds
+      if (type === 'error') {
+        setTimeout(() => {
+          alertContainer.innerHTML = '';
+        }, 5000);
+      }
+    }
+
+    // Allow Enter key to submit
+    document.getElementById('password').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('loginForm').dispatchEvent(new Event('submit'));
+      }
+    });
+  </script>
+</body>
+</html>
