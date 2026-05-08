@@ -69,3 +69,5 @@ tmp/
 *.pem
 *.key
 *.cert
+node_module
+*.so
