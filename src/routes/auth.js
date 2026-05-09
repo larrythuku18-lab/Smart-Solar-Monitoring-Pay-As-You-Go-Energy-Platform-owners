@@ -74,6 +74,23 @@ router.post('/login', async (req, res) => {
  */
 router.post('/refresh', refreshAccessToken);
 
+router.post('/logout', authenticateToken, async (req, res) => {
+  try {
+    await query(
+      'UPDATE users SET refresh_token = NULL, token_expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+      [req.user.id]
+    );
+    res.json({ message: 'Logged out successfully' });
+  } catch (err) {
+    console.error('Logout error:', err);
+    res.status(500).json({
+      error: 'Logout failed',
+      message: err.message,
+      code: 'LOGOUT_FAILED'
+    });
+  }
+});
+
 /**
  * POST /api/auth/register - Create new user (admin only)
  */

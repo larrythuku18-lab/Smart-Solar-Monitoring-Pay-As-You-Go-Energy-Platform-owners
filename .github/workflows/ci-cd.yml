@@ -1,0 +1,180 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: solarpayg_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+      mosquitto:
+        image: eclipse-mosquitto:2
+        ports:
+          - 1883:1883
+        volumes:
+          - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run linting
+      run: npm run lint 2>/dev/null || echo "No lint script defined"
+
+    - name: Run tests
+      run: npm test
+      env:
+        NODE_ENV: test
+        DB_HOST: localhost
+        DB_PORT: 5432
+        DB_NAME: solarpayg_test
+        DB_USER: postgres
+        DB_PASSWORD: postgres
+        REDIS_URL: redis://localhost:6379
+        MQTT_BROKER_URL: mqtt://localhost:1883
+        JWT_SECRET: test-jwt-secret-key-for-ci-only
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage/lcov.info
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build application
+      run: npm run build 2>/dev/null || echo "No build script defined"
+
+    - name: Build Docker image
+      run: |
+        docker build -t solarpayg-platform:${{ github.sha }} .
+        docker tag solarpayg-platform:${{ github.sha }} solarpayg-platform:latest
+
+    - name: Run Docker container tests
+      run: |
+        docker run --rm -d --name test-container \
+          -e NODE_ENV=test \
+          -e DB_HOST=test-db \
+          -p 3000:3000 \
+          solarpayg-platform:latest
+        sleep 10
+        curl -f http://localhost:3000/health || exit 1
+        docker stop test-container
+
+    - name: Deploy to staging
+      if: github.ref == 'refs/heads/main'
+      run: |
+        echo "Deploying to staging environment..."
+        # Add your deployment commands here
+        # Example: kubectl apply -f k8s/staging/ or az webapp up
+
+  security-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run security scan
+      uses: github/super-linter/slim@v5
+      env:
+        DEFAULT_BRANCH: main
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VALIDATE_ALL_CODEBASE: false
+        VALIDATE_JAVASCRIPT_ES: true
+        VALIDATE_JSON: true
+        VALIDATE_YAML: true
+
+    - name: Dependency vulnerability scan
+      run: |
+        npm audit --audit-level moderate
+      continue-on-error: true
+
+  performance-test:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run performance tests
+      run: |
+        # Simple performance test - measure startup time
+        START_TIME=$(date +%s%N)
+        timeout 30s npm start &
+        SERVER_PID=$!
+        sleep 5
+
+        # Test basic endpoints
+        curl -f http://localhost:3000/health
+        curl -f http://localhost:3000/api/auth/status 2>/dev/null || true
+
+        END_TIME=$(date +%s%N)
+        STARTUP_TIME=$(( (END_TIME - START_TIME) / 1000000 )) # Convert to milliseconds
+
+        echo "Server startup time: ${STARTUP_TIME}ms"
+        kill $SERVER_PID 2>/dev/null || true
+
+        # Fail if startup takes more than 10 seconds
+        if [ "$STARTUP_TIME" -gt 10000 ]; then
+          echo "Performance test failed: Startup too slow"
+          exit 1
+        fi

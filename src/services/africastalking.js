@@ -2,18 +2,18 @@ import AfricasTalking from 'africastalking';
 
 // Africa's Talking configuration
 const AT_CONFIG = {
-  username: process.env.AFRICASTALKING_USERNAME,
-  apiKey: process.env.AFRICASTALKING_API_KEY,
-  shortcode: process.env.AFRICASTALKING_SHORTCODE
+  username: process.env.AT_USERNAME || 'sandbox',
+  apiKey: process.env.AT_API_KEY,
+  shortcode: process.env.AT_SHORTCODE,
+  senderId: process.env.AT_SENDER_ID || 'SOLARPAYG'
 };
 
-// Initialize Africa's Talking
-const africasTalking = AfricasTalking(AT_CONFIG);
+const africasTalking = AfricasTalking({
+  apiKey: AT_CONFIG.apiKey,
+  username: AT_CONFIG.username
+});
 
-// Get SMS service
 export const sms = africasTalking.SMS;
-
-// Get USSD service
 export const ussd = africasTalking.USSD;
 
 // SMS Functions

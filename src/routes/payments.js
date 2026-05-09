@@ -183,3 +183,110 @@ router.get('/history', authenticateToken, async (req, res) => {
 });
 
 export default router;
+    if (statusResult.resultCode !== undefined) {
+      const dbStatus = statusResult.resultCode === 0 ? 'completed' : 'failed';
+      await query(
+        'UPDATE payments SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE checkout_request_id = $2',
+        [dbStatus, checkoutRequestId]
+      );
+    }
+
+    res.json({
+      checkoutRequestId,
+      status: statusResult.resultCode === 0 ? 'completed' : 'pending',
+      resultDescription: statusResult.resultDesc
+    });
+
+  } catch (err) {
+    console.error('Status check error:', err);
+    res.status(500).json({
+      error: 'Status check failed',
+      message: err.message,
+      code: 'STATUS_CHECK_ERROR'
+    });
+  }
+});
+
+/**
+ * POST /api/payments/callback - M-Pesa callback webhook
+ */
+router.post('/callback', async (req, res) => {
+  try {
+    const callbackData = req.body;
+
+    // Validate callback
+    if (!validateCallback(callbackData)) {
+      return res.status(400).json({
+        error: 'Invalid callback',
+        message: 'Callback validation failed',
+        code: 'INVALID_CALLBACK'
+      });
+    }
+
+    // Process callback
+    const transactionData = processCallback(callbackData);
+
+    // Update payment in database
+    const updateResult = await query(
+      `UPDATE payments SET
+        status = $1,
+        mpesa_receipt_number = $2,
+        transaction_date = $3,
+        result_code = $4,
+        result_desc = $5,
+        updated_at = CURRENT_TIMESTAMP
+       WHERE checkout_request_id = $6`,
+      [
+        transactionData.success ? 'completed' : 'failed',
+        transactionData.mpesaReceiptNumber,
+        transactionData.transactionDate,
+        transactionData.resultCode,
+        transactionData.resultDesc,
+        transactionData.checkoutRequestId
+      ]
+    );
+
+    if (updateResult.rowCount === 0) {
+      console.warn('Payment not found for checkoutRequestId:', transactionData.checkoutRequestId);
+      return res.status(404).json({
+        error: 'Not found',
+        message: 'Payment record not found',
+        code: 'PAYMENT_NOT_FOUND'
+      });
+    }
+
+    // If payment successful, credit user wallet and generate token
+    if (transactionData.success) {
+      const paymentResult = await query(
+        'SELECT user_id, amount FROM payments WHERE checkout_request_id = $1',
+        [transactionData.checkoutRequestId]
+      );
+
+      if (paymentResult.rows.length > 0) {
+        const { user_id, amount } = paymentResult.rows[0];
+
+        // Credit user wallet
+        await query(
+          'UPDATE users SET wallet_balance = wallet_balance + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+          [amount, user_id]
+        );
+
+        // Generate token (this would call token engine)
+        // TODO: Integrate with token engine
+        console.log(`Payment confirmed: User ${user_id} credited KES ${amount}`);
+      }
+    }
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error('Callback processing error:', err);
+    res.status(500).json({
+      error: 'Callback processing failed',
+      message: err.message,
+      code: 'CALLBACK_ERROR'
+    });
+  }
+});
+
+export default router;

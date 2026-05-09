@@ -4,24 +4,34 @@ import { query } from '../models/db.js';
 
 const router = express.Router();
 
-/**
- * GET /api/energy/:deviceId - Get energy readings for a device
- */
+const verifyDeviceAccess = async (req, deviceId) => {
+  if (req.user.role === 'admin') return true;
+  const result = await query('SELECT id FROM devices WHERE device_id = $1', [deviceId]);
+  return result.rows.length > 0 && result.rows[0].id === req.user.id;
+};
+
 router.get('/:deviceId', authenticateToken, async (req, res) => {
   try {
     const { deviceId } = req.params;
-    const limit = parseInt(req.query.limit) || 100;
+    const limit = parseInt(req.query.limit, 10) || 100;
 
-    // Check device access
-    if (req.user.role !== 'admin') {
-      const deviceResult = await query('SELECT user_id FROM devices WHERE device_id = $1', [deviceId]);
-      if (deviceResult.rows.length === 0 || deviceResult.rows[0].user_id !== req.user.id) {
-        return res.status(403).json({
-          error: 'Access denied',
-          message: 'Device access denied',
-          code: 'DEVICE_ACCESS_DENIED'
-        });
-      }
+    // Get device UUID
+    const deviceResult = await query('SELECT id, user_id FROM devices WHERE device_id = $1', [deviceId]);
+    if (deviceResult.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Not found',
+        message: 'Device not found',
+        code: 'DEVICE_NOT_FOUND'
+      });
+    }
+    const deviceUUID = deviceResult.rows[0].id;
+
+    if (!(await verifyDeviceAccess(req, deviceId))) {
+      return res.status(403).json({
+        error: 'Access denied',
+        message: 'Device access denied',
+        code: 'DEVICE_ACCESS_DENIED'
+      });
     }
 
     const result = await query(
@@ -29,14 +39,10 @@ router.get('/:deviceId', authenticateToken, async (req, res) => {
        WHERE device_id = $1
        ORDER BY timestamp DESC
        LIMIT $2`,
-      [deviceId, limit]
+      [deviceUUID, limit]
     );
 
-    res.json({
-      deviceId,
-      readings: result.rows
-    });
-
+    res.json({ deviceId, readings: result.rows });
   } catch (err) {
     console.error('Get energy data error:', err);
     res.status(500).json({
@@ -47,23 +53,27 @@ router.get('/:deviceId', authenticateToken, async (req, res) => {
   }
 });
 
-/**
- * GET /api/energy/:deviceId/latest - Get latest energy reading
- */
 router.get('/:deviceId/latest', authenticateToken, async (req, res) => {
   try {
     const { deviceId } = req.params;
 
-    // Check device access
-    if (req.user.role !== 'admin') {
-      const deviceResult = await query('SELECT user_id FROM devices WHERE device_id = $1', [deviceId]);
-      if (deviceResult.rows.length === 0 || deviceResult.rows[0].user_id !== req.user.id) {
-        return res.status(403).json({
-          error: 'Access denied',
-          message: 'Device access denied',
-          code: 'DEVICE_ACCESS_DENIED'
-        });
-      }
+    // Get device UUID
+    const deviceResult = await query('SELECT id, user_id FROM devices WHERE device_id = $1', [deviceId]);
+    if (deviceResult.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Not found',
+        message: 'Device not found',
+        code: 'DEVICE_NOT_FOUND'
+      });
+    }
+    const deviceUUID = deviceResult.rows[0].id;
+
+    if (!(await verifyDeviceAccess(req, deviceId))) {
+      return res.status(403).json({
+        error: 'Access denied',
+        message: 'Device access denied',
+        code: 'DEVICE_ACCESS_DENIED'
+      });
     }
 
     const result = await query(
@@ -71,7 +81,7 @@ router.get('/:deviceId/latest', authenticateToken, async (req, res) => {
        WHERE device_id = $1
        ORDER BY timestamp DESC
        LIMIT 1`,
-      [deviceId]
+      [deviceUUID]
     );
 
     if (result.rows.length === 0) {
@@ -82,11 +92,7 @@ router.get('/:deviceId/latest', authenticateToken, async (req, res) => {
       });
     }
 
-    res.json({
-      deviceId,
-      reading: result.rows[0]
-    });
-
+    res.json({ deviceId, reading: result.rows[0] });
   } catch (err) {
     console.error('Get latest energy data error:', err);
     res.status(500).json({
@@ -97,31 +103,32 @@ router.get('/:deviceId/latest', authenticateToken, async (req, res) => {
   }
 });
 
-/**
- * GET /api/energy/:deviceId/stats - Get energy statistics
- */
 router.get('/:deviceId/stats', authenticateToken, async (req, res) => {
   try {
     const { deviceId } = req.params;
-    const period = req.query.period || '24h'; // 24h, 7d, 30d
+    const period = req.query.period || '24h';
 
-    // Check device access
-    if (req.user.role !== 'admin') {
-      const deviceResult = await query('SELECT user_id FROM devices WHERE device_id = $1', [deviceId]);
-      if (deviceResult.rows.length === 0 || deviceResult.rows[0].user_id !== req.user.id) {
-        return res.status(403).json({
-          error: 'Access denied',
-          message: 'Device access denied',
-          code: 'DEVICE_ACCESS_DENIED'
-        });
-      }
+    // Get device UUID
+    const deviceResult = await query('SELECT id, user_id FROM devices WHERE device_id = $1', [deviceId]);
+    if (deviceResult.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Not found',
+        message: 'Device not found',
+        code: 'DEVICE_NOT_FOUND'
+      });
+    }
+    const deviceUUID = deviceResult.rows[0].id;
+
+    if (!(await verifyDeviceAccess(req, deviceId))) {
+      return res.status(403).json({
+        error: 'Access denied',
+        message: 'Device access denied',
+        code: 'DEVICE_ACCESS_DENIED'
+      });
     }
 
     let timeFilter;
     switch (period) {
-      case '24h':
-        timeFilter = "timestamp >= NOW() - INTERVAL '24 hours'";
-        break;
       case '7d':
         timeFilter = "timestamp >= NOW() - INTERVAL '7 days'";
         break;
@@ -135,25 +142,21 @@ router.get('/:deviceId/stats', authenticateToken, async (req, res) => {
     const result = await query(
       `SELECT
         COUNT(*) as total_readings,
-        AVG(voltage_v) as avg_voltage,
-        AVG(current_a) as avg_current,
-        AVG(power_w) as avg_power,
+        AVG(voltage_volts) as avg_voltage,
+        AVG(current_amps) as avg_current,
+        AVG(generation_watts) as avg_generation,
+        AVG(consumption_watts) as avg_consumption,
         AVG(battery_level_percent) as avg_battery,
-        MAX(power_w) as max_power,
-        MIN(power_w) as min_power,
-        SUM(energy_generated_kwh) as total_energy_generated,
-        SUM(energy_consumed_kwh) as total_energy_consumed
+        MAX(generation_watts) as max_generation,
+        MIN(generation_watts) as min_generation,
+        SUM(generation_watts) as total_generation,
+        SUM(consumption_watts) as total_consumption
        FROM energy_readings
        WHERE device_id = $1 AND ${timeFilter}`,
-      [deviceId]
+      [deviceUUID]
     );
 
-    res.json({
-      deviceId,
-      period,
-      stats: result.rows[0]
-    });
-
+    res.json({ deviceId, period, stats: result.rows[0] });
   } catch (err) {
     console.error('Get energy stats error:', err);
     res.status(500).json({

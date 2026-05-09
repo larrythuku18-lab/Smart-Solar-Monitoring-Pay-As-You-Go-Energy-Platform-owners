@@ -1,77 +1,55 @@
-# Environment variables
+# Environment
 .env
 .env.local
 .env.*.local
 
-# Node modules
+# Node
 node_modules/
 package-lock.json
 yarn.lock
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*.swn
-.DS_Store
-
 # Logs
+*.log
+server.log
 logs/
-*.log
-server.log
 
-# Build
-dist/
-coverage/
-.nyc_output/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-server.log
-
-# Testing
-coverage/
-.coverage/
-.nyc_output/
-
-# Build
+# Build outputs
 dist/
 build/
+coverage/
+.nyc_output/
 *.tsbuildinfo
 
 # Docker
 docker-compose.override.yml
 
-# Database
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+
+# Database files
 *.db
 *.sqlite
 *.sqlite3
-
-# OS
-.DS_Store
-Thumbs.db
 
 # Temp files
 *.tmp
 temp/
 
-# API Keys and secrets
+# Secrets
 secrets.json
 config/secrets.js
 
-# Upload directories
+# Other
 uploads/
 tmp/
-
-# Certificates
 *.pem
 *.key
 *.cert
-node_module
-*.so
-node_modules/
-*.so
-node_modules/
-*.so
