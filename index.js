@@ -1,4 +1,5 @@
 const API_BASE = `${window.location.origin}/api`;
+window.API_BASE = API_BASE;
 const CACHE_DURATION = 4500;
 const LOAD_TIMEOUT = 50000;
 const CRITICAL_TIMEOUT = 8000;
@@ -79,9 +80,13 @@ const state = {
 const elements = {
   kpiSolar: document.getElementById('kpi-solar'),
   kpiSolarD: document.getElementById('kpi-solar-d'),
+  kpiBattery: document.getElementById('kpi-battery'),
+  kpiBatteryD: document.getElementById('kpi-battery-d'),
   kpiCustomers: document.getElementById('kpi-customers'),
   kpiRevenue: document.getElementById('kpi-revenue'),
   kpiOffline: document.getElementById('kpi-offline'),
+  walletBalance: document.getElementById('wallet-balance'),
+  walletStatus: document.getElementById('wallet-status'),
   weatherBackground: document.getElementById('weatherBackground'),
   weatherTemp: document.getElementById('weather-temp'),
   weatherClouds: document.getElementById('weather-clouds'),
@@ -319,14 +324,32 @@ function renderDashboardMetrics() {
     elements.kpiSolarD.textContent = `${direction} ${Math.abs(trend)}W vs 5m ago`;
     elements.kpiSolarD.style.color = trend > 0 ? 'var(--green)' : 'var(--amber)';
   }
+  if (elements.kpiBattery) {
+    elements.kpiBattery.textContent = `${Math.round(state.batteryLevel || 0)}%`;
+  }
+  if (elements.kpiBatteryD) {
+    elements.kpiBatteryD.textContent = state.powerEnabled ? 'Relay ON · Power active' : 'Relay OFF · Credit needed';
+    elements.kpiBatteryD.style.color = state.powerEnabled ? 'var(--green)' : 'var(--red)';
+  }
   if (elements.kpiCustomers) elements.kpiCustomers.textContent = '1';
   if (elements.kpiRevenue) {
     const rev = state.paymentStats?.total_revenue || state.walletBalance || 0;
-    elements.kpiRevenue.textContent = rev >= 1000 ? `KES ${(rev / 1000).toFixed(1)}K` : `KES ${rev}`;
+    elements.kpiRevenue.textContent = rev >= 1000 ? `KES ${(rev / 1000).toFixed(1)}K` : `KES ${Math.round(rev)}`;
   }
   if (elements.kpiOffline) {
     elements.kpiOffline.textContent = state.maintenanceAlerts.filter(a => a.severity === 'high').length;
   }
+  if (elements.walletBalance) {
+    elements.walletBalance.textContent = `KES ${Math.round(state.walletBalance || 0)}`;
+  }
+  if (elements.walletStatus) {
+    elements.walletStatus.textContent = (state.walletBalance || 0) > 0
+      ? `✅ Credit active · ${state.deviceId || 'DEMO-001'}`
+      : '⚠ Wallet depleted — relay will lock on next check';
+  }
+
+  state.trends.push(state.generation || 0);
+  if (state.trends.length > 24) state.trends.shift();
 }
 
 function renderWeatherWidget() {
@@ -475,6 +498,7 @@ async function fetchState() {
     renderForecast();
     renderMaintenanceAlerts();
     renderTransactionCounts();
+    if (window.ChartManager) window.ChartManager.refreshAllCharts(state);
     return true;
   } catch (error) {
     console.warn('API unreachable:', error);
@@ -496,6 +520,7 @@ async function fetchState() {
     renderForecast();
     renderMaintenanceAlerts();
     renderTransactionCounts();
+    if (window.ChartManager) window.ChartManager.refreshAllCharts(state);
     return false;
   }
 }
@@ -505,8 +530,22 @@ function hideLoadingOverlay() {
   if (overlay) setTimeout(() => overlay.classList.add('hidden'), 300);
 }
 
+let refreshTimer = null;
+
+function setRefreshInterval(ms) {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => {
+    if (navigator.onLine) fetchState();
+  }, ms);
+}
+
+window.__setRefreshInterval = setRefreshInterval;
+window.__fetchState = fetchState;
+
 function bootstrap() {
   loadingTracker.updateProgress(5, 'Initializing dashboard...');
+  if (window.ChartManager) window.ChartManager.initCharts();
+
   const app = document.getElementById('app');
   if (app) app.style.display = 'block';
 
@@ -523,7 +562,8 @@ function bootstrap() {
     runAIModels();
   });
 
-  setInterval(() => { if (navigator.onLine) fetchState(); }, 4500);
+  const refreshMs = window.ChartManager ? window.ChartManager.getRefreshMs() : 4500;
+  setRefreshInterval(refreshMs);
   setInterval(updateClock, 60000);
 }
 

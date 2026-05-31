@@ -18,6 +18,12 @@ const {
   failPayment,
   getPaymentStats,
   getEnergyHistory,
+  getEnergyHistoryAsc,
+  getRecentPayments,
+  getAuditTimeline,
+  getAlertSeverityCounts,
+  getPaymentTrend,
+  insertEnergyReading,
   getDashboardState,
   getAdminSummary,
   createAlert,
@@ -450,6 +456,58 @@ app.get('/api/payments/stats', (req, res) => {
   res.json(getPaymentStats());
 });
 
+app.get('/api/energy/history', (req, res) => {
+  try {
+    const deviceId = req.query.deviceId || 'DEMO-001';
+    const limit = Math.min(parseInt(req.query.limit, 10) || 48, 200);
+    const readings = getEnergyHistoryAsc(deviceId, limit);
+    res.json({
+      deviceId,
+      labels: readings.map(r => {
+        const d = new Date(r.recorded_at);
+        return d.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' });
+      }),
+      generation: readings.map(r => r.generation_watts),
+      consumption: readings.map(r => r.consumption_watts),
+      battery: readings.map(r => r.battery_level),
+      voltage: readings.map(r => r.voltage),
+      current: readings.map(r => r.current_amps),
+      readings
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load energy history', message: err.message });
+  }
+});
+
+app.get('/api/audit/timeline', (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 30, 100);
+    res.json({ events: getAuditTimeline(limit) });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load audit timeline', message: err.message });
+  }
+});
+
+app.get('/api/audit/charts', (req, res) => {
+  try {
+    const deviceId = req.query.deviceId || 'DEMO-001';
+    const forecast = safeForecast(6);
+    res.json({
+      energy: getEnergyHistoryAsc(deviceId, 48),
+      payments: getPaymentStats(),
+      paymentTrend: getPaymentTrend(),
+      recentPayments: getRecentPayments(10),
+      alerts: getAlerts(15),
+      alertSeverity: getAlertSeverityCounts(),
+      forecast: forecast.data || [],
+      timeline: getAuditTimeline(20),
+      summary: getAdminSummary()
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load chart data', message: err.message });
+  }
+});
+
 // ==================== CRON JOBS ====================
 
 cron.schedule('*/15 * * * *', async () => {
@@ -473,6 +531,20 @@ cron.schedule('*/15 * * * *', async () => {
 cron.schedule('*/5 * * * *', async () => {
   await processRetryQueue();
 });
+
+// Live telemetry simulation for audit demos
+setInterval(() => {
+  const hour = new Date().getHours();
+  const seasonal = Math.sin((hour - 6) * Math.PI / 12) * 80 + 150;
+  insertEnergyReading({
+    deviceId: 'DEMO-001',
+    generation: Math.max(0, Math.round(seasonal + Math.random() * 40 - 20)),
+    consumption: Math.round(120 + Math.random() * 30),
+    batteryLevel: Math.round(55 + Math.random() * 35),
+    voltage: Math.round((47 + Math.random() * 4) * 10) / 10,
+    current: Math.round((8 + Math.random() * 6) * 10) / 10
+  });
+}, 30000);
 
 // ==================== START ====================
 

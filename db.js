@@ -225,6 +225,50 @@ function getEnergyHistory(deviceId, limit = 50) {
   `).all(deviceId, limit);
 }
 
+function getEnergyHistoryAsc(deviceId, limit = 50) {
+  return db.prepare(`
+    SELECT * FROM (
+      SELECT * FROM energy_usage WHERE device_id = ? ORDER BY recorded_at DESC LIMIT ?
+    ) ORDER BY recorded_at ASC
+  `).all(deviceId, limit);
+}
+
+function getRecentPayments(limit = 20) {
+  return db.prepare(`
+    SELECT p.*, u.device_id AS user_device_id
+    FROM payments p
+    LEFT JOIN users u ON p.user_id = u.id
+    ORDER BY p.created_at DESC LIMIT ?
+  `).all(limit);
+}
+
+function getAuditTimeline(limit = 30) {
+  return db.prepare(`
+    SELECT 'payment' AS category, id, created_at AS ts, status AS severity,
+           CAST(amount AS TEXT) AS detail, device_id AS ref_id
+    FROM payments
+    UNION ALL
+    SELECT 'alert', id, created_at, severity, message, device_id
+    FROM alerts
+    ORDER BY ts DESC LIMIT ?
+  `).all(limit);
+}
+
+function getAlertSeverityCounts() {
+  return db.prepare(`
+    SELECT severity, COUNT(*) AS count FROM alerts GROUP BY severity
+  `).all();
+}
+
+function getPaymentTrend() {
+  return db.prepare(`
+    SELECT date(created_at) AS day,
+           SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END) AS revenue,
+           COUNT(*) AS total
+    FROM payments GROUP BY date(created_at) ORDER BY day ASC LIMIT 14
+  `).all();
+}
+
 function insertEnergyReading(data) {
   return db.prepare(`
     INSERT INTO energy_usage (device_id, generation_watts, consumption_watts, battery_level, voltage, current_amps)
@@ -317,6 +361,11 @@ module.exports = {
   getPaymentStats,
   getLatestEnergy,
   getEnergyHistory,
+  getEnergyHistoryAsc,
+  getRecentPayments,
+  getAuditTimeline,
+  getAlertSeverityCounts,
+  getPaymentTrend,
   insertEnergyReading,
   createAlert,
   getAlerts,

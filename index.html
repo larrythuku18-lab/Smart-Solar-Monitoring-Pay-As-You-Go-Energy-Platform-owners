@@ -208,7 +208,7 @@
     .badge-blue { background: rgba(59,130,246,.12); color: var(--blue); border: 1px solid rgba(59,130,246,.25); }
     .badge-red { background: rgba(239,68,68,.12); color: var(--red); border: 1px solid rgba(239,68,68,.25); }
     
-    .content { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; padding-top: 220px; }
+    .content { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; padding-top: 260px; }
     
     /* KPI */
     .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; position: fixed; top: 50px; left: 200px; right: 0; z-index: 8; background: var(--bg); padding: 20px 24px; border-bottom: 1px solid var(--border); }
@@ -273,7 +273,57 @@
     .ai-model-body { padding: 12px 16px; max-height: 200px; overflow-y: auto; font-size: 11px; color: var(--text); line-height: 1.5; }
     .ai-model-error { color: var(--red); font-weight: 500; }
     .ai-model-output { white-space: pre-wrap; font-family: 'Space Grotesk', monospace; font-size: 10px; }
+
+    /* ===== CHARTS & AUDIT ===== */
+    .charts-section { display: flex; flex-direction: column; gap: 14px; }
+    .charts-row { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; }
+    .charts-row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .chart-wrap { position: relative; height: 220px; padding: 12px 16px 16px; }
+    .chart-wrap.tall { height: 260px; }
+    .chart-wrap.compact { height: 180px; }
+    .live-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 9px; color: var(--green); }
+    .live-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 1.5s infinite; }
+    .sparkline { height: 28px; width: 100%; margin-top: 6px; opacity: 0.85; }
+    .panel-tools { display: flex; gap: 6px; align-items: center; }
+
+    /* Customization drawer */
+    #customize-panel {
+      position: fixed; top: 0; right: -320px; width: 300px; height: 100vh;
+      background: var(--surface); border-left: 1px solid var(--border); z-index: 100;
+      transition: right .25s ease; padding: 16px; overflow-y: auto;
+    }
+    #customize-panel.open { right: 0; }
+    .customize-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .customize-head h3 { font-family: 'Syne', sans-serif; font-size: 14px; }
+    .pref-group { margin-bottom: 14px; }
+    .pref-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .pref-group select, .pref-group input[type=text] {
+      width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--card); color: var(--text); font-size: 12px; font-family: inherit;
+    }
+    .pref-check { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--sub); margin: 6px 0; cursor: pointer; }
+    .btn { padding: 7px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--card);
+      color: var(--text); font-size: 11px; cursor: pointer; font-family: inherit; transition: .15s; }
+    .btn:hover { background: rgba(255,255,255,.06); }
+    .btn-primary { background: rgba(245,158,11,.15); border-color: rgba(245,158,11,.4); color: var(--amber); }
+    .btn-icon { padding: 6px 10px; }
+
+    /* Audit timeline */
+    .audit-timeline { max-height: 260px; overflow-y: auto; padding: 8px 16px 16px; }
+    .audit-event { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .audit-event:last-child { border-bottom: none; }
+    .audit-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+    .audit-meta { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+    .audit-detail { font-size: 11px; margin-top: 3px; line-height: 1.4; }
+    .audit-ref { font-size: 9px; color: var(--teal); margin-top: 2px; }
+    .audit-empty { padding: 20px; color: var(--muted); font-size: 11px; text-align: center; }
+
+    @media (max-width: 1100px) {
+      .charts-row, .charts-row-3, .row2, .row3 { grid-template-columns: 1fr; }
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -330,6 +380,8 @@
     <div class="topbar">
       <div class="topbar-title" id="topbar-date">Loading…</div>
       <div class="topbar-right">
+        <span class="live-badge" id="live-pulse">LIVE <span id="live-pulse-time">--:--:--</span></span>
+        <button class="btn btn-icon" id="btn-customize" title="Customize dashboard">⚙ Customize</button>
         <span class="badge badge-amber" id="badge-alerts">3 Alerts</span>
         <span class="badge badge-green">IoT Online</span>
         <span class="badge badge-blue">M-Pesa Active</span>
@@ -344,11 +396,13 @@
           <div class="kpi-label">Solar Generation</div>
           <div class="kpi-value" style="color:var(--amber)" id="kpi-solar">—</div>
           <div class="kpi-delta" id="kpi-solar-d">Fetching…</div>
+          <canvas class="sparkline" id="spark-solar"></canvas>
         </div>
         <div class="kpi green">
-          <div class="kpi-label">Active Customers</div>
-          <div class="kpi-value" style="color:var(--green)" id="kpi-customers">—</div>
-          <div class="kpi-delta">↑ 8 this week</div>
+          <div class="kpi-label">Battery Level</div>
+          <div class="kpi-value" style="color:var(--green)" id="kpi-battery">—</div>
+          <div class="kpi-delta" id="kpi-battery-d">—</div>
+          <canvas class="sparkline" id="spark-battery"></canvas>
         </div>
         <div class="kpi blue">
           <div class="kpi-label">M-Pesa Revenue</div>
@@ -387,6 +441,62 @@
           </div>
         </div>
         <div style="padding:10px 16px;border-top:1px solid var(--border);color:var(--teal);font-size:10px" id="weather-message">Loading weather data…</div>
+      </div>
+
+      <!-- Live Charts Section -->
+      <div class="charts-section">
+        <div class="charts-row">
+          <div class="panel" data-chart-panel="energyLive">
+            <div class="panel-head">
+              <span class="panel-title">⚡ Live Energy Stream</span>
+              <span class="live-badge">Real-time audit</span>
+            </div>
+            <div class="chart-wrap tall"><canvas id="chart-energy-live"></canvas></div>
+          </div>
+          <div class="panel" data-chart-panel="batteryVoltage">
+            <div class="panel-head">
+              <span class="panel-title">🔋 Battery & Voltage</span>
+              <span class="ai-tag">Dual-axis</span>
+            </div>
+            <div class="chart-wrap tall"><canvas id="chart-battery-voltage"></canvas></div>
+          </div>
+        </div>
+
+        <div class="charts-row">
+          <div class="panel" data-chart-panel="forecastBar">
+            <div class="panel-head">
+              <span class="panel-title">📊 6-Hour Forecast Chart</span>
+              <span class="ai-tag">Gen vs Cons</span>
+            </div>
+            <div class="chart-wrap"><canvas id="chart-forecast-bar"></canvas></div>
+          </div>
+          <div class="panel" data-chart-panel="auditTimeline">
+            <div class="panel-head">
+              <span class="panel-title">📋 Audit Event Timeline</span>
+              <div class="panel-tools">
+                <button class="btn btn-primary" id="btn-export-audit">Export JSON</button>
+              </div>
+            </div>
+            <div class="audit-timeline" id="audit-timeline">
+              <div class="audit-empty">Loading audit events…</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="charts-row-3">
+          <div class="panel" data-chart-panel="paymentAudit">
+            <div class="panel-head"><span class="panel-title">💳 Payment Status</span></div>
+            <div class="chart-wrap compact"><canvas id="chart-payment-doughnut"></canvas></div>
+          </div>
+          <div class="panel" data-chart-panel="paymentAudit">
+            <div class="panel-head"><span class="panel-title">📈 Revenue Trend</span></div>
+            <div class="chart-wrap compact"><canvas id="chart-payment-trend"></canvas></div>
+          </div>
+          <div class="panel" data-chart-panel="alertBreakdown">
+            <div class="panel-head"><span class="panel-title">🚨 Alert Severity</span></div>
+            <div class="chart-wrap compact"><canvas id="chart-alert-breakdown"></canvas></div>
+          </div>
+        </div>
       </div>
 
       <!-- Row 2: Forecast + Alerts -->
@@ -450,7 +560,10 @@
             <span class="panel-title">Wallet Status</span>
             <span class="ai-tag">AI · Optimizer</span>
           </div>
-          <div style="padding:16px;color:var(--teal);font-size:10px">Monitoring active wallets…</div>
+          <div style="padding:16px;font-size:11px">
+            <div style="color:var(--teal);margin-bottom:8px">Balance: <strong id="wallet-balance">—</strong></div>
+            <div style="color:var(--muted);font-size:10px" id="wallet-status">Monitoring active wallets…</div>
+          </div>
         </div>
       </div>
 
@@ -507,6 +620,50 @@
   </main>
 </div>
 
+<!-- Customization Panel -->
+<aside id="customize-panel">
+  <div class="customize-head">
+    <h3>⚙ Dashboard Customize</h3>
+    <button class="btn btn-icon" id="btn-customize-close">✕</button>
+  </div>
+  <div class="pref-group">
+    <div class="pref-label">Theme</div>
+    <select id="pref-theme">
+      <option value="midnight">Midnight (default)</option>
+      <option value="solar">Solar Gold</option>
+      <option value="audit">Audit Focus</option>
+    </select>
+  </div>
+  <div class="pref-group">
+    <div class="pref-label">Refresh interval</div>
+    <select id="pref-refresh">
+      <option value="3000">3 seconds</option>
+      <option value="4500">4.5 seconds</option>
+      <option value="8000">8 seconds</option>
+      <option value="15000">15 seconds</option>
+    </select>
+  </div>
+  <div class="pref-group">
+    <div class="pref-label">Device</div>
+    <select id="pref-device">
+      <option value="DEMO-001">DEMO-001 (Demo Kit)</option>
+    </select>
+  </div>
+  <div class="pref-group">
+    <label class="pref-check"><input type="checkbox" id="pref-animations" checked> Chart animations</label>
+  </div>
+  <div class="pref-group">
+    <div class="pref-label">Visible panels</div>
+    <label class="pref-check"><input type="checkbox" data-panel="energyLive" checked> Live energy chart</label>
+    <label class="pref-check"><input type="checkbox" data-panel="batteryVoltage" checked> Battery & voltage</label>
+    <label class="pref-check"><input type="checkbox" data-panel="forecastBar" checked> Forecast bar chart</label>
+    <label class="pref-check"><input type="checkbox" data-panel="paymentAudit" checked> Payment charts</label>
+    <label class="pref-check"><input type="checkbox" data-panel="alertBreakdown" checked> Alert breakdown</label>
+    <label class="pref-check"><input type="checkbox" data-panel="auditTimeline" checked> Audit timeline</label>
+  </div>
+</aside>
+
+<script src="charts.js"></script>
 <script src="index.js"></script>
 </body>
 </html>
