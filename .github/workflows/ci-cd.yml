@@ -47,7 +47,7 @@ jobs:
         cache: 'npm'
 
     - name: Install dependencies
-      run: npm ci
+      run: npm install
 
     - name: Run linting
       run: npm run lint 2>/dev/null || echo "No lint script defined"
@@ -86,7 +86,7 @@ jobs:
         cache: 'npm'
 
     - name: Install dependencies
-      run: npm ci
+      run: npm install
 
     - name: Build application
       run: npm run build 2>/dev/null || echo "No build script defined"
@@ -153,7 +153,7 @@ jobs:
         cache: 'npm'
 
     - name: Install dependencies
-      run: npm ci
+      run: npm install
 
     - name: Run performance tests
       run: |

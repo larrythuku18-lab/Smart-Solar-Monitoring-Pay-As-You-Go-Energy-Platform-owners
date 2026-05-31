@@ -2,9 +2,9 @@ import AfricasTalking from 'africastalking';
 
 class SMSSender {
   constructor() {
-    this.apiKey = process.env.AFRICASTALKING_API_KEY;
-    this.username = process.env.AFRICASTALKING_USERNAME || 'sandbox';
-    this.senderId = process.env.AFRICASTALKING_SENDER_ID || 'SolarPayG';
+    this.apiKey = process.env.AT_API_KEY || process.env.AFRICASTALKING_API_KEY;
+    this.username = process.env.AT_USERNAME || process.env.AFRICASTALKING_USERNAME || 'sandbox';
+    this.senderId = process.env.AT_SENDER_ID || process.env.AFRICASTALKING_SENDER_ID || 'SolarPayG';
     
     if (!this.apiKey) {
       console.warn('⚠️  Africa\'s Talking API key not configured');

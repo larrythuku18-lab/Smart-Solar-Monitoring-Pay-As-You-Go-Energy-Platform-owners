@@ -1,24 +1,36 @@
 import pkg from 'pg';
 import { config } from 'dotenv';
 
-config(); // Load environment variables
+config();
 
 const { Pool } = pkg;
 
-const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT, 10) || 5432,
-  database: process.env.DB_NAME || 'solarpayg',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || '',
-  ssl: process.env.DB_SSL === 'require' ? { rejectUnauthorized: false } : false,
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+const buildConfigFromEnv = () => {
+  if (process.env.DATABASE_URL) {
+    return {
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    };
+  }
+
+  return {
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT, 10) || 5432,
+    database: process.env.DB_NAME || 'solarpayg',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || '',
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+  };
 };
 
-const pool = new Pool(dbConfig);
-const MAX_RETRIES = 1;
+const pool = new Pool(buildConfigFromEnv());
+const MAX_RETRIES = parseInt(process.env.DB_CONNECT_RETRIES, 10) || 5;
 const RETRY_DELAY_MS = parseInt(process.env.DB_CONNECT_RETRY_MS, 10) || 3000;
 
 pool.on('error', (err) => {
@@ -54,7 +66,9 @@ export const query = async (text, params = []) => {
     const start = Date.now();
     const res = await client.query(text, params);
     const duration = Date.now() - start;
-    console.debug('PG query', { text, duration, rows: res.rowCount });
+    if (process.env.LOG_LEVEL === 'debug') {
+      console.debug('PG query', { text, duration, rows: res.rowCount });
+    }
     return res;
   } catch (err) {
     console.error('PostgreSQL query error:', err);

@@ -110,10 +110,6 @@ app.use((err, req, res, next) => {
 // Initialize services
 async function startServer() {
   try {
-    // MQTT and WebSocket are initialized on demand
-    // mqttManager can be used throughout the app
-    // wsManager can be used for broadcasting events
-
     const PORT = process.env.PORT || 3000;
     httpServer.listen(PORT, () => {
       console.log(`✅ Server running on port ${PORT}`);
@@ -134,6 +130,9 @@ process.on('SIGINT', () => {
   });
 });
 
-startServer();
+if (process.env.NODE_ENV !== 'test') {
+  startServer();
+}
 
+export { app, httpServer };
 export default app;

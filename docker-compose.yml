@@ -9,9 +9,14 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - DATABASE_URL=postgresql://solarpayg:solarpayg_password@postgres:5432/solarpayg
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=solarpayg
+      - DB_USER=solarpayg
+      - DB_PASSWORD=solarpayg_password
       - REDIS_URL=redis://redis:6379
       - MQTT_BROKER_URL=mqtt://mosquitto:1883
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production-min-32-chars}
     depends_on:
       postgres:
         condition: service_healthy

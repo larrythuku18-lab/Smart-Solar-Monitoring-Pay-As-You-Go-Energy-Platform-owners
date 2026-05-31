@@ -1,28 +1,30 @@
 import crypto from 'crypto';
+import { query } from '../models/db.js';
+
+const KWH_RATE_KES = parseInt(process.env.KWH_RATE_KES, 10) || 20;
 
 // PAYG Token Configuration
 const TOKEN_CONFIG = {
-  validityHours: parseInt(process.env.TOKEN_VALIDITY_HOURS) || 24,
-  tokenLength: parseInt(process.env.TOKEN_LENGTH) || 8,
-  secretKey: process.env.JWT_SECRET || 'fallback-secret-key' // Use JWT secret as base
+  validityHours: parseInt(process.env.TOKEN_VALIDITY_HOURS, 10) || 24,
+  tokenLength: parseInt(process.env.TOKEN_LENGTH, 10) || 10,
+  secretKey: process.env.JWT_SECRET || 'fallback-secret-key'
 };
 
 // Generate a unique PAYG token
 export const generateToken = (userId, deviceId, amountKes, kwhValue) => {
-  // Create token payload
+  const resolvedKwh = kwhValue ?? calculateKwhValue(amountKes);
+
   const payload = {
     userId,
     deviceId,
     amountKes,
-    kwhValue,
+    kwhValue: resolvedKwh,
     timestamp: Date.now(),
     expiresAt: Date.now() + (TOKEN_CONFIG.validityHours * 60 * 60 * 1000)
   };
 
-  // Generate random token value
   const tokenValue = generateTokenValue();
 
-  // Create HMAC for token integrity
   const hmac = crypto.createHmac('sha256', TOKEN_CONFIG.secretKey);
   hmac.update(JSON.stringify({ ...payload, tokenValue }));
   const signature = hmac.digest('hex');
@@ -35,7 +37,6 @@ export const generateToken = (userId, deviceId, amountKes, kwhValue) => {
   };
 };
 
-// Generate a random alphanumeric token
 const generateTokenValue = () => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let token = '';
@@ -45,53 +46,88 @@ const generateTokenValue = () => {
   return token;
 };
 
-// Validate token format and expiry
 export const validateToken = (tokenValue, signature, payload) => {
   try {
-    // Check token format
     if (!tokenValue || tokenValue.length !== TOKEN_CONFIG.tokenLength) {
-      return { valid: false, reason: 'Invalid token format' };
+      return false;
     }
 
-    // Check expiry
-    if (payload.expiresAt < Date.now()) {
-      return { valid: false, reason: 'Token expired' };
+    if (payload?.expiresAt && payload.expiresAt < Date.now()) {
+      return false;
     }
 
-    // Verify signature
     const hmac = crypto.createHmac('sha256', TOKEN_CONFIG.secretKey);
     hmac.update(JSON.stringify({ ...payload, tokenValue }));
     const expectedSignature = hmac.digest('hex');
 
-    if (signature !== expectedSignature) {
-      return { valid: false, reason: 'Invalid token signature' };
-    }
-
-    return { valid: true };
-
-  } catch (error) {
-    return { valid: false, reason: 'Token validation error' };
+    return signature === expectedSignature;
+  } catch {
+    return false;
   }
 };
 
-// Calculate kWh value from KES amount (based on local electricity pricing)
-export const calculateKwhValue = (amountKes, ratePerKwh = 25) => {
-  // Assuming average rate of KES 25 per kWh in Kenya
-  return Math.round((amountKes / ratePerKwh) * 100) / 100; // Round to 2 decimal places
+export const calculateKwhValue = (amountKes, ratePerKwh = KWH_RATE_KES) => {
+  return Math.floor(amountKes / ratePerKwh);
 };
 
-// Calculate token value in KES from kWh
-export const calculateKesValue = (kwhValue, ratePerKwh = 25) => {
+export const calculateKesValue = (kwhValue, ratePerKwh = KWH_RATE_KES) => {
   return Math.round(kwhValue * ratePerKwh);
 };
 
-// Token usage tracking
+export const saveToken = async (tokenData) => {
+  const { tokenValue, payload, signature, expiresAt } = tokenData;
+  const result = await query(
+    `INSERT INTO tokens (token_value, user_id, device_id, amount_kes, kwh_value, expires_at, signature, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+     RETURNING *`,
+    [
+      tokenValue,
+      payload.userId,
+      payload.deviceId,
+      payload.amountKes,
+      payload.kwhValue,
+      expiresAt,
+      signature
+    ]
+  );
+  return result.rows[0];
+};
+
+export const getToken = async (tokenValue) => {
+  const result = await query(
+    'SELECT * FROM tokens WHERE token_value = $1',
+    [tokenValue]
+  );
+  return result.rows[0] || null;
+};
+
+export const markTokenUsed = async (tokenValue) => {
+  const result = await query(
+    'UPDATE tokens SET is_used = true, used_at = NOW() WHERE token_value = $1',
+    [tokenValue]
+  );
+  return result.rowCount > 0;
+};
+
+export const validateTokenFromDb = async (tokenValue) => {
+  const token = await getToken(tokenValue);
+  if (!token) {
+    return { valid: false, error: 'Token not found' };
+  }
+  if (token.is_used) {
+    return { valid: false, error: 'Token already used' };
+  }
+  if (new Date(token.expires_at) < new Date()) {
+    return { valid: false, error: 'Token expired' };
+  }
+  return { valid: true, token };
+};
+
 export class TokenManager {
   constructor() {
-    this.activeTokens = new Map(); // tokenValue -> usage data
+    this.activeTokens = new Map();
   }
 
-  // Add token to active pool
   addToken(tokenData) {
     this.activeTokens.set(tokenData.tokenValue, {
       ...tokenData,
@@ -101,49 +137,38 @@ export class TokenManager {
     });
   }
 
-  // Mark token as used
   useToken(tokenValue, deviceId) {
     const token = this.activeTokens.get(tokenValue);
     if (!token) {
       throw new Error('Token not found');
     }
-
     if (token.used) {
       throw new Error('Token already used');
     }
-
     if (token.payload.deviceId !== deviceId) {
       throw new Error('Token not valid for this device');
     }
-
     if (token.payload.expiresAt < Date.now()) {
       throw new Error('Token expired');
     }
-
-    // Mark as used
     token.used = true;
     token.usageCount += 1;
     token.lastUsed = new Date();
-
     return token;
   }
 
-  // Check if token is valid for device
   isValidForDevice(tokenValue, deviceId) {
     const token = this.activeTokens.get(tokenValue);
     if (!token) return false;
-
     return token.payload.deviceId === deviceId &&
            !token.used &&
            token.payload.expiresAt > Date.now();
   }
 
-  // Get token info
   getTokenInfo(tokenValue) {
     return this.activeTokens.get(tokenValue);
   }
 
-  // Clean expired tokens
   cleanExpiredTokens() {
     const now = Date.now();
     for (const [tokenValue, token] of this.activeTokens) {
@@ -153,25 +178,18 @@ export class TokenManager {
     }
   }
 
-  // Get statistics
   getStats() {
     const total = this.activeTokens.size;
     const used = Array.from(this.activeTokens.values()).filter(t => t.used).length;
     const expired = Array.from(this.activeTokens.values()).filter(t => t.payload.expiresAt < Date.now()).length;
-
-    return {
-      total,
-      active: total - used - expired,
-      used,
-      expired
-    };
+    return { total, active: total - used - expired, used, expired };
   }
 }
 
-// Global token manager instance
 export const tokenManager = new TokenManager();
 
-// Periodic cleanup of expired tokens (run every hour)
-setInterval(() => {
-  tokenManager.cleanExpiredTokens();
-}, 60 * 60 * 1000);
+if (process.env.NODE_ENV !== 'test') {
+  setInterval(() => {
+    tokenManager.cleanExpiredTokens();
+  }, 60 * 60 * 1000);
+}

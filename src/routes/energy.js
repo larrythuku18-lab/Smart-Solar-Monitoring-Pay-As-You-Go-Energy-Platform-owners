@@ -6,8 +6,11 @@ const router = express.Router();
 
 const verifyDeviceAccess = async (req, deviceId) => {
   if (req.user.role === 'admin') return true;
-  const result = await query('SELECT id FROM devices WHERE device_id = $1', [deviceId]);
-  return result.rows.length > 0 && result.rows[0].id === req.user.id;
+  const result = await query(
+    'SELECT user_id FROM devices WHERE device_id = $1',
+    [deviceId]
+  );
+  return result.rows.length > 0 && result.rows[0].user_id === req.user.id;
 };
 
 router.get('/:deviceId', authenticateToken, async (req, res) => {
@@ -19,7 +22,7 @@ router.get('/:deviceId', authenticateToken, async (req, res) => {
     const deviceResult = await query('SELECT id, user_id FROM devices WHERE device_id = $1', [deviceId]);
     if (deviceResult.rows.length === 0) {
       return res.status(404).json({
-        error: 'Not found',
+        error: 'Device not found',
         message: 'Device not found',
         code: 'DEVICE_NOT_FOUND'
       });
@@ -61,7 +64,7 @@ router.get('/:deviceId/latest', authenticateToken, async (req, res) => {
     const deviceResult = await query('SELECT id, user_id FROM devices WHERE device_id = $1', [deviceId]);
     if (deviceResult.rows.length === 0) {
       return res.status(404).json({
-        error: 'Not found',
+        error: 'Device not found',
         message: 'Device not found',
         code: 'DEVICE_NOT_FOUND'
       });
@@ -112,7 +115,7 @@ router.get('/:deviceId/stats', authenticateToken, async (req, res) => {
     const deviceResult = await query('SELECT id, user_id FROM devices WHERE device_id = $1', [deviceId]);
     if (deviceResult.rows.length === 0) {
       return res.status(404).json({
-        error: 'Not found',
+        error: 'Device not found',
         message: 'Device not found',
         code: 'DEVICE_NOT_FOUND'
       });
