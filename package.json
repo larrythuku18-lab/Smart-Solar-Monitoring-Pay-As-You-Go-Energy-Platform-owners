@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --coverage --forceExit --coverageThreshold='{}'",
+    "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --coverage --forceExit",
     "test:watch": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --watch",
     "lint": "ESLINT_USE_FLAT_CONFIG=false eslint -c .eslintrc.cjs src __tests__ --max-warnings 50",
     "lint:fix": "ESLINT_USE_FLAT_CONFIG=false eslint -c .eslintrc.cjs src __tests__ --fix",
