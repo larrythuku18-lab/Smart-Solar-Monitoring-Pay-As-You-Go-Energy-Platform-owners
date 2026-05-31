@@ -1,12 +1,11 @@
-const Database = require('better-sqlite3');
+const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
-const fs = require('fs');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'solarpayg.db');
 
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WALLET');
-db.pragma('foreign_keys = ON');
+const db = new DatabaseSync(DB_PATH);
+db.exec('PRAGMA journal_mode = WAL');
+db.exec('PRAGMA foreign_keys = ON');
 
 function initSchema() {
   db.exec(`

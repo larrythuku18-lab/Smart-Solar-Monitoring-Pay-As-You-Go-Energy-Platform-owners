@@ -6,7 +6,7 @@ A solar energy pay-as-you-go system with AI-powered insights, SQLite persistence
 
 - **Real-time dashboard** — energy generation, battery, consumption, weather impact
 - **AI services** — forecasting, predictive maintenance, fraud detection, usage optimization
-- **SQLite database** — persistent storage via `better-sqlite3` (zero-config)
+- **SQLite database** — persistent storage via Node.js built-in `node:sqlite` (no native rebuilds)
 - **M-Pesa STK Push** — Daraja API integration with sandbox simulation fallback
 - **JWT authentication** — device ID + PIN login for protected routes
 - **Relay control** — HTTP commands to ESP32 with retry queue
@@ -31,7 +31,7 @@ A solar energy pay-as-you-go system with AI-powered insights, SQLite persistence
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 22.5+ (uses built-in `node:sqlite`)
 
 ### Installation
 
