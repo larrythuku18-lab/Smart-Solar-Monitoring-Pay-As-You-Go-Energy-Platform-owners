@@ -1,32 +1,37 @@
 import { jest } from '@jest/globals';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import axios from 'axios';
 
-jest.mock('../src/models/db.js', () => ({
-  query: jest.fn(),
-  testConnection: jest.fn().mockResolvedValue(true)
+const mockQuery = jest.fn();
+
+await jest.unstable_mockModule('../src/models/db.js', () => ({
+  query: mockQuery,
+  testConnection: jest.fn().mockResolvedValue(true),
+  closePool: jest.fn(),
+  transaction: jest.fn(),
+  default: {}
 }));
 
-jest.mock('../src/mqtt/mqtt-client.js', () => ({
+await jest.unstable_mockModule('../src/mqtt/mqtt-client.js', () => ({
   mqttManager: {
     connect: jest.fn().mockResolvedValue(true),
     disconnect: jest.fn()
   }
 }));
 
-jest.mock('../src/mqtt/websocket.js', () => ({
+await jest.unstable_mockModule('../src/mqtt/websocket.js', () => ({
   wsManager: {
     initialize: jest.fn(),
     shutdown: jest.fn()
   }
 }));
 
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import axios from 'axios';
 import request from 'supertest';
-import app from '../src/server.js';
-import { query } from '../src/models/db.js';
 import { generateToken, validateToken } from '../src/routes/token-engine.js';
 import mpesaService from '../src/services/mpesa.js';
+
+const { default: app } = await import('../src/server.js');
 
 const authHeader = (role = 'admin', userId = 'user123') => {
   const token = jwt.sign(
@@ -52,7 +57,7 @@ const mockActiveUser = async (overrides = {}) => {
 
 describe('SolarPAYG Platform Tests', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    mockQuery.mockReset();
   });
 
   describe('Token Engine', () => {
@@ -151,7 +156,7 @@ describe('SolarPAYG Platform Tests', () => {
   describe('Authentication API', () => {
     test('POST /api/auth/login - should authenticate valid user', async () => {
       const user = await mockActiveUser();
-      query
+      mockQuery
         .mockResolvedValueOnce({ rows: [user] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -169,7 +174,7 @@ describe('SolarPAYG Platform Tests', () => {
     });
 
     test('POST /api/auth/login - should reject invalid credentials', async () => {
-      query.mockResolvedValueOnce({ rows: [] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
 
       const response = await request(app)
         .post('/api/auth/login')
@@ -196,7 +201,7 @@ describe('SolarPAYG Platform Tests', () => {
         token_expires_at: new Date(Date.now() + 86400000)
       };
 
-      query
+      mockQuery
         .mockResolvedValueOnce({ rows: [mockUser] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -216,7 +221,7 @@ describe('SolarPAYG Platform Tests', () => {
         { timestamp: '2024-01-01T11:00:00Z', generation_watts: 1400, consumption_watts: 900 }
       ];
 
-      query
+      mockQuery
         .mockResolvedValueOnce({ rows: [{ id: 'user123', email: 'admin@solarpayg.com', role: 'admin', is_active: true }] })
         .mockResolvedValueOnce({ rows: [{ id: 'device-uuid', user_id: 'user123' }] })
         .mockResolvedValueOnce({ rows: mockReadings });
@@ -232,7 +237,7 @@ describe('SolarPAYG Platform Tests', () => {
     });
 
     test('GET /api/energy/:deviceId - should deny access to non-owned device', async () => {
-      query
+      mockQuery
         .mockResolvedValueOnce({ rows: [{ id: 'user123', email: 'admin@solarpayg.com', role: 'admin', is_active: true }] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -247,7 +252,7 @@ describe('SolarPAYG Platform Tests', () => {
     test('GET /api/energy/:deviceId/latest - should return latest reading', async () => {
       const mockReading = { timestamp: '2024-01-01T12:00:00Z', generation_watts: 1500 };
 
-      query
+      mockQuery
         .mockResolvedValueOnce({ rows: [{ id: 'user123', email: 'admin@solarpayg.com', role: 'admin', is_active: true }] })
         .mockResolvedValueOnce({ rows: [{ id: 'device-uuid', user_id: 'user123' }] })
         .mockResolvedValueOnce({ rows: [mockReading] });
@@ -272,7 +277,7 @@ describe('SolarPAYG Platform Tests', () => {
       mpesaService.stkPush = jest.fn().mockResolvedValue(mockStkResult);
       mpesaService.saveTransaction = jest.fn().mockResolvedValue();
 
-      query.mockResolvedValueOnce({
+      mockQuery.mockResolvedValueOnce({
         rows: [{ id: 'user123', email: 'admin@solarpayg.com', role: 'customer', is_active: true }]
       });
 
@@ -324,7 +329,7 @@ describe('SolarPAYG Platform Tests', () => {
         token_value: 'TEST123456',
         kwh_value: 50
       });
-      query.mockResolvedValue({ rows: [{ id: 'device-uuid' }] });
+      mockQuery.mockResolvedValue({ rows: [{ id: 'device-uuid' }] });
 
       const response = await request(app)
         .post('/api/payments/callback')
@@ -337,7 +342,7 @@ describe('SolarPAYG Platform Tests', () => {
 
   describe('Token Validation API', () => {
     test('POST /api/tokens/validate - should validate correct token', async () => {
-      query
+      mockQuery
         .mockResolvedValueOnce({
           rows: [{
             id: 'token-uuid',
@@ -362,7 +367,7 @@ describe('SolarPAYG Platform Tests', () => {
     });
 
     test('POST /api/tokens/validate - should reject used token', async () => {
-      query.mockResolvedValueOnce({ rows: [] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
 
       const response = await request(app)
         .post('/api/tokens/validate')
@@ -378,7 +383,7 @@ describe('SolarPAYG Platform Tests', () => {
 
   describe('Security & Rate Limiting', () => {
     test('should enforce rate limiting on auth endpoints', async () => {
-      query.mockResolvedValue({ rows: [] });
+      mockQuery.mockResolvedValue({ rows: [] });
 
       const requests = Array(6).fill().map(() =>
         request(app)

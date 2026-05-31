@@ -1,16 +1,28 @@
 import { jest } from '@jest/globals';
 
-// Mock database
-jest.mock('../src/models/db.js', () => ({
-  query: jest.fn()
+const mockQuery = jest.fn();
+
+await jest.unstable_mockModule('../src/models/db.js', () => ({
+  query: mockQuery,
+  testConnection: jest.fn().mockResolvedValue(true),
+  closePool: jest.fn(),
+  transaction: jest.fn(),
+  default: {}
 }));
 
-import { generateToken, validateToken, calculateKwhValue } from '../src/routes/token-engine.js';
-import { query } from '../src/models/db.js';
+const {
+  generateToken,
+  validateToken,
+  calculateKwhValue,
+  saveToken,
+  getToken,
+  markTokenUsed,
+  validateTokenFromDb
+} = await import('../src/routes/token-engine.js');
 
 describe('Token Engine Unit Tests', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    mockQuery.mockReset();
   });
 
   describe('Token Generation', () => {
@@ -59,13 +71,9 @@ describe('Token Engine Unit Tests', () => {
       const now = Date.now();
       const token = generateToken('user123', 'device456', 1000, 50);
 
-      // Token should expire in 24 hours
       const expectedExpiry = new Date(now + 24 * 60 * 60 * 1000);
-      const actualExpiry = token.expiresAt;
-
-      // Allow for small timing differences
-      const timeDiff = Math.abs(actualExpiry.getTime() - expectedExpiry.getTime());
-      expect(timeDiff).toBeLessThan(1000); // Less than 1 second difference
+      const timeDiff = Math.abs(token.expiresAt.getTime() - expectedExpiry.getTime());
+      expect(timeDiff).toBeLessThan(1000);
     });
   });
 
@@ -113,7 +121,6 @@ describe('Token Engine Unit Tests', () => {
 
   describe('KWh Calculation', () => {
     test('should calculate correct kWh value', () => {
-      // Assuming 20 KES per kWh rate
       expect(calculateKwhValue(200)).toBe(10);
       expect(calculateKwhValue(500)).toBe(25);
       expect(calculateKwhValue(1000)).toBe(50);
@@ -130,9 +137,9 @@ describe('Token Engine Unit Tests', () => {
     });
 
     test('should handle very small amounts', () => {
-      expect(calculateKwhValue(1)).toBe(0); // Less than 1 kWh
-      expect(calculateKwhValue(19)).toBe(0); // Less than 1 kWh
-      expect(calculateKwhValue(20)).toBe(1); // Exactly 1 kWh
+      expect(calculateKwhValue(1)).toBe(0);
+      expect(calculateKwhValue(19)).toBe(0);
+      expect(calculateKwhValue(20)).toBe(1);
     });
   });
 
@@ -140,14 +147,11 @@ describe('Token Engine Unit Tests', () => {
     test('should save token to database', async () => {
       const token = generateToken('user123', 'device456', 1000, 50);
 
-      query.mockResolvedValueOnce({ rows: [{ id: 'token-uuid' }] });
-
-      // Import the saveToken function (assuming it exists)
-      const { saveToken } = await import('../src/routes/token-engine.js');
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'token-uuid' }] });
 
       const result = await saveToken(token);
 
-      expect(query).toHaveBeenCalledWith(
+      expect(mockQuery).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO tokens'),
         expect.arrayContaining([
           token.tokenValue,
@@ -175,26 +179,24 @@ describe('Token Engine Unit Tests', () => {
         signature: 'test-signature'
       };
 
-      query.mockResolvedValueOnce({ rows: [mockToken] });
+      mockQuery.mockResolvedValueOnce({ rows: [mockToken] });
 
-      const { getToken } = await import('../src/routes/token-engine.js');
       const result = await getToken('TEST123456');
 
       expect(result).toEqual(mockToken);
-      expect(query).toHaveBeenCalledWith(
+      expect(mockQuery).toHaveBeenCalledWith(
         'SELECT * FROM tokens WHERE token_value = $1',
         ['TEST123456']
       );
     });
 
     test('should mark token as used', async () => {
-      query.mockResolvedValueOnce({ rowCount: 1 });
+      mockQuery.mockResolvedValueOnce({ rowCount: 1 });
 
-      const { markTokenUsed } = await import('../src/routes/token-engine.js');
       const result = await markTokenUsed('TEST123456');
 
       expect(result).toBe(true);
-      expect(query).toHaveBeenCalledWith(
+      expect(mockQuery).toHaveBeenCalledWith(
         'UPDATE tokens SET is_used = true, used_at = NOW() WHERE token_value = $1',
         ['TEST123456']
       );
@@ -209,13 +211,12 @@ describe('Token Engine Unit Tests', () => {
         amount_kes: 1000,
         kwh_value: 50,
         is_used: false,
-        expires_at: new Date(Date.now() - 86400000), // Expired yesterday
+        expires_at: new Date(Date.now() - 86400000),
         signature: 'test-signature'
       };
 
-      query.mockResolvedValueOnce({ rows: [expiredToken] });
+      mockQuery.mockResolvedValueOnce({ rows: [expiredToken] });
 
-      const { validateTokenFromDb } = await import('../src/routes/token-engine.js');
       const result = await validateTokenFromDb('EXPIRED123');
 
       expect(result.valid).toBe(false);
@@ -225,14 +226,11 @@ describe('Token Engine Unit Tests', () => {
 
   describe('Edge Cases', () => {
     test('should handle concurrent token generation', async () => {
-      // Generate multiple tokens simultaneously
       const promises = Array(10).fill().map(() =>
         Promise.resolve(generateToken('user123', 'device456', 1000, 50))
       );
 
       const tokens = await Promise.all(promises);
-
-      // All tokens should be unique
       const tokenValues = tokens.map(t => t.tokenValue);
       const uniqueValues = new Set(tokenValues);
 
@@ -241,7 +239,7 @@ describe('Token Engine Unit Tests', () => {
     });
 
     test('should handle very large amounts', () => {
-      const largeAmount = 1000000; // 1 million KES
+      const largeAmount = 1000000;
       const token = generateToken('user123', 'device456', largeAmount, 50000);
 
       expect(token.payload.amountKes).toBe(largeAmount);
@@ -263,7 +261,6 @@ describe('Token Engine Unit Tests', () => {
 
   describe('Security Tests', () => {
     test('should use cryptographically secure random generation', () => {
-      // This is hard to test directly, but we can check token distribution
       const tokens = Array(100).fill().map(() =>
         generateToken('user123', 'device456', 1000, 50)
       );
@@ -271,14 +268,12 @@ describe('Token Engine Unit Tests', () => {
       const tokenValues = tokens.map(t => t.tokenValue);
       const uniqueValues = new Set(tokenValues);
 
-      // Should have very high uniqueness (allowing for birthday paradox)
       expect(uniqueValues.size).toBeGreaterThan(95);
     });
 
     test('should not leak sensitive information in token', () => {
       const token = generateToken('user123', 'device456', 1000, 50);
 
-      // Token value should not contain user/device IDs or amounts
       expect(token.tokenValue).not.toContain('user123');
       expect(token.tokenValue).not.toContain('device456');
       expect(token.tokenValue).not.toContain('1000');
@@ -287,14 +282,9 @@ describe('Token Engine Unit Tests', () => {
 
     test('should validate signature integrity', () => {
       const token = generateToken('user123', 'device456', 1000, 50);
-
-      // Tamper with payload
       const tamperedPayload = { ...token.payload, amountKes: 9999 };
 
-      // Should fail validation
       expect(validateToken(token.tokenValue, token.signature, tamperedPayload)).toBe(false);
-
-      // Should also fail with original payload but wrong signature
       expect(validateToken(token.tokenValue, 'wrong-sig', token.payload)).toBe(false);
     });
   });
