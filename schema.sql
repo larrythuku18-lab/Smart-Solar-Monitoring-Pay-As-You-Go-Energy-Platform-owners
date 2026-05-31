@@ -62,7 +62,7 @@ CREATE TABLE payments (
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     transaction_id VARCHAR(50) UNIQUE,
     merchant_request_id VARCHAR(50),
-    checkout_request_id VARCHAR(50),
+    checkout_request_id VARCHAR(50) UNIQUE,
     amount_kes DECIMAL(10, 2) NOT NULL,
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
     phone_number VARCHAR(20),
@@ -85,6 +85,7 @@ CREATE TABLE tokens (
     is_used BOOLEAN DEFAULT false,
     used_at TIMESTAMP WITH TIME ZONE,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    signature VARCHAR(128),
     sms_sent BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

@@ -230,18 +230,18 @@ export const authenticateUser = async (email, password) => {
   );
 
   if (result.rows.length === 0) {
-    throw new Error('User not found');
+    throw new Error('Invalid credentials');
   }
 
   const user = result.rows[0];
 
   if (!user.is_active) {
-    throw new Error('Account is deactivated');
+    throw new Error('Invalid credentials');
   }
 
   const isValidPassword = await verifyPassword(password, user.password_hash);
   if (!isValidPassword) {
-    throw new Error('Invalid password');
+    throw new Error('Invalid credentials');
   }
 
   // Update last login

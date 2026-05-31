@@ -121,8 +121,8 @@ describe('Token Engine Unit Tests', () => {
     });
 
     test('should handle fractional amounts', () => {
-      expect(calculateKwhValue(210)).toBe(10); // Floor to nearest kWh
-      expect(calculateKwhValue(239)).toBe(11); // Should round up
+      expect(calculateKwhValue(210)).toBe(10);
+      expect(calculateKwhValue(239)).toBe(11);
     });
 
     test('should handle zero amount', () => {

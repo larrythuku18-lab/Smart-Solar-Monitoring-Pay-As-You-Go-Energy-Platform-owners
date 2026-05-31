@@ -3,6 +3,7 @@ import { jest } from '@jest/globals';
 // Set test environment
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-jwt-secret-key-for-testing-only';
+process.env.JWT_REFRESH_SECRET = 'test-jwt-refresh-secret-for-testing-only';
 process.env.DB_HOST = 'localhost';
 process.env.DB_NAME = 'solarpayg_test';
 

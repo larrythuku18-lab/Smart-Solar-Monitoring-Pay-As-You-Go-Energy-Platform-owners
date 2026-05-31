@@ -1,7 +1,7 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import { query } from '../models/db.js';
-import { generateToken, calculateKwhValue } from './token-engine.js';
+import { generateToken, calculateKwhValue, saveToken } from './token-engine.js';
 
 const router = express.Router();
 
@@ -111,11 +111,13 @@ router.post('/generate', authenticateToken, async (req, res) => {
     }
 
     // Generate token
-    const tokenData = await generateToken(userId, deviceId, amount);
+    const kwhValue = calculateKwhValue(amount);
+    const tokenData = generateToken(userId, deviceId, amount, kwhValue);
+    const saved = await saveToken(tokenData);
 
     res.json({
       message: 'Token generated successfully',
-      token: tokenData
+      token: saved
     });
 
   } catch (err) {
