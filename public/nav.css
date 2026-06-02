@@ -71,7 +71,8 @@ body.with-nav .topbar {
 }
 
 body.with-nav .content {
-  padding-top: calc(180px + 56px);
+  padding-top: calc(120px + 56px);
+  min-height: calc(100vh - 176px);
 }
 
 @media (max-width: 840px) {
