@@ -154,7 +154,13 @@ function parseMpesaCallback(callbackData) {
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname)));
+// Serve static assets from the public folder
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Ensure root returns the public index for browsers requesting '/'
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 // Seed AI models from DB on startup
 const energyHistory = getEnergyHistory('DEMO-001', 50);
@@ -286,22 +292,50 @@ app.get('/api/ai-insights', (req, res) => {
 
 // ==================== AUTH ====================
 
-app.post('/api/auth/login', (req, res) => {
-  const { deviceId, pin } = req.body;
+const demoLoginAliases = {
+  'admin@solarpayg.com': { deviceId: 'DEMO-001', pin: '1234', password: 'Admin@12345', role: 'admin' },
+  'customer@example.com': { deviceId: 'DEMO-001', pin: '1234', password: 'Customer@12345', role: 'customer' }
+};
 
-  if (!deviceId || !pin) {
+app.post('/api/auth/login', (req, res) => {
+  const { deviceId, pin, email, password } = req.body;
+
+  let loginDeviceId = deviceId;
+  let loginPin = pin;
+  let inferredRole = 'customer';
+
+  if (email && password) {
+    const lookup = email.toLowerCase();
+    const alias = demoLoginAliases[lookup];
+
+    if (alias) {
+      if (alias.password !== password) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
+      loginDeviceId = alias.deviceId;
+      loginPin = alias.pin;
+      inferredRole = alias.role;
+    } else if (/^[A-Z0-9-]+$/i.test(email) && /^[0-9]{3,6}$/.test(password)) {
+      loginDeviceId = email;
+      loginPin = password;
+    } else {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+  }
+
+  if (!loginDeviceId || !loginPin) {
     return res.status(400).json({ error: 'deviceId and pin are required' });
   }
 
-  const user = getUserByDeviceId(deviceId);
-  if (!user || user.pin !== String(pin)) {
+  const user = getUserByDeviceId(loginDeviceId);
+  if (!user || user.pin !== String(loginPin)) {
     return res.status(401).json({ error: 'Invalid device ID or PIN' });
   }
 
   const token = signToken({
     id: user.id,
     deviceId: user.device_id,
-    role: deviceId === 'ADMIN' ? 'admin' : 'customer'
+    role: inferredRole || (loginDeviceId === 'ADMIN' ? 'admin' : 'customer')
   });
 
   res.json({
@@ -309,8 +343,23 @@ app.post('/api/auth/login', (req, res) => {
     user: {
       id: user.id,
       deviceId: user.device_id,
-      walletBalance: user.wallet_balance
+      walletBalance: user.wallet_balance,
+      role: inferredRole || (user.device_id === 'ADMIN' ? 'admin' : 'customer')
     }
+  });
+});
+
+app.get('/api/auth/me', authMiddleware, (req, res) => {
+  const user = getUserById(req.user.id);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  res.json({
+    id: user.id,
+    deviceId: user.device_id,
+    role: req.user.role || (user.device_id === 'ADMIN' ? 'admin' : 'customer'),
+    walletBalance: user.wallet_balance
   });
 });
 

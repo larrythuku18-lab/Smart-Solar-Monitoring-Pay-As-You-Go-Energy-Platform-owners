@@ -211,8 +211,9 @@
       }
     }
   </style>
+  <link rel="stylesheet" href="/nav.css">
 </head>
-<body>
+<body class="with-nav">
   <div class="login-container">
     <div class="login-box">
       <!-- Logo Section -->
@@ -226,27 +227,27 @@
 
       <!-- Login Form -->
       <form id="loginForm" onsubmit="handleLogin(event)">
-        <!-- Email Field -->
+        <!-- Device ID / Demo Email Alias Field -->
         <div class="form-group">
-          <label class="form-label">Email Address</label>
+          <label class="form-label">Device ID or Demo Email Alias</label>
           <input 
-            type="email" 
+            type="text" 
             class="form-input" 
             id="email" 
-            placeholder="admin@solarpayg.com" 
+            placeholder="DEMO-001 or admin@solarpayg.com" 
             required
-            autocomplete="email"
+            autocomplete="username"
           >
         </div>
 
-        <!-- Password Field -->
+        <!-- PIN / Password Field -->
         <div class="form-group">
-          <label class="form-label">Password</label>
+          <label class="form-label">PIN or Password</label>
           <input 
             type="password" 
             class="form-input" 
             id="password" 
-            placeholder="••••••••" 
+            placeholder="1234 or Admin@12345" 
             required
             autocomplete="current-password"
           >
@@ -266,14 +267,22 @@
       <div class="demo-credentials">
         <strong>Demo Credentials (Development Only):</strong>
         <div class="demo-row">
-          <span>Admin:</span>
+          <span>Admin Alias:</span>
           <span style="text-align: right;">admin@solarpayg.com / Admin@12345</span>
         </div>
         <div class="demo-row">
-          <span>Customer:</span>
+          <span>Customer Alias:</span>
           <span style="text-align: right;">customer@example.com / Customer@12345</span>
         </div>
-        <p style="margin-top: 8px; color: #475569;">⚠️ Change credentials immediately in production!</p>
+        <div class="demo-row">
+          <span>Device ID:</span>
+          <span style="text-align: right;">DEMO-001</span>
+        </div>
+        <div class="demo-row">
+          <span>PIN:</span>
+          <span style="text-align: right;">1234</span>
+        </div>
+        <p style="margin-top: 8px; color: #475569;">⚠️ Demo aliases map to the same demo device. Do not use in production.</p>
       </div>
     </div>
   </div>
@@ -297,10 +306,8 @@
 
         if (res.ok) {
           const user = await res.json();
-          // Redirect based on role
-          window.location.href = user.role === 'admin' 
-            ? '/admin-dashboard.html' 
-            : '/customer-portal.html';
+          // Redirect to the supported dashboard page
+          window.location.href = '/index.html';
         } else {
           localStorage.removeItem('accessToken');
         }
@@ -312,50 +319,45 @@
     async function handleLogin(event) {
       event.preventDefault();
 
-      const email = document.getElementById('email').value;
+      const identifier = document.getElementById('email').value.trim();
       const password = document.getElementById('password').value;
       const loginBtn = document.getElementById('loginBtn');
-      const alertContainer = document.getElementById('alertContainer');
 
-      // Validation
-      if (!email || !password) {
-        showAlert('Email and password are required', 'error');
+      if (!identifier || !password) {
+        showAlert('Device ID/alias and PIN/password are required', 'error');
         return;
       }
 
-      // Disable button and show loading state
       loginBtn.disabled = true;
       const originalText = loginBtn.textContent;
       loginBtn.innerHTML = '<span class="spinner loading"></span>';
 
       try {
+        const deviceIdPayload = /^[A-Z0-9-]{3,20}$/i.test(identifier) && /^[0-9]{3,6}$/.test(password);
+        const payload = deviceIdPayload
+          ? { deviceId: identifier.toUpperCase(), pin: password }
+          : { email: identifier, password };
+
         const response = await fetch(`${API_BASE}/auth/login`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ email, password })
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
         });
 
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
+        const token = data.accessToken || data.token;
 
-        if (response.ok && data.accessToken) {
-          // Store tokens
-          localStorage.setItem('accessToken', data.accessToken);
-          localStorage.setItem('refreshToken', data.refreshToken);
+        if (response.ok && token) {
+          localStorage.setItem('accessToken', token);
+          if (data.refreshToken) localStorage.setItem('refreshToken', data.refreshToken);
 
-          // Show success message
           showAlert('✅ Login successful! Redirecting...', 'success');
 
-          // Redirect based on role
           setTimeout(() => {
-            const dashboardUrl = data.user.role === 'admin'
-              ? '/admin-dashboard.html'
-              : '/customer-portal.html';
-            window.location.href = dashboardUrl;
-          }, 1500);
+            window.location.href = '/index.html';
+          }, 900);
         } else {
-          showAlert(data.message || 'Login failed. Please check your credentials.', 'error');
+          showAlert(data.error || data.message || 'Login failed. Please check your credentials.', 'error');
           loginBtn.disabled = false;
           loginBtn.textContent = originalText;
         }
@@ -386,5 +388,25 @@
       }
     });
   </script>
+  <script>
+if (!document.querySelector('meta[name="nav-inserted"]')) {
+  document.addEventListener('DOMContentLoaded', async () => {
+    try {
+      const res = await fetch('/nav.html');
+      if (!res.ok) return;
+      const html = await res.text();
+      const temp = document.createElement('template');
+      temp.innerHTML = html.trim();
+      const nav = temp.content.firstElementChild;
+      if (nav) {
+        document.body.prepend(nav);
+        document.body.classList.add('with-nav');
+      }
+    } catch (err) {
+      console.warn('Failed to load global nav:', err);
+    }
+  });
+}
+</script>
 </body>
 </html>

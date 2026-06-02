@@ -1,8 +1,10 @@
 const API_BASE = '/api';
-const CACHE_DURATION = 4500;
+const CACHE_DURATION = 30000;
 const LOAD_TIMEOUT = 50000;
 const CRITICAL_TIMEOUT = 8000;
 const NON_CRITICAL_TIMEOUT = 15000;
+let fetchStateInProgress = false;
+let lastNonCriticalFetch = 0;
 
 // Import AI models
 import { forecaster, maintenanceMonitor, fraudDetector, optimizer } from './ai-models.js';
@@ -536,6 +538,8 @@ function fetchWithTimeout(url, timeout) {
 }
 
 async function fetchState() {
+  if (fetchStateInProgress) return false;
+  fetchStateInProgress = true;
   try {
     loadingTracker.updateProgress(10, 'Loading core state...');
     
@@ -578,35 +582,48 @@ async function fetchState() {
     
     loadingTracker.updateProgress(55, 'Loading forecasts...');
     
-    // Load non-critical data in background with fallback
-    Promise.all([
-      fetchWithTimeout(`${API_BASE}/forecast`, NON_CRITICAL_TIMEOUT)
-        .then(data => {
-          if (data?.forecast?.predictions) {
-            state.forecast = data.forecast.predictions;
-            cache.set('forecast', data.forecast.predictions);
-          }
-        })
-        .catch(() => {
-          const cached = cache.get('forecast', 60000);
-          if (cached) state.forecast = cached;
-        }),
-      fetchWithTimeout(`${API_BASE}/maintenance-alerts`, NON_CRITICAL_TIMEOUT)
-        .then(data => {
-          if (data?.maintenance?.alerts) {
-            state.maintenanceAlerts = data.maintenance.alerts;
-            cache.set('maintenance', data.maintenance.alerts);
-          }
-        })
-        .catch(() => {
-          const cached = cache.get('maintenance', 60000);
-          if (cached) state.maintenanceAlerts = cached;
-        })
-    ]).then(() => {
+    const now = Date.now();
+    const refreshNonCritical = now - lastNonCriticalFetch > 300000;
+
+    if (refreshNonCritical) {
+      lastNonCriticalFetch = now;
+      Promise.all([
+        fetchWithTimeout(`${API_BASE}/forecast`, NON_CRITICAL_TIMEOUT)
+          .then(data => {
+            if (data?.forecast?.predictions) {
+              state.forecast = data.forecast.predictions;
+              cache.set('forecast', data.forecast.predictions);
+            }
+          })
+          .catch(() => {
+            const cached = cache.get('forecast', 300000);
+            if (cached) state.forecast = cached;
+          }),
+        fetchWithTimeout(`${API_BASE}/maintenance-alerts`, NON_CRITICAL_TIMEOUT)
+          .then(data => {
+            if (data?.maintenance?.alerts) {
+              state.maintenanceAlerts = data.maintenance.alerts;
+              cache.set('maintenance', data.maintenance.alerts);
+            }
+          })
+          .catch(() => {
+            const cached = cache.get('maintenance', 300000);
+            if (cached) state.maintenanceAlerts = cached;
+          })
+      ]).then(() => {
+        loadingTracker.updateProgress(85, 'Finalizing...');
+        renderForecast();
+        renderMaintenanceAlerts();
+      });
+    } else {
       loadingTracker.updateProgress(85, 'Finalizing...');
+      const cachedForecast = cache.get('forecast', 300000);
+      if (cachedForecast) state.forecast = cachedForecast;
+      const cachedMaintenance = cache.get('maintenance', 300000);
+      if (cachedMaintenance) state.maintenanceAlerts = cachedMaintenance;
       renderForecast();
       renderMaintenanceAlerts();
-    });
+    }
     
     // Render critical elements immediately
     updateClock();
@@ -638,6 +655,8 @@ async function fetchState() {
     renderTransactionCounts();
     
     return false;
+  } finally {
+    fetchStateInProgress = false;
   }
 }
 
@@ -666,12 +685,12 @@ function bootstrap() {
     runAIModels();
   });
   
-  // Update every 4.5 seconds (but use cache)
+  // Update every 60 seconds and avoid overlapping work
   setInterval(async () => {
-    if (navigator.onLine) {
+    if (navigator.onLine && !fetchStateInProgress && !document.hidden) {
       await fetchState();
     }
-  }, 4500);
+  }, 60000);
   
   // Update clock every minute
   setInterval(updateClock, 60000);

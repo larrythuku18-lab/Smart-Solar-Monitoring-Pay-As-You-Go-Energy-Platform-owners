@@ -1,7 +1,4 @@
 const { useState, useEffect, useRef, useCallback } = React;
-const { Line, Bar, Doughnut, Scatter } = ReactChartJS2;
-
-Chart.register(...Chart.registerables);
 
 const thresholdLinePlugin = {
   id: 'thresholdLine',
@@ -30,6 +27,7 @@ const thresholdLinePlugin = {
     ctx.restore();
   }
 };
+Chart.register(...Chart.registerables);
 Chart.register(thresholdLinePlugin);
 
 const formatKES = (value) => `KES ${Number(value).toLocaleString('en-KE')}`;
@@ -692,7 +690,7 @@ const SolarDashboard = () => {
     });
   }, [refreshAllCharts]);
 
-  const cardClass = 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-3xl shadow-sm p-5';
+  const cardClass = 'bg-white/85 dark:bg-slate-900/75 border border-slate-200/70 dark:border-slate-700/70 rounded-3xl shadow-sm backdrop-blur-xl p-5';
   const chartWrapper = 'relative h-[300px]';
   const tabs = [
     { id: 'energy', label: 'Energy', emoji: '⚡' },
@@ -765,7 +763,7 @@ const SolarDashboard = () => {
   const replaceCount = panelEfficiencyData.current.points.filter((point) => point.y < 75).length;
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+    <div className="min-h-screen bg-transparent text-slate-900 dark:text-slate-100 dashboard-shell">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -799,26 +797,13 @@ const SolarDashboard = () => {
           ))}
         </div>
 
-        <div className="mt-8 flex flex-wrap gap-2">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition-all ${
-                activeTab === tab.id
-                  ? 'border-blue-500 bg-blue-600 text-white shadow-lg'
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-slate-600'
-              }`}
-            >
-              <span>{tab.emoji}</span>
-              {tab.label}
-            </button>
-          ))}
+<div className="mt-8">
+          <h2 className="text-lg font-semibold text-slate-200 dark:text-slate-300">All analysis charts</h2>
+          <p className="mt-2 text-sm text-slate-400">Every chart is shown together for a complete analytics view.</p>
         </div>
 
         <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2">
-          {activeTab === 'energy' && (
-            <>
+          <>
               <div className={cardClass}>
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -872,10 +857,8 @@ const SolarDashboard = () => {
                 <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">Voltage: {latestVoltage} Vdc | Current: {latestCurrent} A</p>
               </div>
             </>
-          )}
 
-          {activeTab === 'financial' && (
-            <>
+          <>
               <div className={cardClass}>
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -925,10 +908,8 @@ const SolarDashboard = () => {
                 <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">{lowCreditCount} customers below 25% — send alerts</p>
               </div>
             </>
-          )}
 
-          {activeTab === 'ai' && (
-            <>
+          <>
               <div className={cardClass}>
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -978,10 +959,8 @@ const SolarDashboard = () => {
                 <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">1 customer at high default risk</p>
               </div>
             </>
-          )}
 
-          {activeTab === 'operations' && (
-            <>
+          <>
               <div className={cardClass}>
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -1030,7 +1009,6 @@ const SolarDashboard = () => {
                 <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">{replaceCount} panels need replacement</p>
               </div>
             </>
-          )}
         </div>
       </div>
     </div>
@@ -1039,5 +1017,3 @@ const SolarDashboard = () => {
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<SolarDashboard />);
-
-export default SolarDashboard;

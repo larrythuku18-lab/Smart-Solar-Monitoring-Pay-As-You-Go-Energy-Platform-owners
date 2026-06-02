@@ -3,16 +3,55 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SolarPAYG Dashboard</title>
+  <title>SolarPAYG Analysis Board</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/react-chartjs-2@5.2.0/dist/index.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-chartjs-2@3.0.4/dist/react-chartjs-2.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+  <link rel="stylesheet" href="/nav.css">
+  <style>
+    body {
+      background-image: radial-gradient(circle at top center, rgba(96, 165, 250, 0.14), transparent 32%), linear-gradient(135deg, #020617 0%, #0f172a 48%, #0b1120 100%);
+      color: #f8fafc;
+    }
+    .dashboard-shell {
+      min-height: 100vh;
+      background: rgba(15, 23, 42, 0.72);
+      backdrop-filter: blur(18px);
+    }
+    .dashboard-glass {
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(18px);
+    }
+  </style>
 </head>
-<body class="bg-slate-50 dark:bg-slate-950">
+<body class="bg-slate-950 text-slate-100 with-nav bg-[radial-gradient(circle_at_top,_#0f172a_0%,_#020617_70%)]">
   <div id="root"></div>
-  <script type="text/babel" data-type="module" src="./dashboard.jsx"></script>
+  <script type="text/babel" data-presets="react" src="./dashboard.jsx"></script>
+  <script>
+if (!document.querySelector('meta[name="nav-inserted"]')) {
+  document.addEventListener('DOMContentLoaded', async () => {
+    try {
+      const res = await fetch('/nav.html');
+      if (!res.ok) return;
+      const html = await res.text();
+      const temp = document.createElement('template');
+      temp.innerHTML = html.trim();
+      const nav = temp.content.firstElementChild;
+      if (nav) {
+        document.body.prepend(nav);
+        const navMeta = document.createElement('meta');
+        navMeta.name = 'nav-inserted';
+        document.head.appendChild(navMeta);
+        document.body.classList.add('with-nav');
+      }
+    } catch (err) {
+      console.warn('Failed to load global nav:', err);
+    }
+  });
+}
+</script>
 </body>
 </html>
