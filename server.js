@@ -154,7 +154,13 @@ function parseMpesaCallback(callbackData) {
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname)));
+// Serve static assets from the public folder
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Ensure root returns the public index for browsers requesting '/'
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 // Seed AI models from DB on startup
 const energyHistory = getEnergyHistory('DEMO-001', 50);

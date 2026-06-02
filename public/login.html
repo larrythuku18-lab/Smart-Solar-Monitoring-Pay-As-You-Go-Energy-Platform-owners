@@ -211,8 +211,9 @@
       }
     }
   </style>
+  <link rel="stylesheet" href="/nav.css">
 </head>
-<body>
+<body class="with-nav">
   <div class="login-container">
     <div class="login-box">
       <!-- Logo Section -->
@@ -386,5 +387,25 @@
       }
     });
   </script>
+  <script>
+if (!document.querySelector('meta[name="nav-inserted"]')) {
+  document.addEventListener('DOMContentLoaded', async () => {
+    try {
+      const res = await fetch('/nav.html');
+      if (!res.ok) return;
+      const html = await res.text();
+      const temp = document.createElement('template');
+      temp.innerHTML = html.trim();
+      const nav = temp.content.firstElementChild;
+      if (nav) {
+        document.body.prepend(nav);
+        document.body.classList.add('with-nav');
+      }
+    } catch (err) {
+      console.warn('Failed to load global nav:', err);
+    }
+  });
+}
+</script>
 </body>
 </html>

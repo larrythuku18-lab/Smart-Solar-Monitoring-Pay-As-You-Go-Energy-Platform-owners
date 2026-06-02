@@ -10,9 +10,30 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/react-chartjs-2@5.2.0/dist/index.umd.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+  <link rel="stylesheet" href="/nav.css">
 </head>
-<body class="bg-slate-50 dark:bg-slate-950">
+<body class="bg-slate-50 dark:bg-slate-950 with-nav">
   <div id="root"></div>
   <script type="text/babel" data-type="module" src="./dashboard.jsx"></script>
+  <script>
+if (!document.querySelector('meta[name="nav-inserted"]')) {
+  document.addEventListener('DOMContentLoaded', async () => {
+    try {
+      const res = await fetch('/nav.html');
+      if (!res.ok) return;
+      const html = await res.text();
+      const temp = document.createElement('template');
+      temp.innerHTML = html.trim();
+      const nav = temp.content.firstElementChild;
+      if (nav) {
+        document.body.prepend(nav);
+        document.body.classList.add('with-nav');
+      }
+    } catch (err) {
+      console.warn('Failed to load global nav:', err);
+    }
+  });
+}
+</script>
 </body>
 </html>

@@ -274,8 +274,9 @@
     .ai-model-error { color: var(--red); font-weight: 500; }
     .ai-model-output { white-space: pre-wrap; font-family: 'Space Grotesk', monospace; font-size: 10px; }
   </style>
+  <link rel="stylesheet" href="/nav.css">
 </head>
-<body>
+<body class="with-nav">
 
 <!-- Weather Background -->
 <div id="weatherBackground" class="weather-background weather-sunny">
@@ -507,5 +508,25 @@
 </div>
 
 <script type="module" src="index.js"></script>
+  <script>
+if (!document.querySelector('meta[name="nav-inserted"]')) {
+  document.addEventListener('DOMContentLoaded', async () => {
+    try {
+      const res = await fetch('/nav.html');
+      if (!res.ok) return;
+      const html = await res.text();
+      const temp = document.createElement('template');
+      temp.innerHTML = html.trim();
+      const nav = temp.content.firstElementChild;
+      if (nav) {
+        document.body.prepend(nav);
+        document.body.classList.add('with-nav');
+      }
+    } catch (err) {
+      console.warn('Failed to load global nav:', err);
+    }
+  });
+}
+</script>
 </body>
 </html>

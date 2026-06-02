@@ -198,37 +198,54 @@
     .pulse { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
     
-    .main { display: flex; flex-direction: column; }
-    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--surface); position: fixed; top: 0; left: 200px; right: 0; z-index: 10; }
-    .topbar-title { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 14px; }
-    .topbar-right { display: flex; align-items: center; gap: 8px; }
-    .badge { font-size: 10px; padding: 3px 8px; border-radius: 20px; font-weight: 500; }
-    .badge-amber { background: rgba(245,158,11,.15); color: var(--amber); border: 1px solid rgba(245,158,11,.3); }
-    .badge-green { background: rgba(16,185,129,.12); color: var(--green); border: 1px solid rgba(16,185,129,.25); }
-    .badge-blue { background: rgba(59,130,246,.12); color: var(--blue); border: 1px solid rgba(59,130,246,.25); }
-    .badge-red { background: rgba(239,68,68,.12); color: var(--red); border: 1px solid rgba(239,68,68,.25); }
-    
-    .content { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; padding-top: 220px; }
+    .main { display: flex; flex-direction: column; min-height: 100vh; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 24px; gap: 12px; border-bottom: 1px solid var(--border); background: rgba(17,24,39,.96); backdrop-filter: blur(10px); position: fixed; top: 0; left: 200px; right: 0; z-index: 10; }
+    .topbar-title { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; letter-spacing: .02em; }
+    .topbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .live-badge { font-size: 10px; padding: 6px 10px; border-radius: 999px; background: rgba(16,185,129,.14); border: 1px solid rgba(16,185,129,.25); color: var(--green); font-weight: 600; letter-spacing: .02em; }
+    .btn { font-family: 'Space Grotesk', sans-serif; font-size: 12px; border: none; outline: none; border-radius: 999px; padding: 8px 14px; cursor: pointer; background: rgba(255,255,255,.06); color: var(--text); transition: transform .15s ease, background .15s ease; }
+    .btn:hover { background: rgba(255,255,255,.12); transform: translateY(-1px); }
+    .btn.btn-primary { background: var(--blue); color: #fff; box-shadow: 0 10px 24px rgba(59,130,246,.25); }
+    .btn-icon { min-width: 34px; min-height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0 12px; }
+
+    .content { padding: 180px 20px 30px; display: flex; flex-direction: column; gap: 18px; max-width: 1680px; margin: 0 auto; width: 100%; }
     
     /* KPI */
-    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; position: fixed; top: 50px; left: 200px; right: 0; z-index: 8; background: var(--bg); padding: 20px 24px; border-bottom: 1px solid var(--border); }
-    .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; position: relative; overflow: hidden; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+    .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 18px 18px 16px; min-height: 122px; box-shadow: 0 20px 48px rgba(0,0,0,.18); }
     .kpi::before { content:''; position: absolute; top:0; left:0; right:0; height: 2px; border-radius: 10px 10px 0 0; }
     .kpi.amber::before { background: var(--amber); }
     .kpi.green::before { background: var(--green); }
     .kpi.blue::before { background: var(--blue); }
     .kpi.red::before { background: var(--red); }
-    .kpi-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
-    .kpi-value { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 24px; line-height: 1; }
-    .kpi-delta { font-size: 10px; margin-top: 4px; color: var(--green); }
+    .kpi-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
+    .kpi-value { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 28px; line-height: 1; }
+    .kpi-delta { font-size: 11px; margin-top: 6px; color: var(--muted); }
     
     /* Panels */
-    .row2 { display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; }
-    .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
-    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-    .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
-    .panel-title { font-size: 12px; font-weight: 500; color: var(--sub); }
-    .ai-tag { font-size: 9px; padding: 2px 7px; border-radius: 10px; background: rgba(139,92,246,.15); color: var(--purple); border: 1px solid rgba(139,92,246,.25); }
+    .row2 { display: grid; grid-template-columns: 1.4fr 0.95fr; gap: 14px; align-items: start; }
+    .row3 { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 12px; align-items: start; }
+    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 20px; overflow: hidden; min-height: 140px; box-shadow: 0 18px 42px rgba(0,0,0,.14); }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--border); gap: 10px; }
+    .panel-title { font-size: 12px; font-weight: 600; color: var(--sub); letter-spacing: .01em; }
+    .ai-tag { font-size: 9px; padding: 3px 8px; border-radius: 12px; background: rgba(139,92,246,.12); color: var(--purple); border: 1px solid rgba(139,92,246,.2); }
+    .panel-tools { display: flex; gap: 10px; align-items: center; }
+    .charts-section { display: grid; gap: 14px; }
+    .charts-row { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
+    .charts-row-3 { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 14px; }
+    .chart-wrap { padding: 16px; min-height: 230px; }
+    .chart-wrap.tall { min-height: 260px; }
+    .chart-wrap.compact { min-height: 190px; }
+    .audit-timeline { padding: 16px; min-height: 240px; color: var(--muted); }
+    .audit-empty { font-size: 11px; text-align: center; padding: 40px 0; }
+
+    .overview-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 16px; }
+    .overview-card { width: 100%; background: var(--card); border: 1px solid var(--border); border-radius: 20px; overflow: hidden; box-shadow: 0 18px 42px rgba(0,0,0,.14); position: relative; z-index: 1; }
+    .overview-body { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 16px; }
+    .overview-item { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); border-radius: 14px; padding: 16px; min-width: 0; }
+    .overview-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
+    .overview-value { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 700; color: var(--text); }
+    .overview-detail { font-size: 10px; color: var(--muted); margin-top: 6px; }
     
     /* Forecast */
     .forecast-grid { display: grid; grid-template-columns: repeat(6,1fr); gap: 8px; padding: 14px 16px; }
@@ -273,9 +290,28 @@
     .ai-model-body { padding: 12px 16px; max-height: 200px; overflow-y: auto; font-size: 11px; color: var(--text); line-height: 1.5; }
     .ai-model-error { color: var(--red); font-weight: 500; }
     .ai-model-output { white-space: pre-wrap; font-family: 'Space Grotesk', monospace; font-size: 10px; }
+
+    @media (max-width: 1100px) {
+      .charts-row,
+      .charts-row-3,
+      .row2,
+      .row3,
+      .kpi-grid,
+      .overview-grid { grid-template-columns: 1fr; }
+      .topbar { left: 0; }
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { position: fixed; top: 0; left: 0; width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+      .main { margin-top: 120px; }
+      .content { padding: 220px 16px 30px; }
+      .panel { min-height: auto; }
+      .chart-wrap { min-height: 200px; }
+      .overview-body { grid-template-columns: 1fr; }
+      .forecast-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
   </style>
+  <link rel="stylesheet" href="/nav.css">
 </head>
-<body>
+<body class="with-nav">
 
 <!-- Weather Background -->
 <div id="weatherBackground" class="weather-background weather-sunny">
@@ -386,6 +422,38 @@
           </div>
         </div>
         <div style="padding:10px 16px;border-top:1px solid var(--border);color:var(--teal);font-size:10px" id="weather-message">Loading weather data…</div>
+      </div>
+
+      <!-- Overview Summary -->
+      <div class="overview-grid">
+        <div class="overview-card">
+          <div class="panel-head">
+            <span class="panel-title">Overview</span>
+            <span class="badge badge-amber" style="font-size:9px">Summary</span>
+          </div>
+          <div class="overview-body">
+            <div class="overview-item">
+              <div class="overview-label">Active devices</div>
+              <div class="overview-value" id="overview-active-devices">—</div>
+              <div class="overview-detail">Currently reporting from field</div>
+            </div>
+            <div class="overview-item">
+              <div class="overview-label">Today’s energy</div>
+              <div class="overview-value" id="overview-energy-today">—</div>
+              <div class="overview-detail">kWh produced</div>
+            </div>
+            <div class="overview-item">
+              <div class="overview-label">Connected users</div>
+              <div class="overview-value" id="overview-connected-users">—</div>
+              <div class="overview-detail">Active sessions</div>
+            </div>
+            <div class="overview-item">
+              <div class="overview-label">Next refresh</div>
+              <div class="overview-value" id="overview-next-refresh">—</div>
+              <div class="overview-detail">Real-time sync</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Row 2: Forecast + Alerts -->
@@ -507,5 +575,25 @@
 </div>
 
 <script type="module" src="index.js"></script>
+  <script>
+if (!document.querySelector('meta[name="nav-inserted"]')) {
+  document.addEventListener('DOMContentLoaded', async () => {
+    try {
+      const res = await fetch('/nav.html');
+      if (!res.ok) return;
+      const html = await res.text();
+      const temp = document.createElement('template');
+      temp.innerHTML = html.trim();
+      const nav = temp.content.firstElementChild;
+      if (nav) {
+        document.body.prepend(nav);
+        document.body.classList.add('with-nav');
+      }
+    } catch (err) {
+      console.warn('Failed to load global nav:', err);
+    }
+  });
+}
+</script>
 </body>
 </html>
