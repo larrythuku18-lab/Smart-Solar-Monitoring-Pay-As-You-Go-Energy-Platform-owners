@@ -1,379 +1,583 @@
-const { DatabaseSync } = require('node:sqlite');
-const path = require('path');
+/**
+ * db.js — PostgreSQL persistence layer (node-postgres / pg)
+ *
+ * Connection: reads DATABASE_URL from the environment.
+ * On Render.com, attach a PostgreSQL add-on and the variable is set automatically.
+ * Locally, create a .env file:  DATABASE_URL=postgresql://user:pass@localhost:5432/solarpayg
+ *
+ * All functions are async and return plain JS objects (same shape as the
+ * old SQLite helpers so server.js / relay.js call-sites only need `await`).
+ */
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'solarpayg.db');
+require('dotenv').config();
+const { Pool, types } = require('pg');
 
-const db = new DatabaseSync(DB_PATH);
-db.exec('PRAGMA journal_mode = WAL');
-db.exec('PRAGMA foreign_keys = ON');
+/* ── Type parsers ────────────────────────────────────────────────────────────
+   pg returns NUMERIC columns as strings by default. Override so arithmetic
+   on wallet_balance, amounts, sensor values, etc. works without manual casts.
+   BIGINT (INT8) is also returned as a string by default — parse to Number. */
+types.setTypeParser(types.builtins.NUMERIC, Number.parseFloat);
+types.setTypeParser(types.builtins.INT8, Number);
 
-function initSchema() {
-  db.exec(`
+/* ── Connection pool ─────────────────────────────────────────────────────── */
+const isLocal =
+  !process.env.DATABASE_URL ||
+  process.env.DATABASE_URL.includes('localhost') ||
+  process.env.DATABASE_URL.includes('127.0.0.1');
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/solarpayg',
+  ssl: isLocal ? false : { rejectUnauthorized: false },
+  max: 10,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000
+});
+
+pool.on('error', (err) => {
+  console.error('PostgreSQL pool error:', err.message);
+});
+
+/** Thin wrapper — always returns the pg Result object. */
+async function q(text, params) {
+  return pool.query(text, params);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MIGRATIONS
+   Creates all tables and indexes if they do not already exist.
+   Safe to call on every startup.
+══════════════════════════════════════════════════════════════════════════ */
+async function runMigrations() {
+  await q(`
+    -- ── Users ──────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT UNIQUE NOT NULL,
-      pin TEXT NOT NULL,
-      phone TEXT,
-      wallet_balance REAL DEFAULT 0,
-      relay_unlocked INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now'))
+      id             SERIAL        PRIMARY KEY,
+      device_id      VARCHAR(64)   UNIQUE NOT NULL,
+      name           VARCHAR(128),
+      pin            VARCHAR(20)   NOT NULL,
+      phone          VARCHAR(20),
+      wallet_balance NUMERIC(12,2) DEFAULT 0,
+      relay_unlocked BOOLEAN       DEFAULT FALSE,
+      created_at     TIMESTAMPTZ   DEFAULT NOW()
     );
 
+    -- ── Devices ────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS devices (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT UNIQUE NOT NULL,
-      user_id INTEGER,
-      name TEXT,
-      device_ip TEXT,
-      relay_state TEXT DEFAULT 'off',
-      is_active INTEGER DEFAULT 1,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (user_id) REFERENCES users(id)
+      id          SERIAL      PRIMARY KEY,
+      device_id   VARCHAR(64) UNIQUE NOT NULL,
+      user_id     INTEGER     REFERENCES users(id) ON DELETE SET NULL,
+      name        VARCHAR(128),
+      location    VARCHAR(256),
+      device_ip   VARCHAR(45),
+      status      VARCHAR(20) DEFAULT 'active',
+      relay_state VARCHAR(10) DEFAULT 'off',
+      is_active   BOOLEAN     DEFAULT TRUE,
+      created_at  TIMESTAMPTZ DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS energy_usage (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT NOT NULL,
-      generation_watts REAL DEFAULT 0,
-      consumption_watts REAL DEFAULT 0,
-      battery_level REAL DEFAULT 0,
-      voltage REAL DEFAULT 48,
-      current_amps REAL DEFAULT 0,
-      recorded_at TEXT DEFAULT (datetime('now'))
+    -- ── Energy readings (IoT telemetry from ESP32) ─────────────────────────
+    CREATE TABLE IF NOT EXISTS energy_readings (
+      id                SERIAL        PRIMARY KEY,
+      device_id         VARCHAR(64)   NOT NULL,
+      generation_watts  NUMERIC(10,2) DEFAULT 0,
+      consumption_watts NUMERIC(10,2) DEFAULT 0,
+      battery_level     NUMERIC(5,2)  DEFAULT 0,
+      voltage           NUMERIC(6,2)  DEFAULT 48,
+      current_amps      NUMERIC(6,2)  DEFAULT 0,
+      power_output      NUMERIC(10,2) DEFAULT 0,
+      recorded_at       TIMESTAMPTZ   DEFAULT NOW()
     );
 
+    -- ── Payments (M-Pesa STK Push) ─────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS payments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      device_id TEXT,
-      amount REAL NOT NULL,
-      phone_number TEXT,
-      status TEXT DEFAULT 'pending',
-      merchant_request_id TEXT,
-      checkout_request_id TEXT,
-      mpesa_receipt_number TEXT,
-      result_code TEXT,
-      result_desc TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      processed_at TEXT,
-      FOREIGN KEY (user_id) REFERENCES users(id)
+      id                   SERIAL        PRIMARY KEY,
+      user_id              INTEGER       NOT NULL REFERENCES users(id),
+      device_id            VARCHAR(64),
+      amount               NUMERIC(12,2) NOT NULL,
+      phone_number         VARCHAR(20),
+      mpesa_ref            VARCHAR(64),
+      status               VARCHAR(20)   DEFAULT 'pending',
+      merchant_request_id  VARCHAR(128),
+      checkout_request_id  VARCHAR(128),
+      mpesa_receipt_number VARCHAR(64),
+      fraud_score          NUMERIC(4,3)  DEFAULT 0,
+      result_code          VARCHAR(10),
+      result_desc          TEXT,
+      created_at           TIMESTAMPTZ   DEFAULT NOW(),
+      processed_at         TIMESTAMPTZ
     );
 
-    CREATE TABLE IF NOT EXISTS alerts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER,
-      device_id TEXT,
-      type TEXT NOT NULL,
-      severity TEXT DEFAULT 'medium',
-      message TEXT NOT NULL,
-      resolved INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (user_id) REFERENCES users(id)
-    );
-
+    -- ── AI predictions ─────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS ai_predictions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT NOT NULL,
-      prediction_type TEXT NOT NULL,
-      payload TEXT NOT NULL,
-      confidence REAL,
-      created_at TEXT DEFAULT (datetime('now'))
+      id              SERIAL      PRIMARY KEY,
+      device_id       VARCHAR(64) NOT NULL,
+      prediction_type VARCHAR(64) NOT NULL,
+      prediction_data JSONB,
+      payload         TEXT,
+      confidence      NUMERIC(4,3),
+      created_at      TIMESTAMPTZ DEFAULT NOW()
     );
 
+    -- ── Maintenance alerts ─────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS maintenance_alerts (
+      id         SERIAL      PRIMARY KEY,
+      user_id    INTEGER     REFERENCES users(id) ON DELETE SET NULL,
+      device_id  VARCHAR(64),
+      type       VARCHAR(64) NOT NULL,
+      alert_type VARCHAR(64),
+      severity   VARCHAR(20) DEFAULT 'medium',
+      message    TEXT        NOT NULL,
+      resolved   BOOLEAN     DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- ── Relay command retry queue ──────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS pending_commands (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id TEXT NOT NULL,
-      command TEXT NOT NULL,
-      attempts INTEGER DEFAULT 0,
-      max_attempts INTEGER DEFAULT 5,
-      last_error TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      next_retry_at TEXT DEFAULT (datetime('now'))
+      id            SERIAL      PRIMARY KEY,
+      device_id     VARCHAR(64) NOT NULL,
+      command       VARCHAR(64) NOT NULL,
+      attempts      INTEGER     DEFAULT 0,
+      max_attempts  INTEGER     DEFAULT 5,
+      last_error    TEXT,
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      next_retry_at TIMESTAMPTZ DEFAULT NOW()
     );
+
+    -- ── Indexes ────────────────────────────────────────────────────────────
+    CREATE INDEX IF NOT EXISTS idx_energy_device_ts  ON energy_readings(device_id, recorded_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_payments_user     ON payments(user_id);
+    CREATE INDEX IF NOT EXISTS idx_payments_checkout ON payments(checkout_request_id);
+    CREATE INDEX IF NOT EXISTS idx_alerts_device     ON maintenance_alerts(device_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_pred_device       ON ai_predictions(device_id, created_at DESC);
   `);
+
+  console.log('✅ PostgreSQL migrations complete');
 }
 
-function seedDemoData() {
-  const userCount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
-  if (userCount > 0) return;
+/* ── Demo data seed ─────────────────────────────────────────────────────── */
+async function seedDemoData() {
+  const { rows } = await q('SELECT COUNT(*)::int AS n FROM users');
+  if (rows[0].n > 0) return;
 
-  const insertUser = db.prepare(`
-    INSERT INTO users (device_id, pin, phone, wallet_balance, relay_unlocked)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-  const userResult = insertUser.run('DEMO-001', '1234', '254712345678', 50, 1);
-  const userId = userResult.lastInsertRowid;
+  const { rows: [user] } = await q(
+    `INSERT INTO users (device_id, pin, phone, wallet_balance, relay_unlocked)
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    ['DEMO-001', '1234', '254712345678', 50, true]
+  );
 
-  db.prepare(`
-    INSERT INTO devices (device_id, user_id, name, device_ip, relay_state)
-    VALUES (?, ?, ?, ?, ?)
-  `).run('DEMO-001', userId, 'Demo Solar Kit', '192.168.1.100', 'on');
+  await q(
+    `INSERT INTO devices (device_id, user_id, name, device_ip, relay_state, status, location)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    ['DEMO-001', user.id, 'Demo Solar Kit', '192.168.1.100' /* demo only */, 'on', 'active', 'Nairobi, Kenya']
+  );
 
+  /* Seed 13 energy readings covering the last hour (5-min intervals) */
   const now = Date.now();
-  const insertEnergy = db.prepare(`
-    INSERT INTO energy_usage (device_id, generation_watts, consumption_watts, battery_level, voltage, current_amps, recorded_at)
-    VALUES (?, ?, ?, ?, ?, ?, datetime(?, 'unixepoch'))
-  `);
-
   for (let i = 12; i >= 0; i--) {
-    const ts = Math.floor((now - i * 5 * 60 * 1000) / 1000);
-    const hour = new Date(now - i * 5 * 60 * 1000).getHours();
-    const seasonal = Math.sin((hour - 6) * Math.PI / 12) * 80 + 150;
-    insertEnergy.run('DEMO-001', Math.max(0, seasonal + Math.random() * 30), 120 + Math.random() * 20, 70 + Math.random() * 10, 48, 10, ts);
+    const ts = new Date(now - i * 5 * 60_000);
+    const hour = ts.getHours();
+    const seasonal = Math.sin(((hour - 6) * Math.PI) / 12) * 80 + 150;
+    const gen = Math.max(0, seasonal + Math.random() * 30);
+    await q(
+      `INSERT INTO energy_readings
+         (device_id, generation_watts, consumption_watts, battery_level, voltage, current_amps, power_output, recorded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      ['DEMO-001', gen, 120 + Math.random() * 20, 70 + Math.random() * 10, 48, 10, gen * 0.95, ts]
+    );
   }
 
-  console.log('✅ Demo user seeded (deviceId: DEMO-001, pin: 1234)');
+  console.log('✅ Demo data seeded  (deviceId: DEMO-001  pin: 1234)');
 }
 
-initSchema();
-seedDemoData();
+/* ══════════════════════════════════════════════════════════════════════════
+   USER QUERIES
+══════════════════════════════════════════════════════════════════════════ */
 
-// --- Query helpers ---
-
-function getUserByDeviceId(deviceId) {
-  return db.prepare('SELECT * FROM users WHERE device_id = ?').get(deviceId);
+async function getUserByDeviceId(deviceId) {
+  const { rows } = await q('SELECT * FROM users WHERE device_id = $1', [deviceId]);
+  return rows[0] ?? null;
 }
 
-function getUserById(id) {
-  return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+async function getUserById(id) {
+  const { rows } = await q('SELECT * FROM users WHERE id = $1', [id]);
+  return rows[0] ?? null;
 }
 
-function getDevice(deviceId) {
-  return db.prepare('SELECT * FROM devices WHERE device_id = ?').get(deviceId);
+async function updateWallet(userId, amount) {
+  await q(
+    'UPDATE users SET wallet_balance = wallet_balance + $1, relay_unlocked = TRUE WHERE id = $2',
+    [amount, userId]
+  );
 }
 
-function getDeviceByUserId(userId) {
-  return db.prepare('SELECT * FROM devices WHERE user_id = ? LIMIT 1').get(userId);
+async function setWalletBalance(userId, balance) {
+  await q('UPDATE users SET wallet_balance = $1 WHERE id = $2', [balance, userId]);
 }
 
-function updateWallet(userId, amount) {
-  return db.prepare(`
-    UPDATE users SET wallet_balance = wallet_balance + ?, relay_unlocked = 1 WHERE id = ?
-  `).run(amount, userId);
-}
-
-function setWalletBalance(userId, balance) {
-  return db.prepare('UPDATE users SET wallet_balance = ? WHERE id = ?').run(balance, userId);
-}
-
-function setRelayState(deviceId, state) {
-  const relayState = state ? 'on' : 'off';
-  db.prepare('UPDATE devices SET relay_state = ? WHERE device_id = ?').run(relayState, deviceId);
-  const device = getDevice(deviceId);
-  if (device?.user_id) {
-    db.prepare('UPDATE users SET relay_unlocked = ? WHERE id = ?').run(state ? 1 : 0, device.user_id);
-  }
-}
-
-function getExpiredWalletUsers() {
-  return db.prepare(`
+async function getExpiredWalletUsers() {
+  const { rows } = await q(`
     SELECT u.*, d.device_id AS linked_device_id, d.device_ip
-    FROM users u
+    FROM   users   u
     LEFT JOIN devices d ON d.user_id = u.id
-    WHERE u.wallet_balance <= 0 AND u.relay_unlocked = 1
-  `).all();
+    WHERE  u.wallet_balance <= 0
+    AND    u.relay_unlocked = TRUE
+  `);
+  return rows;
 }
 
-function createPayment({ userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId }) {
-  return db.prepare(`
-    INSERT INTO payments (user_id, device_id, amount, phone_number, status, merchant_request_id, checkout_request_id)
-    VALUES (?, ?, ?, ?, 'pending', ?, ?)
-  `).run(userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId);
+/* ══════════════════════════════════════════════════════════════════════════
+   DEVICE QUERIES
+══════════════════════════════════════════════════════════════════════════ */
+
+async function getDevice(deviceId) {
+  const { rows } = await q('SELECT * FROM devices WHERE device_id = $1', [deviceId]);
+  return rows[0] ?? null;
 }
 
-function completePayment(checkoutRequestId, receiptNumber, resultCode, resultDesc) {
-  const payment = db.prepare('SELECT * FROM payments WHERE checkout_request_id = ?').get(checkoutRequestId);
+async function getDeviceByUserId(userId) {
+  const { rows } = await q(
+    'SELECT * FROM devices WHERE user_id = $1 ORDER BY created_at LIMIT 1',
+    [userId]
+  );
+  return rows[0] ?? null;
+}
+
+async function setRelayState(deviceId, state) {
+  const relayStr = state ? 'on' : 'off';
+  await q('UPDATE devices SET relay_state = $1 WHERE device_id = $2', [relayStr, deviceId]);
+  const device = await getDevice(deviceId);
+  if (device?.user_id) {
+    await q('UPDATE users SET relay_unlocked = $1 WHERE id = $2', [state, device.user_id]);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ENERGY READINGS
+══════════════════════════════════════════════════════════════════════════ */
+
+async function insertEnergyReading(data) {
+  const powerOutput = (data.generation || 0) * 0.95;
+  await q(
+    `INSERT INTO energy_readings
+       (device_id, generation_watts, consumption_watts, battery_level, voltage, current_amps, power_output)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [data.deviceId, data.generation, data.consumption, data.batteryLevel, data.voltage, data.current, powerOutput]
+  );
+}
+
+async function getLatestEnergy(deviceId) {
+  const { rows } = await q(
+    'SELECT * FROM energy_readings WHERE device_id = $1 ORDER BY recorded_at DESC LIMIT 1',
+    [deviceId]
+  );
+  return rows[0] ?? null;
+}
+
+/** Most-recent N readings, newest first */
+async function getEnergyHistory(deviceId, limit = 50) {
+  const { rows } = await q(
+    'SELECT * FROM energy_readings WHERE device_id = $1 ORDER BY recorded_at DESC LIMIT $2',
+    [deviceId, limit]
+  );
+  return rows;
+}
+
+/** Most-recent N readings returned in ascending (oldest → newest) order */
+async function getEnergyHistoryAsc(deviceId, limit = 50) {
+  const { rows } = await q(
+    `SELECT * FROM (
+       SELECT * FROM energy_readings WHERE device_id = $1 ORDER BY recorded_at DESC LIMIT $2
+     ) sub ORDER BY recorded_at ASC`,
+    [deviceId, limit]
+  );
+  return rows;
+}
+
+/** All readings from the last 48 hours, oldest first — used to warm AI models on startup */
+async function getEnergyHistory48h(deviceId) {
+  const { rows } = await q(
+    `SELECT * FROM energy_readings
+     WHERE  device_id  = $1
+     AND    recorded_at > NOW() - INTERVAL '48 hours'
+     ORDER  BY recorded_at ASC`,
+    [deviceId]
+  );
+  return rows;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PAYMENT QUERIES
+══════════════════════════════════════════════════════════════════════════ */
+
+async function createPayment({ userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId }) {
+  const { rows } = await q(
+    `INSERT INTO payments
+       (user_id, device_id, amount, phone_number, status, merchant_request_id, checkout_request_id)
+     VALUES ($1,$2,$3,$4,'pending',$5,$6)
+     RETURNING id`,
+    [userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId]
+  );
+  return rows[0];
+}
+
+async function completePayment(checkoutRequestId, receiptNumber, resultCode, resultDesc) {
+  const { rows } = await q(
+    'SELECT * FROM payments WHERE checkout_request_id = $1',
+    [checkoutRequestId]
+  );
+  const payment = rows[0];
   if (!payment) return null;
 
-  db.prepare(`
-    UPDATE payments SET status = 'completed', mpesa_receipt_number = ?, result_code = ?,
-      result_desc = ?, processed_at = datetime('now')
-    WHERE checkout_request_id = ?
-  `).run(receiptNumber, resultCode, resultDesc, checkoutRequestId);
+  await q(
+    `UPDATE payments
+     SET status = 'completed', mpesa_receipt_number = $1, mpesa_ref = $1,
+         result_code = $2, result_desc = $3, processed_at = NOW()
+     WHERE checkout_request_id = $4`,
+    [receiptNumber, resultCode, resultDesc, checkoutRequestId]
+  );
 
-  updateWallet(payment.user_id, payment.amount);
-  return db.prepare('SELECT * FROM payments WHERE checkout_request_id = ?').get(checkoutRequestId);
+  await updateWallet(payment.user_id, Number.parseFloat(payment.amount));
+
+  const { rows: updated } = await q(
+    'SELECT * FROM payments WHERE checkout_request_id = $1',
+    [checkoutRequestId]
+  );
+  return updated[0] ?? null;
 }
 
-function failPayment(checkoutRequestId, resultCode, resultDesc) {
-  return db.prepare(`
-    UPDATE payments SET status = 'failed', result_code = ?, result_desc = ?
-    WHERE checkout_request_id = ?
-  `).run(resultCode, resultDesc, checkoutRequestId);
+async function failPayment(checkoutRequestId, resultCode, resultDesc) {
+  await q(
+    `UPDATE payments SET status = 'failed', result_code = $1, result_desc = $2
+     WHERE checkout_request_id = $3`,
+    [resultCode, resultDesc, checkoutRequestId]
+  );
 }
 
-function getPaymentStats() {
-  return db.prepare(`
+async function getPaymentStats() {
+  const { rows: [s] } = await q(`
     SELECT
-      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS cleared,
-      SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
-      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
-      COALESCE(SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END), 0) AS total_revenue
+      COUNT(*)                                              ::int   AS count,
+      COUNT(*)                                              ::int   AS total_payments,
+      COUNT(*) FILTER (WHERE status = 'completed')          ::int   AS cleared,
+      COUNT(*) FILTER (WHERE status = 'completed')          ::int   AS completed,
+      COUNT(*) FILTER (WHERE status = 'completed')          ::int   AS success,
+      COUNT(*) FILTER (WHERE status = 'pending')            ::int   AS pending,
+      COUNT(*) FILTER (WHERE status = 'failed')             ::int   AS failed,
+      COALESCE(SUM(amount) FILTER (WHERE status='completed'), 0)    AS total_revenue
     FROM payments
-  `).get();
+  `);
+  return s;
 }
 
-function getLatestEnergy(deviceId) {
-  return db.prepare(`
-    SELECT * FROM energy_usage WHERE device_id = ? ORDER BY recorded_at DESC LIMIT 1
-  `).get(deviceId);
+async function getRecentPayments(limit = 20) {
+  const { rows } = await q(
+    `SELECT p.*, u.device_id AS user_device_id
+     FROM   payments p
+     LEFT JOIN users u ON p.user_id = u.id
+     ORDER  BY p.created_at DESC
+     LIMIT  $1`,
+    [limit]
+  );
+  return rows;
 }
 
-function getEnergyHistory(deviceId, limit = 50) {
-  return db.prepare(`
-    SELECT * FROM energy_usage WHERE device_id = ? ORDER BY recorded_at DESC LIMIT ?
-  `).all(deviceId, limit);
+async function getPaymentTrend() {
+  const { rows } = await q(`
+    SELECT created_at::date::text                                          AS day,
+           COALESCE(SUM(amount) FILTER (WHERE status='completed'), 0)     AS revenue,
+           COUNT(*)::int                                                   AS total
+    FROM   payments
+    GROUP  BY created_at::date
+    ORDER  BY day ASC
+    LIMIT  14
+  `);
+  return rows;
 }
 
-function getEnergyHistoryAsc(deviceId, limit = 50) {
-  return db.prepare(`
-    SELECT * FROM (
-      SELECT * FROM energy_usage WHERE device_id = ? ORDER BY recorded_at DESC LIMIT ?
-    ) ORDER BY recorded_at ASC
-  `).all(deviceId, limit);
+/* ══════════════════════════════════════════════════════════════════════════
+   ALERTS / MAINTENANCE
+══════════════════════════════════════════════════════════════════════════ */
+
+async function createAlert({ userId, deviceId, type, severity, message }) {
+  await q(
+    `INSERT INTO maintenance_alerts (user_id, device_id, type, alert_type, severity, message)
+     VALUES ($1,$2,$3,$3,$4,$5)`,
+    [userId, deviceId, type, severity, message]
+  );
 }
 
-function getRecentPayments(limit = 20) {
-  return db.prepare(`
-    SELECT p.*, u.device_id AS user_device_id
-    FROM payments p
-    LEFT JOIN users u ON p.user_id = u.id
-    ORDER BY p.created_at DESC LIMIT ?
-  `).all(limit);
+async function getAlerts(limit = 20) {
+  const { rows } = await q(
+    'SELECT * FROM maintenance_alerts ORDER BY created_at DESC LIMIT $1',
+    [limit]
+  );
+  return rows;
 }
 
-function getAuditTimeline(limit = 30) {
-  return db.prepare(`
-    SELECT 'payment' AS category, id, created_at AS ts, status AS severity,
-           CAST(amount AS TEXT) AS detail, device_id AS ref_id
-    FROM payments
-    UNION ALL
-    SELECT 'alert', id, created_at, severity, message, device_id
-    FROM alerts
-    ORDER BY ts DESC LIMIT ?
-  `).all(limit);
+async function getAlertSeverityCounts() {
+  const { rows } = await q(
+    'SELECT severity, COUNT(*)::int AS count FROM maintenance_alerts GROUP BY severity'
+  );
+  return rows;
 }
 
-function getAlertSeverityCounts() {
-  return db.prepare(`
-    SELECT severity, COUNT(*) AS count FROM alerts GROUP BY severity
-  `).all();
+/* ══════════════════════════════════════════════════════════════════════════
+   AI PREDICTIONS
+══════════════════════════════════════════════════════════════════════════ */
+
+async function savePrediction(deviceId, predictionType, payload, confidence) {
+  const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  await q(
+    `INSERT INTO ai_predictions (device_id, prediction_type, prediction_data, payload, confidence)
+     VALUES ($1,$2,$3,$4,$5)`,
+    [deviceId, predictionType, data, data, confidence ?? null]
+  );
 }
 
-function getPaymentTrend() {
-  return db.prepare(`
-    SELECT date(created_at) AS day,
-           SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END) AS revenue,
-           COUNT(*) AS total
-    FROM payments GROUP BY date(created_at) ORDER BY day ASC LIMIT 14
-  `).all();
+/* ══════════════════════════════════════════════════════════════════════════
+   AUDIT TIMELINE
+══════════════════════════════════════════════════════════════════════════ */
+
+async function getAuditTimeline(limit = 30) {
+  const { rows } = await q(
+    `SELECT 'payment'             AS category,
+            id, created_at        AS ts,
+            status                AS severity,
+            amount::text          AS detail,
+            device_id             AS ref_id
+     FROM   payments
+     UNION ALL
+     SELECT 'alert',
+            id, created_at,
+            severity,
+            message,
+            device_id
+     FROM   maintenance_alerts
+     ORDER  BY ts DESC
+     LIMIT  $1`,
+    [limit]
+  );
+  return rows;
 }
 
-function insertEnergyReading(data) {
-  return db.prepare(`
-    INSERT INTO energy_usage (device_id, generation_watts, consumption_watts, battery_level, voltage, current_amps)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(data.deviceId, data.generation, data.consumption, data.batteryLevel, data.voltage, data.current);
+/* ══════════════════════════════════════════════════════════════════════════
+   PENDING COMMANDS (relay retry queue)
+══════════════════════════════════════════════════════════════════════════ */
+
+async function queuePendingCommand(deviceId, command, error) {
+  await q(
+    'INSERT INTO pending_commands (device_id, command, last_error) VALUES ($1,$2,$3)',
+    [deviceId, command, error ?? null]
+  );
 }
 
-function createAlert({ userId, deviceId, type, severity, message }) {
-  return db.prepare(`
-    INSERT INTO alerts (user_id, device_id, type, severity, message) VALUES (?, ?, ?, ?, ?)
-  `).run(userId, deviceId, type, severity, message);
+async function getPendingCommands() {
+  const { rows } = await q(
+    `SELECT * FROM pending_commands
+     WHERE  attempts < max_attempts
+     AND    next_retry_at <= NOW()
+     ORDER  BY created_at ASC`
+  );
+  return rows;
 }
 
-function getAlerts(limit = 20) {
-  return db.prepare('SELECT * FROM alerts ORDER BY created_at DESC LIMIT ?').all(limit);
+async function updatePendingCommand(id, attempts, error) {
+  await q(
+    `UPDATE pending_commands
+     SET attempts = $1, last_error = $2, next_retry_at = NOW() + INTERVAL '5 minutes'
+     WHERE id = $3`,
+    [attempts, error, id]
+  );
 }
 
-function savePrediction(deviceId, predictionType, payload, confidence) {
-  return db.prepare(`
-    INSERT INTO ai_predictions (device_id, prediction_type, payload, confidence)
-    VALUES (?, ?, ?, ?)
-  `).run(deviceId, predictionType, JSON.stringify(payload), confidence);
+async function removePendingCommand(id) {
+  await q('DELETE FROM pending_commands WHERE id = $1', [id]);
 }
 
-function queuePendingCommand(deviceId, command, error) {
-  return db.prepare(`
-    INSERT INTO pending_commands (device_id, command, last_error) VALUES (?, ?, ?)
-  `).run(deviceId, command, error || null);
-}
+/* ══════════════════════════════════════════════════════════════════════════
+   DASHBOARD / ADMIN AGGREGATES
+══════════════════════════════════════════════════════════════════════════ */
 
-function getPendingCommands() {
-  return db.prepare(`
-    SELECT * FROM pending_commands
-    WHERE attempts < max_attempts AND datetime(next_retry_at) <= datetime('now')
-    ORDER BY created_at ASC
-  `).all();
-}
-
-function updatePendingCommand(id, attempts, error) {
-  return db.prepare(`
-    UPDATE pending_commands SET attempts = ?, last_error = ?,
-      next_retry_at = datetime('now', '+5 minutes')
-    WHERE id = ?
-  `).run(attempts, error, id);
-}
-
-function removePendingCommand(id) {
-  return db.prepare('DELETE FROM pending_commands WHERE id = ?').run(id);
-}
-
-function getDashboardState() {
-  const device = getDevice('DEMO-001');
-  const user = getUserByDeviceId('DEMO-001');
-  const latest = getLatestEnergy('DEMO-001');
-  const stats = getPaymentStats();
+async function getDashboardState() {
+  const [device, user, latest, stats] = await Promise.all([
+    getDevice('DEMO-001'),
+    getUserByDeviceId('DEMO-001'),
+    getLatestEnergy('DEMO-001'),
+    getPaymentStats()
+  ]);
 
   return {
-    batteryLevel: latest?.battery_level ?? 75,
-    generation: latest?.generation_watts ?? 180,
-    consumption: latest?.consumption_watts ?? 135,
-    powerEnabled: device?.relay_state === 'on',
-    walletBalance: user?.wallet_balance ?? 0,
-    dueAmount: user?.wallet_balance <= 0 ? 100 : 0,
-    deviceId: 'DEMO-001',
+    batteryLevel:  latest?.battery_level    ?? 75,
+    generation:    latest?.generation_watts ?? 180,
+    consumption:   latest?.consumption_watts ?? 135,
+    powerEnabled:  device?.relay_state === 'on',
+    walletBalance: user?.wallet_balance      ?? 0,
+    dueAmount:     (user?.wallet_balance ?? 1) <= 0 ? 100 : 0,
+    deviceId:      'DEMO-001',
+    paymentStats:  stats
+  };
+}
+
+async function getAdminSummary() {
+  const [uRes, dRes, oRes, stats] = await Promise.all([
+    q('SELECT COUNT(*)::int AS n FROM users'),
+    q('SELECT COUNT(*)::int AS n FROM devices'),
+    q("SELECT COUNT(*)::int AS n FROM devices WHERE is_active = FALSE"),
+    getPaymentStats()
+  ]);
+  return {
+    users:        uRes.rows[0].n,
+    devices:      dRes.rows[0].n,
+    offline:      oRes.rows[0].n,
+    revenue:      stats.total_revenue,
     paymentStats: stats
   };
 }
 
-function getAdminSummary() {
-  const users = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
-  const devices = db.prepare('SELECT COUNT(*) AS count FROM devices').get().count;
-  const offline = db.prepare('SELECT COUNT(*) AS count FROM devices WHERE is_active = 0').get().count;
-  const stats = getPaymentStats();
-  return { users, devices, offline, revenue: stats.total_revenue };
-}
-
+/* ══════════════════════════════════════════════════════════════════════════
+   EXPORTS  (same surface as the old SQLite db.js)
+══════════════════════════════════════════════════════════════════════════ */
 module.exports = {
-  db,
+  pool,
+  runMigrations,
+  seedDemoData,
+  /* users */
   getUserByDeviceId,
   getUserById,
-  getDevice,
-  getDeviceByUserId,
   updateWallet,
   setWalletBalance,
-  setRelayState,
   getExpiredWalletUsers,
+  /* devices */
+  getDevice,
+  getDeviceByUserId,
+  setRelayState,
+  /* energy */
+  insertEnergyReading,
+  getLatestEnergy,
+  getEnergyHistory,
+  getEnergyHistoryAsc,
+  getEnergyHistory48h,
+  /* payments */
   createPayment,
   completePayment,
   failPayment,
   getPaymentStats,
-  getLatestEnergy,
-  getEnergyHistory,
-  getEnergyHistoryAsc,
   getRecentPayments,
-  getAuditTimeline,
-  getAlertSeverityCounts,
   getPaymentTrend,
-  insertEnergyReading,
+  /* alerts */
   createAlert,
   getAlerts,
+  getAlertSeverityCounts,
+  /* ai */
   savePrediction,
+  /* audit */
+  getAuditTimeline,
+  /* relay queue */
   queuePendingCommand,
   getPendingCommands,
   updatePendingCommand,
   removePendingCommand,
+  /* aggregates */
   getDashboardState,
   getAdminSummary
 };
