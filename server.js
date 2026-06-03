@@ -557,6 +557,51 @@ app.get('/api/audit/charts', (req, res) => {
   }
 });
 
+// ==================== ANALYTICS ====================
+
+app.get('/api/analytics/summary', (req, res) => {
+  try {
+    const deviceId = req.query.deviceId || 'DEMO-001';
+
+    // Raw readings — up to 200 most-recent entries
+    const readings = getEnergyHistoryAsc(deviceId, 200);
+
+    // Group by calendar day (YYYY-MM-DD) to produce daily totals
+    const dayMap = {};
+    readings.forEach(r => {
+      const day = new Date(r.recorded_at).toISOString().split('T')[0];
+      if (!dayMap[day]) dayMap[day] = { genW: 0, conW: 0, batSum: 0, count: 0 };
+      dayMap[day].genW   += r.generation_watts  || 0;
+      dayMap[day].conW   += r.consumption_watts || 0;
+      dayMap[day].batSum += r.battery_level     || 0;
+      dayMap[day].count  += 1;
+    });
+
+    // Last 30 days, oldest-first
+    const dailyData = Object.entries(dayMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-30)
+      .map(([date, v]) => ({
+        date,
+        generationKwh:  Number((v.genW  / 1000).toFixed(3)),
+        consumptionKwh: Number((v.conW  / 1000).toFixed(3)),
+        avgBattery:     v.count > 0 ? Number((v.batSum / v.count).toFixed(1)) : null
+      }));
+
+    // Group payments by month for 12-month revenue trend
+    const paymentTrend = getPaymentTrend(); // already available
+
+    res.json({
+      dailyData,
+      paymentTrend,
+      payments: getPaymentStats(),
+      summary:  getAdminSummary()
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load analytics summary', message: err.message });
+  }
+});
+
 // ==================== CRON JOBS ====================
 
 cron.schedule('*/15 * * * *', async () => {

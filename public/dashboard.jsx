@@ -1,4 +1,27 @@
 const { useState, useEffect, useRef, useCallback } = React;
+const { Line, Bar, Doughnut, Scatter } = ReactChartjs2;
+
+/* Polyfill Chart.helpers.configMerge — removed in Chart.js 3.x, still called by
+   react-chartjs-2@3.0.4 when updating chart options after a re-render. */
+if (Chart && Chart.helpers && !Chart.helpers.configMerge) {
+  Chart.helpers.configMerge = function mergeDeep(base) {
+    const result = Object.assign({}, base);
+    for (let i = 1; i < arguments.length; i++) {
+      const override = arguments[i];
+      if (!override || typeof override !== 'object') continue;
+      Object.keys(override).forEach(function(key) {
+        const v = override[key];
+        if (v && typeof v === 'object' && !Array.isArray(v) &&
+            result[key] && typeof result[key] === 'object' && !Array.isArray(result[key])) {
+          result[key] = Chart.helpers.configMerge(result[key], v);
+        } else {
+          result[key] = v;
+        }
+      });
+    }
+    return result;
+  };
+}
 
 const thresholdLinePlugin = {
   id: 'thresholdLine',
@@ -27,7 +50,8 @@ const thresholdLinePlugin = {
     ctx.restore();
   }
 };
-Chart.register(...Chart.registerables);
+/* chart.min.js (UMD) auto-registers all built-in components at load time.
+   Only register custom plugins explicitly. */
 Chart.register(thresholdLinePlugin);
 
 const formatKES = (value) => `KES ${Number(value).toLocaleString('en-KE')}`;
@@ -690,326 +714,279 @@ const SolarDashboard = () => {
     });
   }, [refreshAllCharts]);
 
-  const cardClass = 'bg-white/85 dark:bg-slate-900/75 border border-slate-200/70 dark:border-slate-700/70 rounded-3xl shadow-sm backdrop-blur-xl p-5';
-  const chartWrapper = 'relative h-[300px]';
+  const card = 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm p-5';
+
   const tabs = [
-    { id: 'energy', label: 'Energy', emoji: '⚡' },
-    { id: 'financial', label: 'Financial', emoji: '💳' },
-    { id: 'ai', label: 'AI Insights', emoji: '🤖' },
-    { id: 'operations', label: 'Operations', emoji: '🏢' }
+    { id: 'energy',     label: 'Energy',      emoji: '⚡' },
+    { id: 'financial',  label: 'Financial',   emoji: '💳' },
+    { id: 'ai',         label: 'AI Insights', emoji: '🤖' },
+    { id: 'operations', label: 'Operations',  emoji: '🏢' }
   ];
 
-  const renderChart = (key, Component, data, options = {}) => {
+  const mkRef = (key) => (c) => { if (c) chartRefs.current[key] = c; };
+
+  const paymentLegend = paymentStatusData.current.labels.map((label, i) => {
+    const count = paymentStatusData.current.counts[i];
+    const pct   = paymentStatusData.current.percentages[i].toFixed(0);
+    const dot   = ['bg-emerald-500','bg-amber-500','bg-rose-500'][i];
     return (
-      <div className={cardClass}>
-        <div className={chartWrapper}>
-          <Component
-            key={`${key}-${activeTab}`}
-            ref={(chart) => {
-              if (chart) chartRefs.current[key] = chart;
-            }}
-            data={data}
-            options={{ ...baseOptions, ...options }}
-          />
-        </div>
+      <div key={label} className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+        <span className={`w-2.5 h-2.5 rounded-full ${dot}`} />
+        <span>{label}</span>
+        <span className="font-semibold">{pct}%</span>
+        <span className="text-slate-400 text-xs">({count})</span>
       </div>
     );
+  });
+
+  const creditLegend = creditScoreTrendData.current.datasets.map((ds) => {
+    const dot = ds.borderColor === 'rgb(34, 197, 94)' ? 'bg-emerald-500'
+              : ds.borderColor === 'rgb(59, 130, 246)' ? 'bg-sky-500' : 'bg-rose-500';
+    return (
+      <div key={ds.label} className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+        <span className={`w-2.5 h-2.5 rounded-full ${dot}`} />
+        <span>{ds.label}</span>
+      </div>
+    );
+  });
+
+  const latestGeneration  = solarGenerationData.current.datasets[0].data;
+  const peakToday         = Math.max(...latestGeneration).toFixed(1);
+  const latestBattery     = batteryStateData.current.datasets[0].data.at(-1)?.toFixed(1) ?? 0;
+  const surplusToday      = (generationVsConsumptionData.current.datasets[0].data.at(-1) - generationVsConsumptionData.current.datasets[1].data.at(-1)).toFixed(1);
+  const latestVoltage     = voltageCurrentData.current.datasets[0].data.at(-1)?.toFixed(1) ?? 0;
+  const latestCurrent     = voltageCurrentData.current.datasets[1].data.at(-1)?.toFixed(1) ?? 0;
+  const todayRevenue      = revenueData.current.datasets[0].data.at(-1) ?? 0;
+  const mtdRevenue        = revenueData.current.datasets[0].data.slice(-7).reduce((s, v) => s + v, 0);
+  const attentionCount    = paymentStatusData.current.counts[1] + paymentStatusData.current.counts[2];
+  const currentPAR        = par30Data.current.datasets[0].data.at(-1) ?? 0;
+  const lowCreditCount    = creditDistributionData.current.datasets[0].data[0] + creditDistributionData.current.datasets[0].data[1];
+  const modelAccuracy     = 92;
+  const nextLow           = forecastData.current.labels[forecastData.current.datasets[0].data.indexOf(Math.min(...forecastData.current.datasets[0].data))];
+  const anomaliesCount    = anomalyScoreData.current.datasets[0].data.filter(v => v >= 2).length;
+  const flaggedCount      = fraudRiskData.current.points.filter(p => p.y > 0.8).length;
+  const deviceOffline     = deviceHealthData.current.offline.reduce((s, v) => s + v, 0);
+  const topAgent          = agentPerformanceData.current.sorted[0];
+  const currentMRR        = mrrData.current.values.at(-1) ?? 0;
+  const growth            = currentMRR && mrrData.current.values.length > 1
+    ? (((currentMRR - mrrData.current.values.at(-2)) / mrrData.current.values.at(-2)) * 100).toFixed(1) : 0;
+  const replaceCount      = panelEfficiencyData.current.points.filter(p => p.y < 75).length;
+
+  const Badge = ({ label, color }) => {
+    const cls = {
+      emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400',
+      amber:   'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
+      sky:     'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400',
+      violet:  'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-400',
+      red:     'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400',
+      blue:    'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400',
+      purple:  'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400',
+      indigo:  'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400',
+    }[color] || 'bg-slate-100 text-slate-700';
+    return <span className={`rounded-full px-3 py-1 text-xs font-semibold ${cls}`}>{label}</span>;
   };
 
-  const paymentLegend = paymentStatusData.current.labels.map((label, index) => {
-    const count = paymentStatusData.current.counts[index];
-    const percent = paymentStatusData.current.percentages[index].toFixed(0);
-    const colors = ['bg-emerald-500', 'bg-amber-500', 'bg-rose-500'];
-    return (
-      <div key={label} className="flex items-center gap-3 text-sm text-gray-600 dark:text-gray-300">
-        <span className={`w-3 h-3 rounded-full ${colors[index]}`} />
-        <span>{label}</span>
-        <span className="font-semibold">{percent}%</span>
-        <span className="text-slate-400">({count})</span>
+  const ChartCard = ({ title, badge, badgeColor, subtitle, footer, h = 'h-[280px]', children }) => (
+    <div className={card}>
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <h2 className="font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
+          {subtitle && <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>}
+        </div>
+        <Badge label={badge} color={badgeColor} />
       </div>
-    );
-  });
-
-  const creditLegend = creditScoreTrendData.current.datasets.map((dataset) => {
-    const badgeColor = dataset.borderColor === 'rgb(34, 197, 94)' ? 'bg-emerald-500' : dataset.borderColor === 'rgb(59, 130, 246)' ? 'bg-sky-500' : 'bg-rose-500';
-    return (
-      <div key={dataset.label} className="flex items-center gap-3 text-sm text-gray-600 dark:text-gray-300">
-        <span className={`w-3 h-3 rounded-full ${badgeColor}`} />
-        <span>{dataset.label}</span>
-      </div>
-    );
-  });
-
-  const latestGeneration = solarGenerationData.current.datasets[0].data;
-  const peakToday = Math.max(...latestGeneration).toFixed(1);
-  const latestBattery = batteryStateData.current.datasets[0].data.at(-1)?.toFixed(1) ?? 0;
-  const surplusToday = (generationVsConsumptionData.current.datasets[0].data.at(-1) - generationVsConsumptionData.current.datasets[1].data.at(-1)).toFixed(1);
-  const latestVoltage = voltageCurrentData.current.datasets[0].data.at(-1)?.toFixed(1) ?? 0;
-  const latestCurrent = voltageCurrentData.current.datasets[1].data.at(-1)?.toFixed(1) ?? 0;
-  const todayRevenue = revenueData.current.datasets[0].data.at(-1) ?? 0;
-  const mtdRevenue = revenueData.current.datasets[0].data.slice(-7).reduce((sum, value) => sum + value, 0);
-  const attentionCount = paymentStatusData.current.counts[1] + paymentStatusData.current.counts[2];
-  const currentPAR = par30Data.current.datasets[0].data.at(-1) ?? 0;
-  const lowCreditCount = creditDistributionData.current.datasets[0].data[0] + creditDistributionData.current.datasets[0].data[1];
-  const modelAccuracy = 92;
-  const nextLow = forecastData.current.labels[forecastData.current.datasets[0].data.indexOf(Math.min(...forecastData.current.datasets[0].data))];
-  const anomaliesCount = anomalyScoreData.current.datasets[0].data.filter((value) => value >= 2).length;
-  const flaggedCount = fraudRiskData.current.points.filter((point) => point.y > 0.8).length;
-  const topRiskDrag = creditScoreTrendData.current.datasets[2].data.filter((value) => value < 60).length;
-  const deviceOffline = deviceHealthData.current.offline.reduce((sum, value) => sum + value, 0);
-  const topAgent = agentPerformanceData.current.sorted[0];
-  const currentMRR = mrrData.current.values.at(-1) ?? 0;
-  const growth = currentMRR && mrrData.current.values.length > 1 ? (((currentMRR - mrrData.current.values[mrrData.current.values.length - 2]) / mrrData.current.values[mrrData.current.values.length - 2]) * 100).toFixed(1) : 0;
-  const replaceCount = panelEfficiencyData.current.points.filter((point) => point.y < 75).length;
+      <div className={`relative ${h}`}>{children}</div>
+      {footer && <p className="mt-3 text-center text-sm text-slate-500 dark:text-slate-400">{footer}</p>}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-transparent text-slate-900 dark:text-slate-100 dashboard-shell">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        {/* ── Header ── */}
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Smart Solar Monitoring</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">SolarPAYG Live Dashboard</h1>
+            <p className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400">Smart Solar Monitoring</p>
+            <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50">Analysis Board</h1>
           </div>
-          <div className="flex items-center gap-4 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-4 shadow-sm">
-            <div className="flex h-3 w-3 items-center justify-center rounded-full bg-emerald-500 shadow-[0_0_0_10px_rgba(16,185,129,0.08)] animate-pulse" />
-            <div className="flex flex-col text-right">
-              <span className="text-sm font-medium text-slate-500 dark:text-slate-400">Live</span>
-              <span className="text-base font-semibold">{time.toLocaleTimeString()}</span>
-            </div>
+          <div className="flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-3 shadow-sm">
+            <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-sm font-medium text-slate-500 dark:text-slate-400">Live —</span>
+            <span className="text-sm font-semibold tabular-nums">{time.toLocaleTimeString()}</span>
           </div>
         </div>
 
-        <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+        {/* ── KPI Strip ── */}
+        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
           {[
-            { title: 'Devices Online', value: globalStats.devicesOnline.toLocaleString(), icon: '📡' },
-            { title: "Today's Revenue", value: formatKES(globalStats.todayRevenue), icon: '💰' },
-            { title: 'Active Customers', value: globalStats.activeCustomers.toLocaleString(), icon: '👥' }
-          ].map((metric) => (
-            <div key={metric.title} className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{metric.title}</p>
-                  <p className="mt-3 text-2xl font-semibold">{metric.value}</p>
-                </div>
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-xl dark:bg-slate-800">{metric.icon}</div>
+            { title: 'Devices Online',    value: globalStats.devicesOnline.toLocaleString(), icon: '📡', accent: 'text-emerald-600 dark:text-emerald-400' },
+            { title: "Today's Revenue",   value: formatKES(globalStats.todayRevenue),        icon: '💰', accent: 'text-blue-600 dark:text-blue-400'    },
+            { title: 'Active Customers',  value: globalStats.activeCustomers.toLocaleString(), icon: '👥', accent: 'text-violet-600 dark:text-violet-400' }
+          ].map(m => (
+            <div key={m.title} className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">{m.title}</p>
+                <p className={`mt-2 text-2xl font-bold ${m.accent}`}>{m.value}</p>
               </div>
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-xl">{m.icon}</div>
             </div>
           ))}
         </div>
 
-<div className="mt-8">
-          <h2 className="text-lg font-semibold text-slate-200 dark:text-slate-300">All analysis charts</h2>
-          <p className="mt-2 text-sm text-slate-400">Every chart is shown together for a complete analytics view.</p>
+        {/* ── Tab Nav ── */}
+        <div className="mt-8 flex gap-2 flex-wrap">
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={[
+                'px-5 py-2.5 rounded-full text-sm font-semibold transition-all duration-200',
+                activeTab === tab.id
+                  ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30 scale-105'
+                  : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400 hover:text-amber-600 dark:hover:text-amber-400'
+              ].join(' ')}
+            >
+              {tab.emoji} {tab.label}
+            </button>
+          ))}
         </div>
 
-        <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2">
-          <>
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Solar Generation</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Line chart with daily production.</p>
-                  </div>
-                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200">Real-time</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('solarGeneration', Line, solarGenerationData.current)}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">Peak today: {peakToday} kW</p>
-              </div>
+        {/* ══ ENERGY TAB ══ */}
+        {activeTab === 'energy' && (
+          <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <ChartCard title="Solar Generation" badge="Real-time" badgeColor="emerald"
+              subtitle="Hourly solar output curve — peak tracked automatically."
+              footer={<>Peak today: <span className="font-semibold text-amber-600 dark:text-amber-400">{peakToday} kW</span></>}>
+              <Line ref={mkRef('solarGeneration')} data={solarGenerationData.current} options={baseOptions} />
+            </ChartCard>
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Battery State of Charge</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Smooth 24-hour battery curve.</p>
-                  </div>
-                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-900 dark:text-amber-200">Status</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('batteryState', Line, batteryStateData.current, { plugins: { threshold: { value: 20, label: 'Low', color: 'rgba(245, 158, 11, 0.85)', labelColor: '#F59E0B' }}})}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">Current: {latestBattery}%</p>
-              </div>
+            <ChartCard title="Battery State of Charge" badge="Status" badgeColor="amber"
+              subtitle="24-hour battery level with 20% low-battery threshold."
+              footer={<>Current level: <span className="font-semibold text-amber-600 dark:text-amber-400">{latestBattery}%</span></>}>
+              <Line ref={mkRef('batteryState')} data={batteryStateData.current}
+                options={{ ...baseOptions, plugins: { ...baseOptions.plugins, threshold: { value: 20, label: 'Low', color: 'rgba(245,158,11,0.85)', labelColor: '#F59E0B' } } }} />
+            </ChartCard>
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Generation vs Consumption</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Compare energy produced and used.</p>
-                  </div>
-                  <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700 dark:bg-sky-900 dark:text-sky-200">Weekly</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('generationVsConsumption', Bar, generationVsConsumptionData.current)}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">Surplus today: {surplusToday} kWh</p>
-              </div>
+            <ChartCard title="Generation vs Consumption" badge="Weekly" badgeColor="sky"
+              subtitle="Weekly bar chart comparing energy produced and consumed."
+              footer={<>Surplus today: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{surplusToday} kWh</span></>}>
+              <Bar ref={mkRef('generationVsConsumption')} data={generationVsConsumptionData.current} options={baseOptions} />
+            </ChartCard>
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Voltage & Current</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Dual-axis line view.</p>
-                  </div>
-                  <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700 dark:bg-violet-900 dark:text-violet-200">Live</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('voltageCurrent', Line, voltageCurrentData.current, {
-                  scales: {
-                    y: { ...baseOptions.scales.y, title: { display: true, text: 'Voltage (V)' }, min: 10, max: 16 },
-                    y1: { type: 'linear', position: 'right', grid: { drawOnChartArea: false, color: themeColors.border }, ticks: { color: 'rgb(236, 72, 153)' }, title: { display: true, text: 'Current (A)' }, min: 0, max: 9 }
-                  }
-                })}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">Voltage: {latestVoltage} Vdc | Current: {latestCurrent} A</p>
-              </div>
-            </>
+            <ChartCard title="Voltage & Current" badge="Live" badgeColor="violet"
+              subtitle="Dual-axis electrical readings — voltage (V) and current (A)."
+              footer={<>Voltage: <span className="font-semibold">{latestVoltage} Vdc</span> · Current: <span className="font-semibold">{latestCurrent} A</span></>}>
+              <Line ref={mkRef('voltageCurrent')} data={voltageCurrentData.current}
+                options={{ ...baseOptions, scales: {
+                  x: { ...baseOptions.scales.x },
+                  y: { ...baseOptions.scales.y, title: { display: true, text: 'Voltage (V)', color: themeColors.text }, min: 10, max: 16 },
+                  y1: { type: 'linear', position: 'right', grid: { drawOnChartArea: false }, ticks: { color: 'rgb(236,72,153)' }, title: { display: true, text: 'Current (A)', color: 'rgb(236,72,153)' }, min: 0, max: 9 }
+                }}} />
+            </ChartCard>
+          </div>
+        )}
 
-          <>
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Daily Revenue</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Revenue trend for the last two weeks.</p>
-                  </div>
-                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200">Daily</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('dailyRevenue', Bar, revenueData.current, { scales: { y: { ticks: { callback: (value) => `KES ${Math.round(value / 1000)}k`, color: themeColors.text } } } })}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">Today: {formatKES(todayRevenue)} | MTD: {formatKES(mtdRevenue)}</p>
-              </div>
+        {/* ══ FINANCIAL TAB ══ */}
+        {activeTab === 'financial' && (
+          <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <ChartCard title="Daily Revenue" badge="14-Day" badgeColor="emerald"
+              subtitle="M-Pesa revenue trend over the last two weeks."
+              footer={<>Today: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{formatKES(todayRevenue)}</span> · MTD: <span className="font-semibold">{formatKES(mtdRevenue)}</span></>}>
+              <Bar ref={mkRef('dailyRevenue')} data={revenueData.current}
+                options={{ ...baseOptions, scales: { x: { ...baseOptions.scales.x }, y: { ...baseOptions.scales.y, ticks: { callback: v => `KES ${Math.round(v/1000)}k`, color: themeColors.text } } } }} />
+            </ChartCard>
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Customer Payment Status</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Paid, low credit, and defaulted customers.</p>
-                  </div>
-                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-900 dark:text-amber-200">Snapshot</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('paymentStatus', Doughnut, paymentStatusData.current, { plugins: { legend: { display: false } } })}</div>
-                <div className="mt-4 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">{paymentLegend}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">{attentionCount} customers need attention</p>
-              </div>
+            <ChartCard title="Customer Payment Status" badge="Snapshot" badgeColor="amber"
+              subtitle="Portfolio split: paid, low-credit, and defaulted." h="h-[240px]"
+              footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{attentionCount}</span> customers need immediate attention</>}>
+              <Doughnut ref={mkRef('paymentStatus')} data={paymentStatusData.current}
+                options={{ ...baseOptions, plugins: { ...baseOptions.plugins, legend: { display: false } } }} />
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-4">{paymentLegend}</div>
+            </ChartCard>
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Portfolio at Risk PAR30</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Payment risk trend over six months.</p>
-                  </div>
-                  <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700 dark:bg-red-900 dark:text-red-200">Target</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('par30', Line, par30Data.current, { plugins: { threshold: { value: 12, label: 'Target', color: 'rgba(239, 68, 68, 0.85)' } } })}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">Current PAR30: {currentPAR}%</p>
-              </div>
+            <ChartCard title="Portfolio at Risk — PAR30" badge="Target" badgeColor="red"
+              subtitle="Percentage of portfolio overdue > 30 days (target: < 12%)."
+              footer={<>Current PAR30: <span className="font-semibold text-rose-600 dark:text-rose-400">{currentPAR}%</span></>}>
+              <Line ref={mkRef('par30')} data={par30Data.current}
+                options={{ ...baseOptions, plugins: { ...baseOptions.plugins, threshold: { value: 12, label: 'Target 12%', color: 'rgba(239,68,68,0.8)' } } }} />
+            </ChartCard>
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Credit Balance Distribution</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">How customer credit balances are spread.</p>
-                  </div>
-                  <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-900 dark:text-blue-200">Distribution</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('creditDistribution', Bar, creditDistributionData.current)}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">{lowCreditCount} customers below 25% — send alerts</p>
-              </div>
-            </>
+            <ChartCard title="Credit Balance Distribution" badge="Distribution" badgeColor="blue"
+              subtitle="How customer credit balances are spread across buckets."
+              footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{lowCreditCount}</span> customers below 25% — send top-up alerts</>}>
+              <Bar ref={mkRef('creditDistribution')} data={creditDistributionData.current} options={baseOptions} />
+            </ChartCard>
 
-          <>
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">6-Hour Energy Forecast</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Predicted output with confidence band.</p>
-                  </div>
-                  <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700 dark:bg-sky-900 dark:text-sky-200">Forecast</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('energyForecast', Line, forecastData.current)}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">Model accuracy: {modelAccuracy}% | Next low at {nextLow}</p>
-              </div>
+            <ChartCard title="Monthly Recurring Revenue" badge="Growth" badgeColor="purple"
+              subtitle="MRR trend over the last 12 months."
+              footer={<>MRR: <span className="font-semibold text-purple-600 dark:text-purple-400">{formatKES(currentMRR)}</span> · Growth: <span className="font-semibold text-emerald-600 dark:text-emerald-400">+{growth}% MoM</span></>}>
+              <Line ref={mkRef('mrr')} data={mrrData.current}
+                options={{ ...baseOptions, scales: { x: { ...baseOptions.scales.x }, y: { ...baseOptions.scales.y, ticks: { callback: v => `KES ${Math.round(v/1000)}k`, color: themeColors.text } } } }} />
+            </ChartCard>
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Anomaly Detection Score</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Z-score statistical anomalies.</p>
-                  </div>
-                  <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700 dark:bg-indigo-900 dark:text-indigo-200">Alert</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('anomalyScore', Bar, anomalyScoreData.current, { plugins: { threshold: { value: 2.0, label: 'Alert threshold', color: 'rgba(239, 68, 68, 0.85)' } }, scales: { y: { suggestedMax: 4 } } })}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">{anomaliesCount} anomalies detected today</p>
-              </div>
+            <ChartCard title="Agent Collection Performance" badge="Leaderboard" badgeColor="violet"
+              subtitle="Top field collection agents ranked by monthly volume."
+              footer={<>Top: <span className="font-semibold">{topAgent.name}</span> · {formatKES(topAgent.value)} this month</>}>
+              <Bar ref={mkRef('agentPerformance')} data={agentPerformanceData.current}
+                options={{ ...baseOptions, indexAxis: 'y', scales: { x: { ...baseOptions.scales.x, ticks: { callback: v => `KES ${Math.round(v/1000)}k`, color: themeColors.text } }, y: { ...baseOptions.scales.y } } }} />
+            </ChartCard>
+          </div>
+        )}
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Fraud Risk Scatter</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Risk profile by transaction amount.</p>
-                  </div>
-                  <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700 dark:bg-red-900 dark:text-red-200">Risk</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('fraudRisk', Scatter, fraudRiskData.current, { plugins: { threshold: { value: 0.8, label: 'Flag threshold', color: 'rgba(239, 68, 68, 0.85)', axis: 'y' } }, scales: { x: { title: { display: true, text: 'Transaction amount (KES)' }, ticks: { callback: (value) => `KES ${Math.round(value / 1000)}k`, color: themeColors.text } }, y: { title: { display: true, text: 'Risk score' }, suggestedMax: 1, ticks: { color: themeColors.text } } } })}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">{flaggedCount} transactions flagged today</p>
-              </div>
+        {/* ══ AI INSIGHTS TAB ══ */}
+        {activeTab === 'ai' && (
+          <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <ChartCard title="6-Hour Energy Forecast" badge="Forecast" badgeColor="sky"
+              subtitle="AI-predicted generation with 90% confidence interval."
+              footer={<>Model accuracy: <span className="font-semibold text-sky-600 dark:text-sky-400">{modelAccuracy}%</span> · Next low at <span className="font-semibold">{nextLow}</span></>}>
+              <Line ref={mkRef('energyForecast')} data={forecastData.current} options={baseOptions} />
+            </ChartCard>
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Customer Credit Score Trend</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Three customer profiles over a year.</p>
-                  </div>
-                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200">Trend</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('creditScoreTrend', Line, creditScoreTrendData.current)}</div>
-                <div className="mt-4 flex flex-wrap items-center justify-center gap-4">{creditLegend}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">1 customer at high default risk</p>
-              </div>
-            </>
+            <ChartCard title="Anomaly Detection Score" badge="Alert" badgeColor="indigo"
+              subtitle="Z-score anomalies across 24 hours — above 2.0 triggers alert."
+              footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{anomaliesCount}</span> anomalies detected in the last 24 h</>}>
+              <Bar ref={mkRef('anomalyScore')} data={anomalyScoreData.current}
+                options={{ ...baseOptions, plugins: { ...baseOptions.plugins, threshold: { value: 2.0, label: 'Alert threshold', color: 'rgba(239,68,68,0.8)' } }, scales: { x: { ...baseOptions.scales.x }, y: { ...baseOptions.scales.y, suggestedMax: 4 } } }} />
+            </ChartCard>
 
-          <>
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Device Health by Region</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Online, low battery, and offline status.</p>
-                  </div>
-                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200">Stacked</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('deviceHealth', Bar, { labels: deviceHealthData.current.labels, datasets: deviceHealthData.current.datasets }, { scales: { x: { stacked: true, ticks: { color: themeColors.text } }, y: { stacked: true, ticks: { color: themeColors.text } } } })}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">{deviceOffline} devices offline — requires field visit</p>
-              </div>
+            <ChartCard title="Fraud Risk Scatter" badge="Risk" badgeColor="red"
+              subtitle="M-Pesa transaction risk score vs. amount — above 0.8 = flagged."
+              footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{flaggedCount}</span> transactions flagged by the Fraud Shield today</>}>
+              <Scatter ref={mkRef('fraudRisk')} data={fraudRiskData.current}
+                options={{ ...baseOptions, plugins: { ...baseOptions.plugins, threshold: { value: 0.8, label: 'Flag threshold', color: 'rgba(239,68,68,0.8)', axis: 'y' } },
+                  scales: { x: { ...baseOptions.scales.x, title: { display: true, text: 'Transaction amount (KES)', color: themeColors.text }, ticks: { callback: v => `KES ${Math.round(v/1000)}k`, color: themeColors.text } },
+                            y: { ...baseOptions.scales.y, title: { display: true, text: 'Risk score', color: themeColors.text }, suggestedMax: 1 } } }} />
+            </ChartCard>
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Agent Collection Performance</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Top field collection agents.</p>
-                  </div>
-                  <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700 dark:bg-violet-900 dark:text-violet-200">Leaderboard</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('agentPerformance', Bar, agentPerformanceData.current, { indexAxis: 'y', scales: { x: { ticks: { callback: (value) => `KES ${Math.round(value / 1000)}k`, color: themeColors.text } }, y: { ticks: { color: themeColors.text } } } })}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">Top agent: {topAgent.name} | {formatKES(topAgent.value)} this month</p>
-              </div>
+            <ChartCard title="Customer Credit Score Trend" badge="Trend" badgeColor="emerald"
+              subtitle="Three customer credit-score trajectories over 12 months.">
+              <Line ref={mkRef('creditScoreTrend')} data={creditScoreTrendData.current} options={baseOptions} />
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-4">{creditLegend}</div>
+            </ChartCard>
+          </div>
+        )}
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Monthly Recurring Revenue</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">MRR growth for the last year.</p>
-                  </div>
-                  <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-semibold text-purple-700 dark:bg-purple-900 dark:text-purple-200">Growth</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('mrr', Line, mrrData.current, { scales: { y: { ticks: { callback: (value) => `KES ${Math.round(value / 1000)}k`, color: themeColors.text } } } })}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">MRR: {formatKES(currentMRR)} | Growth: +{growth}% MoM</p>
-              </div>
+        {/* ══ OPERATIONS TAB ══ */}
+        {activeTab === 'operations' && (
+          <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <ChartCard title="Device Health by Region" badge="Stacked" badgeColor="emerald"
+              subtitle="Online / low-battery / offline breakdown across five regions."
+              footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{deviceOffline}</span> devices offline — schedule field visits</>}>
+              <Bar ref={mkRef('deviceHealth')} data={{ labels: deviceHealthData.current.labels, datasets: deviceHealthData.current.datasets }}
+                options={{ ...baseOptions, scales: { x: { ...baseOptions.scales.x, stacked: true }, y: { ...baseOptions.scales.y, stacked: true } } }} />
+            </ChartCard>
 
-              <div className={cardClass}>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="font-semibold text-slate-900 dark:text-slate-100">Panel Efficiency vs Age</h2>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Efficiency by panel age.</p>
-                  </div>
-                  <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700 dark:bg-sky-900 dark:text-sky-200">Field</span>
-                </div>
-                <div className={chartWrapper}>{renderChart('panelEfficiency', Scatter, panelEfficiencyData.current, { scales: { x: { title: { display: true, text: 'Device age (years)' }, min: 0, max: 5, ticks: { color: themeColors.text } }, y: { title: { display: true, text: 'Efficiency (%)' }, min: 45, max: 105, ticks: { color: themeColors.text } } } })}</div>
-                <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">{replaceCount} panels need replacement</p>
-              </div>
-            </>
-        </div>
+            <ChartCard title="Panel Efficiency vs Age" badge="Field" badgeColor="sky"
+              subtitle="Efficiency degradation scatter — panels below 75% need replacement."
+              footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{replaceCount}</span> panels flagged for replacement</>}>
+              <Scatter ref={mkRef('panelEfficiency')} data={panelEfficiencyData.current}
+                options={{ ...baseOptions, scales: { x: { ...baseOptions.scales.x, title: { display: true, text: 'Device age (years)', color: themeColors.text }, min: 0, max: 5 },
+                                                      y: { ...baseOptions.scales.y, title: { display: true, text: 'Efficiency (%)', color: themeColors.text }, min: 45, max: 105 } } }} />
+            </ChartCard>
+          </div>
+        )}
+
       </div>
     </div>
   );
