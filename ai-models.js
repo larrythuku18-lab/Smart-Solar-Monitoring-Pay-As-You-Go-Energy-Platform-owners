@@ -176,7 +176,7 @@ class MaintenanceMonitor {
       alerts.push({
         type:           'current_spike',
         severity:       'medium',
-        message:        `Unusual current draw: ${current}A (threshold: 20 A)`,
+        message:        `Unusual current draw: ${current}A (threshold: 25 A)`,
         device:         'Load Circuit',
         recommendation: 'Check for short circuits or overload'
       });
@@ -186,7 +186,7 @@ class MaintenanceMonitor {
       alerts.push({
         type:           'efficiency_drop',
         severity:       'medium',
-        message:        `Panel efficiency degraded to ${(efficiency * 100).toFixed(1)}% (normal: >90%)`,
+        message:        `Panel efficiency degraded to ${(efficiency * 100).toFixed(1)}% (normal: >75%)`,
         device:         'Solar Panels',
         recommendation: 'Clean panels, check for dust / shading, inspect connections'
       });
@@ -351,12 +351,17 @@ function safeForecast(horizonHours = 6) {
 
 function safeMaintenanceAlerts(voltage, current, batteryLevel, generation, consumption) {
   try {
-    const alerts = maintenanceMonitor._detectAnomalies(
-      voltage  ?? 48,
-      current  ?? 10,
-      generation > 0 ? (consumption / generation) : 0.85
+    // Use the public addDataPoint() so the efficiency history buffer grows
+    // and the efficiency_drop check can fire after 20 data points.
+    // Calling _detectAnomalies() directly bypassed the buffer entirely.
+    maintenanceMonitor.addDataPoint(
+      voltage     ?? 48,
+      current     ?? 10,
+      batteryLevel ?? 75,
+      generation  ?? 0,
+      consumption ?? 0
     );
-    return { success: true, data: alerts };
+    return { success: true, data: maintenanceMonitor.getAlerts() };
   } catch (err) {
     return { success: false, error: err.message, data: FALLBACK_MAINTENANCE };
   }

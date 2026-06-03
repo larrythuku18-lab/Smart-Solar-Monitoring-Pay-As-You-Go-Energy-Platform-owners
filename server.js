@@ -231,7 +231,7 @@ app.get('/api/maintenance-alerts', async (req, res) => {
   try {
     const state  = await getDashboardState();
     const result = safeMaintenanceAlerts(
-      48, 10, state.batteryLevel, state.generation, state.consumption
+      state.voltage, state.current, state.batteryLevel, state.generation, state.consumption
     );
     if (!result.success) {
       return res.status(503).json({
@@ -274,7 +274,7 @@ app.get('/api/ai-insights', async (req, res) => {
     const state       = await getDashboardState();
     const forecast    = safeForecast(6);
     const maintenance = safeMaintenanceAlerts(
-      48, 10, state.batteryLevel, state.generation, state.consumption
+      state.voltage, state.current, state.batteryLevel, state.generation, state.consumption
     );
     const optimization = safeOptimization(state.generation, state.consumption, state.batteryLevel);
 
@@ -503,6 +503,9 @@ app.get('/api/admin/summary', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/admin/alerts', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
   try {
     res.json({ alerts: await getAlerts() });
   } catch (err) {

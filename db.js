@@ -507,12 +507,14 @@ async function getDashboardState() {
   ]);
 
   return {
-    batteryLevel:  latest?.battery_level    ?? 75,
-    generation:    latest?.generation_watts ?? 180,
+    batteryLevel:  latest?.battery_level     ?? 75,
+    generation:    latest?.generation_watts  ?? 180,
     consumption:   latest?.consumption_watts ?? 135,
+    voltage:       latest?.voltage           ?? 48,   // real sensor value for maintenance AI
+    current:       latest?.current_amps      ?? 10,   // real sensor value for maintenance AI
     powerEnabled:  device?.relay_state === 'on',
-    walletBalance: user?.wallet_balance      ?? 0,
-    dueAmount:     (user?.wallet_balance ?? 1) <= 0 ? 100 : 0,
+    walletBalance: user?.wallet_balance       ?? 0,
+    dueAmount:     (user?.wallet_balance ?? 0) <= 0 ? 100 : 0, // fix: was ?? 1 which hid null balances
     deviceId:      'DEMO-001',
     paymentStats:  stats
   };

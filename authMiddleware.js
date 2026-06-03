@@ -23,9 +23,11 @@ function authMiddleware(req, res, next) {
     req.user = decoded;
     next();
   } catch (err) {
+    const expired = err.name === 'TokenExpiredError';
     return res.status(401).json({
-      error: 'Unauthorized',
-      message: 'Invalid or expired token'
+      error:   'Unauthorized',
+      message: expired ? 'Session expired — please log in again' : 'Invalid token',
+      expired
     });
   }
 }
