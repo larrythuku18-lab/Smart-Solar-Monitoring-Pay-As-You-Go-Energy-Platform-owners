@@ -1,14 +1,24 @@
+/**
+ * server.js — SolarPAYG Express API
+ *
+ * Storage layer: PostgreSQL via ./db.js (all helpers are async).
+ * AI layer:      TensorFlow.js models in ./ai-models.js
+ * Payments:      M-Pesa STK Push via Safaricom Daraja API (or simulation mode)
+ */
+
 require('dotenv').config();
 
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
-const crypto = require('crypto');
-const axios = require('axios');
-const cron = require('node-cron');
+const express  = require('express');
+const cors     = require('cors');
+const path     = require('path');
+const crypto   = require('crypto');
+const axios    = require('axios');
+const cron     = require('node-cron');
 const { body, validationResult } = require('express-validator');
 
 const {
+  runMigrations,
+  seedDemoData,
   getUserByDeviceId,
   getUserById,
   getDevice,
@@ -19,6 +29,7 @@ const {
   getPaymentStats,
   getEnergyHistory,
   getEnergyHistoryAsc,
+  getEnergyHistory48h,
   getRecentPayments,
   getAuditTimeline,
   getAlertSeverityCounts,
@@ -39,19 +50,21 @@ const {
   safeMaintenanceAlerts,
   safeFraudCheck,
   safeOptimization,
-  seedFromEnergyReadings
+  seedFromEnergyReadings,
+  seedFromPayments
 } = require('./ai-models');
 
-const app = express();
+const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// --- M-Pesa helpers ---
-
+/* ══════════════════════════════════════════════════════════════════════════
+   M-PESA HELPERS
+══════════════════════════════════════════════════════════════════════════ */
 function mpesaConfigured() {
   return !!(
-    process.env.MPESA_CONSUMER_KEY &&
+    process.env.MPESA_CONSUMER_KEY  &&
     process.env.MPESA_CONSUMER_SECRET &&
-    process.env.MPESA_SHORTCODE &&
+    process.env.MPESA_SHORTCODE     &&
     process.env.MPESA_PASSKEY
   );
 }
@@ -66,17 +79,16 @@ async function getMpesaAccessToken() {
   const auth = Buffer.from(
     `${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`
   ).toString('base64');
-
-  const response = await axios.get(
+  const { data } = await axios.get(
     `${getMpesaBaseUrl()}/oauth/v1/generate?grant_type=client_credentials`,
     { headers: { Authorization: `Basic ${auth}` } }
   );
-  return response.data.access_token;
+  return data.access_token;
 }
 
 function generateMpesaPassword() {
   const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, -3);
-  const password = Buffer.from(
+  const password  = Buffer.from(
     `${process.env.MPESA_SHORTCODE}${process.env.MPESA_PASSKEY}${timestamp}`
   ).toString('base64');
   return { password, timestamp };
@@ -86,10 +98,10 @@ async function initiateSTKPush(phoneNumber, amount, accountReference) {
   if (!mpesaConfigured()) {
     const checkoutRequestId = `SIM-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     return {
-      simulated: true,
-      merchantRequestId: `SIM-MR-${Date.now()}`,
+      simulated:        true,
+      merchantRequestId:`SIM-MR-${Date.now()}`,
       checkoutRequestId,
-      customerMessage: 'Sandbox simulation mode — confirm payment in 3 seconds'
+      customerMessage:  'Sandbox simulation mode — confirm payment in 3 seconds'
     };
   }
 
@@ -99,29 +111,29 @@ async function initiateSTKPush(phoneNumber, amount, accountReference) {
 
   const payload = {
     BusinessShortCode: process.env.MPESA_SHORTCODE,
-    Password: password,
-    Timestamp: timestamp,
-    TransactionType: 'CustomerPayBillOnline',
-    Amount: Math.round(amount),
-    PartyA: formattedPhone,
-    PartyB: process.env.MPESA_SHORTCODE,
-    PhoneNumber: formattedPhone,
-    CallBackURL: process.env.MPESA_CALLBACK_URL,
-    AccountReference: accountReference,
-    TransactionDesc: 'SolarPAYG Energy Payment'
+    Password:          password,
+    Timestamp:         timestamp,
+    TransactionType:   'CustomerPayBillOnline',
+    Amount:            Math.round(amount),
+    PartyA:            formattedPhone,
+    PartyB:            process.env.MPESA_SHORTCODE,
+    PhoneNumber:       formattedPhone,
+    CallBackURL:       process.env.MPESA_CALLBACK_URL,
+    AccountReference:  accountReference,
+    TransactionDesc:   'SolarPAYG Energy Payment'
   };
 
-  const response = await axios.post(
+  const { data } = await axios.post(
     `${getMpesaBaseUrl()}/mpesa/stkpush/v1/processrequest`,
     payload,
     { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
   );
 
   return {
-    simulated: false,
-    merchantRequestId: response.data.MerchantRequestID,
-    checkoutRequestId: response.data.CheckoutRequestID,
-    customerMessage: response.data.CustomerMessage
+    simulated:        false,
+    merchantRequestId:data.MerchantRequestID,
+    checkoutRequestId:data.CheckoutRequestID,
+    customerMessage:  data.CustomerMessage
   };
 }
 
@@ -131,51 +143,48 @@ function parseMpesaCallback(callbackData) {
 
   const { stkCallback } = Body;
   const result = {
-    merchantRequestId: stkCallback.MerchantRequestID,
-    checkoutRequestId: stkCallback.CheckoutRequestID,
-    resultCode: String(stkCallback.ResultCode),
-    resultDesc: stkCallback.ResultDesc,
-    success: stkCallback.ResultCode === 0
+    merchantRequestId:  stkCallback.MerchantRequestID,
+    checkoutRequestId:  stkCallback.CheckoutRequestID,
+    resultCode:         String(stkCallback.ResultCode),
+    resultDesc:         stkCallback.ResultDesc,
+    success:            stkCallback.ResultCode === 0
   };
 
   if (result.success && stkCallback.CallbackMetadata?.Item) {
     const meta = {};
     stkCallback.CallbackMetadata.Item.forEach(item => { meta[item.Name] = item.Value; });
-    result.amount = meta.Amount;
-    result.mpesaReceiptNumber = meta.MpesaReceiptNumber;
-    result.phoneNumber = meta.PhoneNumber;
+    result.amount              = meta.Amount;
+    result.mpesaReceiptNumber  = meta.MpesaReceiptNumber;
+    result.phoneNumber         = meta.PhoneNumber;
   }
 
   return result;
 }
 
-// --- Middleware ---
-
+/* ══════════════════════════════════════════════════════════════════════════
+   MIDDLEWARE
+══════════════════════════════════════════════════════════════════════════ */
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-// Serve static assets from the public folder
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Ensure root returns the public index for browsers requesting '/'
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Seed AI models from DB on startup
-const energyHistory = getEnergyHistory('DEMO-001', 50);
-seedFromEnergyReadings(energyHistory.reverse());
-
-// ==================== PUBLIC ROUTES ====================
+/* ══════════════════════════════════════════════════════════════════════════
+   PUBLIC ROUTES
+══════════════════════════════════════════════════════════════════════════ */
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', mpesa: mpesaConfigured() ? 'live' : 'simulation' });
 });
 
-app.get('/api/state', (req, res) => {
+app.get('/api/state', async (req, res) => {
   try {
-    const state = getDashboardState();
-    const stats = getPaymentStats();
+    const state = await getDashboardState();
+    const stats = await getPaymentStats();
     res.json({ ...state, paymentStats: stats });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load state', message: err.message });
@@ -183,106 +192,102 @@ app.get('/api/state', (req, res) => {
 });
 
 app.get('/api/weather', (req, res) => {
-  const hour = new Date().getHours();
+  const hour  = new Date().getHours();
   const isDay = hour >= 6 && hour < 18;
   res.json({
     weather: {
-      condition: isDay ? 'sunny' : 'night',
-      temperature: 28,
-      humidity: 60,
-      cloudCover: 15,
-      windSpeed: 5,
+      condition:       isDay ? 'sunny' : 'night',
+      temperature:     28,
+      humidity:        60,
+      cloudCover:      15,
+      windSpeed:       5,
       backgroundClass: isDay ? 'weather-sunny' : 'weather-night',
-      solarImpact: isDay ? 0.95 : 0.1
+      solarImpact:     isDay ? 0.95 : 0.1
     }
   });
 });
 
-app.get('/api/forecast', (req, res) => {
+app.get('/api/forecast', async (req, res) => {
   try {
     const result = safeForecast(6);
     if (!result.success) {
       return res.status(503).json({
-        error: 'AI model not ready',
-        fallback: result.data,
+        error: 'AI model not ready', fallback: result.data,
         forecast: { predictions: result.data }
       });
     }
-    savePrediction('DEMO-001', 'forecast', result.data, result.data[0]?.confidence);
+    // Persist prediction async — don't block the response
+    savePrediction('DEMO-001', 'forecast', result.data, result.data[0]?.confidence)
+      .catch(err => console.error('savePrediction error:', err.message));
     res.json({ forecast: { predictions: result.data } });
   } catch (err) {
     res.status(503).json({
-      error: 'AI model not ready',
-      fallback: safeForecast(6).data,
-      message: err.message
+      error: 'AI model not ready', fallback: safeForecast(6).data, message: err.message
     });
   }
 });
 
-app.get('/api/maintenance-alerts', (req, res) => {
+app.get('/api/maintenance-alerts', async (req, res) => {
   try {
-    const state = getDashboardState();
-    const result = safeMaintenanceAlerts(48, 10, state.batteryLevel, state.generation, state.consumption);
+    const state  = await getDashboardState();
+    const result = safeMaintenanceAlerts(
+      48, 10, state.batteryLevel, state.generation, state.consumption
+    );
     if (!result.success) {
       return res.status(503).json({
-        error: 'AI model not ready',
-        fallback: result.data,
+        error: 'AI model not ready', fallback: result.data,
         maintenance: { alerts: result.data, deviceStatus: 'unknown' }
       });
     }
     res.json({
       maintenance: {
-        alerts: result.data,
+        alerts:       result.data,
         deviceStatus: result.data.length === 0 ? 'healthy' : 'attention_needed'
       }
     });
   } catch (err) {
     res.status(503).json({
-      error: 'AI model not ready',
-      fallback: [],
+      error: 'AI model not ready', fallback: [],
       maintenance: { alerts: [], deviceStatus: 'unknown' }
     });
   }
 });
 
-app.get('/api/optimization', (req, res) => {
+app.get('/api/optimization', async (req, res) => {
   try {
-    const state = getDashboardState();
+    const state  = await getDashboardState();
     const result = safeOptimization(state.generation, state.consumption, state.batteryLevel);
     if (!result.success) {
       return res.status(503).json({
-        error: 'AI model not ready',
-        fallback: result.data,
+        error: 'AI model not ready', fallback: result.data,
         optimization: { recommendations: result.data }
       });
     }
     res.json({ optimization: { recommendations: result.data } });
   } catch (err) {
-    res.status(503).json({
-      error: 'AI model not ready',
-      fallback: [],
-      optimization: { recommendations: [] }
-    });
+    res.status(503).json({ error: 'AI model not ready', fallback: [], optimization: { recommendations: [] } });
   }
 });
 
-app.get('/api/ai-insights', (req, res) => {
+app.get('/api/ai-insights', async (req, res) => {
   try {
-    const state = getDashboardState();
-    const forecast = safeForecast(6);
-    const maintenance = safeMaintenanceAlerts(48, 10, state.batteryLevel, state.generation, state.consumption);
+    const state       = await getDashboardState();
+    const forecast    = safeForecast(6);
+    const maintenance = safeMaintenanceAlerts(
+      48, 10, state.batteryLevel, state.generation, state.consumption
+    );
     const optimization = safeOptimization(state.generation, state.consumption, state.batteryLevel);
 
     res.json({
       health: 'operational',
       services: {
-        forecast: forecast.success ? 'ready' : 'fallback',
-        maintenance: maintenance.success ? 'ready' : 'fallback',
-        fraud: 'ready',
+        forecast:     forecast.success    ? 'ready' : 'fallback',
+        maintenance:  maintenance.success ? 'ready' : 'fallback',
+        fraud:        'ready',
         optimization: optimization.success ? 'ready' : 'fallback'
       },
-      forecast: forecast.data,
-      maintenance: maintenance.data,
+      forecast:     forecast.data,
+      maintenance:  maintenance.data,
       optimization: optimization.data
     });
   } catch (err) {
@@ -290,34 +295,34 @@ app.get('/api/ai-insights', (req, res) => {
   }
 });
 
-// ==================== AUTH ====================
+/* ══════════════════════════════════════════════════════════════════════════
+   AUTH
+══════════════════════════════════════════════════════════════════════════ */
 
 const demoLoginAliases = {
-  'admin@solarpayg.com': { deviceId: 'DEMO-001', pin: '1234', password: 'Admin@12345', role: 'admin' },
-  'customer@example.com': { deviceId: 'DEMO-001', pin: '1234', password: 'Customer@12345', role: 'customer' }
+  'admin@solarpayg.com':    { deviceId: 'DEMO-001', pin: '1234', password: 'Admin@12345',    role: 'admin'    },
+  'customer@example.com':   { deviceId: 'DEMO-001', pin: '1234', password: 'Customer@12345', role: 'customer' }
 };
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { deviceId, pin, email, password } = req.body;
 
   let loginDeviceId = deviceId;
-  let loginPin = pin;
-  let inferredRole = 'customer';
+  let loginPin      = pin;
+  let inferredRole  = 'customer';
 
   if (email && password) {
-    const lookup = email.toLowerCase();
-    const alias = demoLoginAliases[lookup];
-
+    const alias = demoLoginAliases[email.toLowerCase()];
     if (alias) {
       if (alias.password !== password) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
       loginDeviceId = alias.deviceId;
-      loginPin = alias.pin;
-      inferredRole = alias.role;
+      loginPin      = alias.pin;
+      inferredRole  = alias.role;
     } else if (/^[A-Z0-9-]+$/i.test(email) && /^[0-9]{3,6}$/.test(password)) {
       loginDeviceId = email;
-      loginPin = password;
+      loginPin      = password;
     } else {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
@@ -327,68 +332,70 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(400).json({ error: 'deviceId and pin are required' });
   }
 
-  const user = getUserByDeviceId(loginDeviceId);
-  if (!user || user.pin !== String(loginPin)) {
-    return res.status(401).json({ error: 'Invalid device ID or PIN' });
-  }
-
-  const token = signToken({
-    id: user.id,
-    deviceId: user.device_id,
-    role: inferredRole || (loginDeviceId === 'ADMIN' ? 'admin' : 'customer')
-  });
-
-  res.json({
-    token,
-    user: {
-      id: user.id,
-      deviceId: user.device_id,
-      walletBalance: user.wallet_balance,
-      role: inferredRole || (user.device_id === 'ADMIN' ? 'admin' : 'customer')
+  try {
+    const user = await getUserByDeviceId(loginDeviceId);
+    if (!user || user.pin !== String(loginPin)) {
+      return res.status(401).json({ error: 'Invalid device ID or PIN' });
     }
-  });
-});
 
-app.get('/api/auth/me', authMiddleware, (req, res) => {
-  const user = getUserById(req.user.id);
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
+    const token = signToken({
+      id:       user.id,
+      deviceId: user.device_id,
+      role:     inferredRole || (loginDeviceId === 'ADMIN' ? 'admin' : 'customer')
+    });
+
+    res.json({
+      token,
+      user: {
+        id:            user.id,
+        deviceId:      user.device_id,
+        walletBalance: user.wallet_balance,
+        role:          inferredRole || (user.device_id === 'ADMIN' ? 'admin' : 'customer')
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Login failed', message: err.message });
   }
-
-  res.json({
-    id: user.id,
-    deviceId: user.device_id,
-    role: req.user.role || (user.device_id === 'ADMIN' ? 'admin' : 'customer'),
-    walletBalance: user.wallet_balance
-  });
 });
 
-// ==================== PROTECTED ROUTES ====================
+app.get('/api/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const user = await getUserById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({
+      id:            user.id,
+      deviceId:      user.device_id,
+      role:          req.user.role || (user.device_id === 'ADMIN' ? 'admin' : 'customer'),
+      walletBalance: user.wallet_balance
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load user', message: err.message });
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PROTECTED ROUTES
+══════════════════════════════════════════════════════════════════════════ */
 
 app.post('/api/fraud-check', authMiddleware, [
   body('amount').isFloat({ gt: 0 }).withMessage('amount must be a positive number'),
   body('userId').isString().notEmpty().withMessage('userId is required'),
   body('deviceId').isString().notEmpty().withMessage('deviceId is required'),
   body('timestamp').isISO8601().withMessage('timestamp must be a valid ISO date string')
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
   try {
     const { userId, deviceId, amount, timestamp } = req.body;
     const result = safeFraudCheck(userId, deviceId, amount, timestamp);
 
     if (!result.success) {
-      return res.status(503).json({
-        error: 'AI model not ready',
-        fallback: result.data
-      });
+      return res.status(503).json({ error: 'AI model not ready', fallback: result.data });
     }
 
     if (result.data.flagged && result.data.fraud?.action === 'auto_lock_relay') {
-      lockRelay(deviceId);
+      await lockRelay(deviceId);
     }
 
     res.json(result.data);
@@ -404,48 +411,46 @@ app.post('/api/fraud-check', authMiddleware, [
 app.post('/api/pay', authMiddleware, async (req, res) => {
   try {
     const { amount, phoneNumber } = req.body;
-    const user = getUserById(req.user.id);
+    const user = await getUserById(req.user.id);
 
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!amount || amount < 1) return res.status(400).json({ error: 'Valid amount required (minimum KES 1)' });
 
-    if (!amount || amount < 1) {
-      return res.status(400).json({ error: 'Valid amount required (minimum KES 1)' });
-    }
-
-    const phone = phoneNumber || user.phone || '254712345678';
-    const device = getDeviceByUserId(user.id);
+    const phone     = phoneNumber || user.phone || '254712345678';
+    const device    = await getDeviceByUserId(user.id);
     const stkResult = await initiateSTKPush(phone, amount, user.device_id);
 
-    createPayment({
-      userId: user.id,
-      deviceId: device?.device_id || user.device_id,
+    await createPayment({
+      userId:            user.id,
+      deviceId:          device?.device_id || user.device_id,
       amount,
-      phoneNumber: phone,
+      phoneNumber:       phone,
       merchantRequestId: stkResult.merchantRequestId,
       checkoutRequestId: stkResult.checkoutRequestId
     });
 
     if (stkResult.simulated) {
+      // Simulate M-Pesa callback after 3 s
       setTimeout(async () => {
-        const payment = completePayment(
-          stkResult.checkoutRequestId,
-          `SIM${Date.now()}`,
-          '0',
-          'Simulated success'
-        );
-        if (payment) {
-          await unlockRelay(payment.device_id || user.device_id);
+        try {
+          const payment = await completePayment(
+            stkResult.checkoutRequestId,
+            `SIM${Date.now()}`,
+            '0',
+            'Simulated success'
+          );
+          if (payment) await unlockRelay(payment.device_id || user.device_id);
+        } catch (err) {
+          console.error('Simulated payment completion error:', err.message);
         }
-      }, 3000);
+      }, 3_000);
     }
 
     res.json({
-      success: true,
-      simulated: stkResult.simulated || false,
+      success:           true,
+      simulated:         stkResult.simulated || false,
       checkoutRequestId: stkResult.checkoutRequestId,
-      message: stkResult.customerMessage
+      message:           stkResult.customerMessage
     });
   } catch (err) {
     console.error('Payment error:', err.message);
@@ -454,73 +459,78 @@ app.post('/api/pay', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/mpesa/callback', async (req, res) => {
+  // Always acknowledge M-Pesa immediately, process async
+  res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+
   try {
     const parsed = parseMpesaCallback(req.body);
-    if (!parsed) {
-      return res.status(400).json({ error: 'Invalid callback data' });
-    }
+    if (!parsed) return;
 
     if (parsed.success && parsed.resultCode === '0') {
-      const payment = completePayment(
+      const payment = await completePayment(
         parsed.checkoutRequestId,
         parsed.mpesaReceiptNumber,
         parsed.resultCode,
         parsed.resultDesc
       );
-
       if (payment) {
-        const deviceId = payment.device_id;
-        await unlockRelay(deviceId);
-        createAlert({
-          userId: payment.user_id,
-          deviceId,
-          type: 'payment_success',
+        await unlockRelay(payment.device_id);
+        await createAlert({
+          userId:   payment.user_id,
+          deviceId: payment.device_id,
+          type:     'payment_success',
           severity: 'low',
-          message: `Payment of KES ${payment.amount} received. Power restored.`
+          message:  `Payment of KES ${payment.amount} received. Power restored.`
         });
       }
     } else {
-      failPayment(parsed.checkoutRequestId, parsed.resultCode, parsed.resultDesc);
+      await failPayment(parsed.checkoutRequestId, parsed.resultCode, parsed.resultDesc);
     }
-
-    res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
   } catch (err) {
     console.error('M-Pesa callback error:', err.message);
-    res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
   }
 });
 
-app.get('/api/admin/summary', authMiddleware, (req, res) => {
+app.get('/api/admin/summary', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
     return res.status(403).json({ error: 'Admin access required' });
   }
-  res.json(getAdminSummary());
+  try {
+    res.json(await getAdminSummary());
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load summary', message: err.message });
+  }
 });
 
-app.get('/api/admin/alerts', authMiddleware, (req, res) => {
-  res.json({ alerts: getAlerts() });
+app.get('/api/admin/alerts', authMiddleware, async (req, res) => {
+  try {
+    res.json({ alerts: await getAlerts() });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load alerts', message: err.message });
+  }
 });
 
-app.get('/api/payments/stats', (req, res) => {
-  res.json(getPaymentStats());
+app.get('/api/payments/stats', async (req, res) => {
+  try {
+    res.json(await getPaymentStats());
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load stats', message: err.message });
+  }
 });
 
-app.get('/api/energy/history', (req, res) => {
+app.get('/api/energy/history', async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
-    const limit = Math.min(parseInt(req.query.limit, 10) || 48, 200);
-    const readings = getEnergyHistoryAsc(deviceId, limit);
+    const limit    = Math.min(parseInt(req.query.limit, 10) || 48, 200);
+    const readings = await getEnergyHistoryAsc(deviceId, limit);
     res.json({
       deviceId,
-      labels: readings.map(r => {
-        const d = new Date(r.recorded_at);
-        return d.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' });
-      }),
-      generation: readings.map(r => r.generation_watts),
+      labels:      readings.map(r => new Date(r.recorded_at).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })),
+      generation:  readings.map(r => r.generation_watts),
       consumption: readings.map(r => r.consumption_watts),
-      battery: readings.map(r => r.battery_level),
-      voltage: readings.map(r => r.voltage),
-      current: readings.map(r => r.current_amps),
+      battery:     readings.map(r => r.battery_level),
+      voltage:     readings.map(r => r.voltage),
+      current:     readings.map(r => r.current_amps),
       readings
     });
   } catch (err) {
@@ -528,80 +538,157 @@ app.get('/api/energy/history', (req, res) => {
   }
 });
 
-app.get('/api/audit/timeline', (req, res) => {
+app.get('/api/audit/timeline', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 30, 100);
-    res.json({ events: getAuditTimeline(limit) });
+    res.json({ events: await getAuditTimeline(limit) });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load audit timeline', message: err.message });
   }
 });
 
-app.get('/api/audit/charts', (req, res) => {
+app.get('/api/audit/charts', async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
     const forecast = safeForecast(6);
-    res.json({
-      energy: getEnergyHistoryAsc(deviceId, 48),
-      payments: getPaymentStats(),
-      paymentTrend: getPaymentTrend(),
-      recentPayments: getRecentPayments(10),
-      alerts: getAlerts(15),
-      alertSeverity: getAlertSeverityCounts(),
-      forecast: forecast.data || [],
-      timeline: getAuditTimeline(20),
-      summary: getAdminSummary()
-    });
+    const [energy, payments, paymentTrend, recentPayments, alerts, alertSeverity, timeline, summary] =
+      await Promise.all([
+        getEnergyHistoryAsc(deviceId, 48),
+        getPaymentStats(),
+        getPaymentTrend(),
+        getRecentPayments(10),
+        getAlerts(15),
+        getAlertSeverityCounts(),
+        getAuditTimeline(20),
+        getAdminSummary()
+      ]);
+    res.json({ energy, payments, paymentTrend, recentPayments, alerts, alertSeverity, forecast: forecast.data || [], timeline, summary });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load chart data', message: err.message });
   }
 });
 
-// ==================== CRON JOBS ====================
+/* ── Analytics summary ──────────────────────────────────────────────────── */
+app.get('/api/analytics/summary', async (req, res) => {
+  try {
+    const deviceId = req.query.deviceId || 'DEMO-001';
+    const readings = await getEnergyHistoryAsc(deviceId, 200);
 
-cron.schedule('*/15 * * * *', async () => {
-  console.log('⏰ Running wallet expiry check...');
-  const expiredUsers = getExpiredWalletUsers();
+    // Aggregate into daily buckets
+    const dayMap = {};
+    for (const r of readings) {
+      const day = new Date(r.recorded_at).toISOString().split('T')[0];
+      if (!dayMap[day]) dayMap[day] = { genW: 0, conW: 0, batSum: 0, count: 0 };
+      dayMap[day].genW   += r.generation_watts  || 0;
+      dayMap[day].conW   += r.consumption_watts || 0;
+      dayMap[day].batSum += r.battery_level     || 0;
+      dayMap[day].count  += 1;
+    }
 
-  for (const user of expiredUsers) {
-    const deviceId = user.linked_device_id || user.device_id;
-    await lockRelay(deviceId);
-    createAlert({
-      userId: user.id,
-      deviceId,
-      type: 'wallet_expired',
-      severity: 'high',
-      message: 'Wallet balance depleted — power cut applied'
-    });
-    console.log(`🔒 Locked relay for ${deviceId} (wallet expired)`);
+    const dailyData = Object.entries(dayMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-30)
+      .map(([date, v]) => ({
+        date,
+        generationKwh:  Number((v.genW  / 1000).toFixed(3)),
+        consumptionKwh: Number((v.conW  / 1000).toFixed(3)),
+        avgBattery:     v.count > 0 ? Number((v.batSum / v.count).toFixed(1)) : null
+      }));
+
+    const [paymentTrend, payments, summary] = await Promise.all([
+      getPaymentTrend(),
+      getPaymentStats(),
+      getAdminSummary()
+    ]);
+
+    res.json({ dailyData, paymentTrend, payments, summary });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load analytics summary', message: err.message });
   }
 });
 
-cron.schedule('*/5 * * * *', async () => {
-  await processRetryQueue();
+/* ══════════════════════════════════════════════════════════════════════════
+   CRON JOBS
+══════════════════════════════════════════════════════════════════════════ */
+
+// Wallet expiry check — runs every 15 minutes
+cron.schedule('*/15 * * * *', async () => {
+  console.log('⏰ Running wallet expiry check…');
+  try {
+    const expiredUsers = await getExpiredWalletUsers();
+    for (const user of expiredUsers) {
+      const deviceId = user.linked_device_id || user.device_id;
+      await lockRelay(deviceId);
+      await createAlert({
+        userId:   user.id,
+        deviceId,
+        type:     'wallet_expired',
+        severity: 'high',
+        message:  'Wallet balance depleted — power cut applied'
+      });
+      console.log(`🔒 Locked relay for ${deviceId} (wallet expired)`);
+    }
+  } catch (err) {
+    console.error('Wallet expiry cron error:', err.message);
+  }
 });
 
-// Live telemetry simulation for audit demos
+// Relay retry queue — runs every 5 minutes
+cron.schedule('*/5 * * * *', async () => {
+  await processRetryQueue().catch(err => console.error('Retry queue error:', err.message));
+});
+
+// Live telemetry simulation (every 30 s) — seeds energy_readings for demo / AI training
 setInterval(() => {
-  const hour = new Date().getHours();
-  const seasonal = Math.sin((hour - 6) * Math.PI / 12) * 80 + 150;
+  const hour     = new Date().getHours();
+  const seasonal = Math.sin(((hour - 6) * Math.PI) / 12) * 80 + 150;
   insertEnergyReading({
-    deviceId: 'DEMO-001',
-    generation: Math.max(0, Math.round(seasonal + Math.random() * 40 - 20)),
-    consumption: Math.round(120 + Math.random() * 30),
+    deviceId:     'DEMO-001',
+    generation:   Math.max(0, Math.round(seasonal + Math.random() * 40 - 20)),
+    consumption:  Math.round(120 + Math.random() * 30),
     batteryLevel: Math.round(55 + Math.random() * 35),
-    voltage: Math.round((47 + Math.random() * 4) * 10) / 10,
-    current: Math.round((8 + Math.random() * 6) * 10) / 10
+    voltage:      Math.round((47 + Math.random() * 4) * 10) / 10,
+    current:      Math.round((8  + Math.random() * 6) * 10) / 10
+  }).catch(err => console.error('Energy insert error:', err.message));
+}, 30_000);
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ASYNC STARTUP
+   1. Run PostgreSQL migrations (idempotent — safe every restart).
+   2. Seed demo user + device if the DB is empty.
+   3. Load the last 48 h of energy readings to warm the AI models.
+   4. Load recent payments to warm the fraud model.
+   5. Start the HTTP server.
+══════════════════════════════════════════════════════════════════════════ */
+async function startup() {
+  console.log('🔌 Connecting to PostgreSQL…');
+  await runMigrations();
+  await seedDemoData();
+
+  // Warm AI models from persistent data so they resume after restarts
+  try {
+    const [energyReadings, recentPayments] = await Promise.all([
+      getEnergyHistory48h('DEMO-001'),
+      getRecentPayments(500)
+    ]);
+    seedFromEnergyReadings(energyReadings);
+    seedFromPayments(recentPayments);
+  } catch (err) {
+    console.warn('AI warm-up warning (non-fatal):', err.message);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`🚀 SolarPAYG server running on http://localhost:${PORT}`);
+    console.log(`📊 Dashboard:  http://localhost:${PORT}/index.html`);
+    console.log(`📈 Analytics:  http://localhost:${PORT}/analytics.html`);
+    console.log(`💳 M-Pesa mode: ${mpesaConfigured() ? 'live (sandbox/production)' : 'simulation'}`);
+    console.log(`🔑 Demo login:  deviceId=DEMO-001  pin=1234`);
   });
-}, 30000);
+}
 
-// ==================== START ====================
-
-app.listen(PORT, () => {
-  console.log(`🚀 SolarPAYG server running on http://localhost:${PORT}`);
-  console.log(`📊 Dashboard: http://localhost:${PORT}/index.html`);
-  console.log(`💳 M-Pesa mode: ${mpesaConfigured() ? 'live (sandbox/production)' : 'simulation'}`);
-  console.log(`🔑 Demo login: deviceId=DEMO-001, pin=1234`);
+startup().catch(err => {
+  console.error('💥 Fatal startup error:', err.message);
+  process.exit(1);
 });
 
 module.exports = app;

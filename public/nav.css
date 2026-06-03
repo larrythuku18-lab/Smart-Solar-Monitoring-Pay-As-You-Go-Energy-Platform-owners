@@ -66,13 +66,16 @@ body.with-nav {
   padding-top: 56px;
 }
 
-body.with-nav .topbar {
+/* Admin sidebar: keep it below the global nav and above the status bar */
+body.with-nav .sidebar {
   top: 56px;
+  max-height: calc(100vh - 56px - 36px);
 }
 
+/* Main content area on index.html / admin.html */
 body.with-nav .content {
-  padding-top: calc(120px + 56px);
-  min-height: calc(100vh - 176px);
+  padding-top: 24px;
+  min-height: calc(100vh - 80px);
 }
 
 @media (max-width: 840px) {

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SolarPAYG — Analytics Dashboard</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- React 18 -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+
+  <!-- Chart.js + react-chartjs-2 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-chartjs-2@3.0.4/dist/react-chartjs-2.min.js"></script>
+
+  <!-- Babel (JSX transpiler) -->
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+
+  <!-- Global nav styles -->
+  <link rel="stylesheet" href="/nav.css" />
+
+  <style>
+    body {
+      background-image:
+        radial-gradient(ellipse at top center, rgba(59, 130, 246, 0.08) 0%, transparent 45%),
+        linear-gradient(180deg, #020617 0%, #0c1524 55%, #050c18 100%);
+      color: #f8fafc;
+      min-height: 100vh;
+    }
+
+    /* Spinner keyframe used by the Spinner component */
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Subtle pulse used by the live indicator */
+    @keyframes live-pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.45; }
+    }
+
+    .live-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #10b981;
+      animation: live-pulse 1.8s ease-in-out infinite;
+    }
+
+    /* Smooth card hover lift */
+    .analytics-card {
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+    }
+    .analytics-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+    }
+
+    /* Progress bar fill animation */
+    .progress-fill {
+      transition: width 0.7s ease;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); }
+    ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.25); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.4); }
+  </style>
+</head>
+<body class="with-nav">
+  <div id="root"></div>
+
+  <!-- Analytics Dashboard React component -->
+  <script type="text/babel" data-presets="react" src="./analytics.jsx"></script>
+
+  <!-- Inject global nav bar -->
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      if (document.querySelector('meta[name="nav-inserted"]')) return;
+      try {
+        const res = await fetch('/nav.html');
+        if (!res.ok) return;
+        const html = await res.text();
+        const tpl  = document.createElement('template');
+        tpl.innerHTML = html.trim();
+        const nav = tpl.content.firstElementChild;
+        if (nav) {
+          document.body.prepend(nav);
+          const m = document.createElement('meta');
+          m.name  = 'nav-inserted';
+          document.head.appendChild(m);
+        }
+      } catch (e) {
+        console.warn('[SolarPAYG] Nav load failed:', e);
+      }
+    });
+  </script>
+</body>
+</html>
