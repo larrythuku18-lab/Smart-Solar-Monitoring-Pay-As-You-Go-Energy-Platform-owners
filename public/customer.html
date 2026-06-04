@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SolarPAYG — My Account</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #060b16; --surface: #0d1520; --card: #111d2e; --border: #1a2840;
+      --amber: #f59e0b; --green: #10b981; --blue: #3b82f6; --red: #ef4444;
+      --teal: #14b8a6; --purple: #8b5cf6; --text: #f1f5f9; --muted: #64748b; --sub: #94a3b8;
+    }
+    html, body { height: 100%; overflow-x: hidden; }
+    body {
+      font-family: 'Space Grotesk', sans-serif;
+      background: radial-gradient(ellipse at top, rgba(16,185,129,0.08) 0%, transparent 55%),
+                  linear-gradient(180deg, #060b16 0%, #0a1120 60%, #040810 100%);
+      color: var(--text); min-height: 100vh;
+    }
+
+    /* ── Loading ── */
+    #loading-overlay {
+      position: fixed; inset: 0; background: rgba(6,11,22,0.97);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 9999; transition: opacity 0.4s ease, visibility 0.4s ease;
+    }
+    #loading-overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+    .loading-spinner { width: 36px; height: 36px; border: 3px solid rgba(16,185,129,0.18); border-top-color: var(--green); border-radius: 50%; animation: spin 0.9s linear infinite; }
+    .loading-text { margin-top: 14px; color: var(--muted); font-size: 12px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Status bar ── */
+    .statusbar {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 200; height: 36px;
+      display: flex; align-items: center; justify-content: space-between; padding: 0 16px; gap: 8px;
+      background: rgba(5,9,18,0.98); backdrop-filter: blur(20px);
+      border-top: 1px solid rgba(255,255,255,.07);
+    }
+    .statusbar::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, rgba(16,185,129,.9) 0%, rgba(59,130,246,.9) 50%, rgba(245,158,11,.9) 100%);
+    }
+    .sb-left { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--muted); }
+    .sb-left::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--green); animation: pulse 2.4s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+    .sb-right { display: flex; align-items: center; gap: 4px; }
+    .chip { font-size: 8px; padding: 2px 7px; border-radius: 20px; font-weight: 700; white-space: nowrap; }
+    .chip-green  { background: rgba(16,185,129,.12);  color: var(--green);  border: 1px solid rgba(16,185,129,.24); }
+    .chip-amber  { background: rgba(245,158,11,.14);  color: var(--amber);  border: 1px solid rgba(245,158,11,.28); }
+    .chip-red    { background: rgba(239,68,68,.12);   color: var(--red);    border: 1px solid rgba(239,68,68,.24);  }
+    .chip-blue   { background: rgba(59,130,246,.12);  color: var(--blue);   border: 1px solid rgba(59,130,246,.24); }
+
+    /* ── Content shell ── */
+    .shell { max-width: 860px; margin: 0 auto; padding: 20px 16px 56px; }
+
+    /* ── Welcome header ── */
+    .welcome {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+      padding: 16px 20px; margin-bottom: 16px;
+    }
+    .welcome-left { min-width: 0; }
+    .welcome-greeting { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+    .welcome-name { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: var(--text); margin-top: 2px; }
+    .welcome-device { font-size: 11px; color: var(--sub); margin-top: 3px; }
+    .power-pill {
+      display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px;
+      font-size: 12px; font-weight: 700; border: 1px solid; white-space: nowrap; flex-shrink: 0;
+    }
+    .power-pill.on  { background: rgba(16,185,129,.1);  color: var(--green);  border-color: rgba(16,185,129,.3); }
+    .power-pill.off { background: rgba(239,68,68,.1);   color: var(--red);    border-color: rgba(239,68,68,.3); }
+    .power-dot { width: 8px; height: 8px; border-radius: 50%; animation: pulse 2s ease-in-out infinite; }
+    .power-dot.on  { background: var(--green); }
+    .power-dot.off { background: var(--red); animation: none; }
+
+    /* ── KPI strip ── */
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+    .kpi {
+      background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+      padding: 14px 14px 12px; position: relative; overflow: hidden;
+    }
+    .kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; border-radius:14px 14px 0 0; }
+    .kpi.green::before  { background: var(--green); }
+    .kpi.amber::before  { background: var(--amber); }
+    .kpi.blue::before   { background: var(--blue); }
+    .kpi.teal::before   { background: var(--teal); }
+    .kpi-label { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+    .kpi-val   { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 17px; line-height: 1; }
+    .kpi-sub   { font-size: 9px; color: var(--muted); margin-top: 6px; }
+
+    /* ── Credit bar ── */
+    .credit-bar-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 18px; margin-bottom: 16px; }
+    .credit-bar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .credit-bar-label { font-size: 11px; font-weight: 600; color: var(--sub); }
+    .credit-pct { font-size: 11px; font-weight: 700; }
+    .credit-track { height: 6px; background: rgba(255,255,255,.06); border-radius: 3px; overflow: hidden; }
+    .credit-fill  { height: 100%; border-radius: 3px; transition: width .5s ease; }
+    .credit-meta { margin-top: 8px; font-size: 10px; color: var(--muted); }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+    .tab {
+      padding: 8px 18px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid;
+      transition: all .18s;
+    }
+    .tab.active { background: var(--amber); color: #fff; border-color: var(--amber); box-shadow: 0 4px 16px rgba(245,158,11,.25); }
+    .tab:not(.active) { background: var(--card); color: var(--sub); border-color: var(--border); }
+    .tab:not(.active):hover { border-color: rgba(245,158,11,.4); color: var(--amber); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── Panel ── */
+    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 13px 18px; border-bottom: 1px solid var(--border); }
+    .panel-title { font-size: 12px; font-weight: 600; color: var(--sub); }
+
+    /* ── Live metrics grid ── */
+    .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border); }
+    .metric-cell { background: var(--card); padding: 14px 16px; }
+    .metric-label { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 6px; }
+    .metric-val   { font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 700; }
+    .metric-trend { font-size: 9px; margin-top: 4px; color: var(--muted); }
+
+    /* ── Quick action buttons ── */
+    .action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px; }
+    .action-btn {
+      padding: 12px; border-radius: 10px; border: 1px solid; font-size: 12px; font-weight: 700;
+      cursor: pointer; font-family: 'Space Grotesk', sans-serif; text-align: center;
+      transition: all .18s;
+    }
+    .action-btn.primary { background: var(--green); color: #fff; border-color: var(--green); }
+    .action-btn.primary:hover { background: #059669; box-shadow: 0 4px 16px rgba(16,185,129,.3); }
+    .action-btn.secondary { background: var(--card); color: var(--sub); border-color: var(--border); }
+    .action-btn.secondary:hover { border-color: var(--amber); color: var(--amber); }
+
+    /* ── Pay tab ── */
+    .pay-wrap { padding: 18px; }
+    .form-label { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); font-weight: 600; margin-bottom: 6px; display: block; }
+    .form-input {
+      width: 100%; background: rgba(255,255,255,.04); border: 1px solid var(--border);
+      border-radius: 10px; padding: 11px 14px; color: var(--text); font-family: 'Space Grotesk', sans-serif;
+      font-size: 14px; outline: none; transition: border-color .18s;
+    }
+    .form-input:focus { border-color: var(--amber); background: rgba(245,158,11,.04); }
+    .form-group { margin-bottom: 14px; }
+    .presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 14px; }
+    .preset-btn {
+      padding: 9px 4px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--sub); font-size: 12px; font-weight: 700;
+      cursor: pointer; font-family: 'Space Grotesk', sans-serif; text-align: center; transition: all .18s;
+    }
+    .preset-btn:hover, .preset-btn.active { border-color: var(--amber); color: var(--amber); background: rgba(245,158,11,.06); }
+    .kwh-hint { font-size: 10px; color: var(--teal); margin-top: 5px; }
+    .pay-btn {
+      width: 100%; padding: 14px; border-radius: 10px; border: none; background: var(--green);
+      color: #fff; font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 800;
+      cursor: pointer; transition: all .2s; display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .pay-btn:hover:not(:disabled) { background: #059669; box-shadow: 0 6px 20px rgba(16,185,129,.35); transform: translateY(-1px); }
+    .pay-btn:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+    .pay-status { margin-top: 14px; padding: 13px 16px; border-radius: 10px; font-size: 12px; line-height: 1.55; display: none; }
+    .pay-status.info    { background: rgba(59,130,246,.08);  border: 1px solid rgba(59,130,246,.25);  color: #93c5fd; }
+    .pay-status.success { background: rgba(16,185,129,.08);  border: 1px solid rgba(16,185,129,.25);  color: var(--green); }
+    .pay-status.error   { background: rgba(239,68,68,.08);   border: 1px solid rgba(239,68,68,.25);   color: var(--red); }
+    .pay-spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; flex-shrink: 0; }
+
+    /* ── Transactions table ── */
+    .tx-wrap { overflow-x: auto; }
+    .tx-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .tx-table th { padding: 10px 16px; text-align: left; font-size: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); border-bottom: 1px solid var(--border); background: rgba(255,255,255,.02); }
+    .tx-table td { padding: 11px 16px; border-bottom: 1px solid rgba(255,255,255,.04); vertical-align: middle; }
+    .tx-table tr:last-child td { border-bottom: none; }
+    .tx-table tr:hover td { background: rgba(255,255,255,.02); }
+    .tx-amt  { font-family: 'Syne', sans-serif; font-weight: 700; color: var(--green); font-size: 13px; }
+    .tx-rcpt { font-family: monospace; font-size: 10px; color: var(--teal); }
+    .tx-date { font-size: 10px; color: var(--muted); }
+    .status-badge { font-size: 8px; padding: 3px 8px; border-radius: 20px; font-weight: 700; text-transform: uppercase; }
+    .s-completed { background: rgba(16,185,129,.12); color: var(--green); border: 1px solid rgba(16,185,129,.24); }
+    .s-pending   { background: rgba(245,158,11,.12); color: var(--amber); border: 1px solid rgba(245,158,11,.24); }
+    .s-failed    { background: rgba(239,68,68,.12);  color: var(--red);   border: 1px solid rgba(239,68,68,.24); }
+    .tx-summary  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border); margin-bottom: 0; }
+    .tx-sum-cell { background: var(--card); padding: 12px 16px; text-align: center; }
+    .tx-sum-label { font-size: 8px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 4px; }
+    .tx-sum-val   { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; }
+
+    /* ── Energy chart ── */
+    .chart-wrap { padding: 14px 18px; }
+    .chart-canvas-wrap { position: relative; height: 200px; }
+
+    /* ── Forecast cells ── */
+    .fc-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; padding: 14px; }
+    .fc-cell { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 6px; text-align: center; }
+    .fc-cell.surplus { border-color: rgba(16,185,129,.35); background: rgba(16,185,129,.05); }
+    .fc-cell.deficit { border-color: rgba(239,68,68,.25);  background: rgba(239,68,68,.04); }
+    .fc-time { font-size: 9px; color: var(--muted); margin-bottom: 4px; }
+    .fc-icon { font-size: 14px; margin: 3px 0; }
+    .fc-gen  { font-size: 11px; font-weight: 700; color: var(--amber); }
+    .fc-cons { font-size: 9px;  color: var(--muted); margin-top: 2px; }
+
+    /* ── Tips section ── */
+    .tips-list { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+    .tip-row { display: flex; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid; font-size: 11px; line-height: 1.5; }
+    .tip-row.info    { background: rgba(59,130,246,.06);  border-color: rgba(59,130,246,.2);  color: #93c5fd; }
+    .tip-row.success { background: rgba(16,185,129,.06);  border-color: rgba(16,185,129,.2);  color: #6ee7b7; }
+    .tip-row.warning { background: rgba(245,158,11,.06);  border-color: rgba(245,158,11,.2);  color: #fcd34d; }
+    .tip-icon { flex-shrink: 0; font-size: 14px; }
+
+    /* ── Account tab ── */
+    .account-section { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+    .account-section:last-child { border-bottom: none; }
+    .account-section-title { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 600; margin-bottom: 12px; }
+    .info-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,.04); font-size: 12px; }
+    .info-row:last-child { border-bottom: none; }
+    .info-key   { color: var(--muted); }
+    .info-val   { font-weight: 600; color: var(--text); font-family: 'Syne', sans-serif; font-size: 13px; }
+    .support-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.04); }
+    .support-row:last-child { border-bottom: none; }
+    .support-icon { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
+    .support-label { font-size: 11px; color: var(--sub); }
+    .support-val   { font-size: 12px; font-weight: 600; color: var(--text); margin-top: 1px; }
+
+    /* ── Alerts ── */
+    .alert-banner {
+      display: none; padding: 11px 16px; border-radius: 10px; font-size: 12px;
+      margin-bottom: 14px; border: 1px solid; line-height: 1.5;
+    }
+    .alert-banner.show { display: flex; align-items: flex-start; gap: 10px; }
+    .alert-banner.low-credit { background: rgba(245,158,11,.07); border-color: rgba(245,158,11,.3); color: #fcd34d; }
+    .alert-banner.no-power   { background: rgba(239,68,68,.07);  border-color: rgba(239,68,68,.3);  color: #fca5a5; }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .metrics-grid { grid-template-columns: 1fr 1fr; }
+      .fc-grid { grid-template-columns: repeat(3, 1fr); }
+      .tx-summary { grid-template-columns: 1fr 1fr; }
+      .welcome-name { font-size: 17px; }
+    }
+    @media (max-width: 380px) {
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .presets { grid-template-columns: repeat(2, 1fr); }
+      .fc-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+  <link rel="stylesheet" href="/nav.css">
+</head>
+<body class="with-nav">
+
+<div id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Loading your account…</div>
+</div>
+
+<div class="shell" id="app" style="display:none">
+
+  <!-- Welcome header -->
+  <div class="welcome">
+    <div class="welcome-left">
+      <div class="welcome-greeting">Good <span id="greeting-time">day</span></div>
+      <div class="welcome-name" id="welcome-name">My Account</div>
+      <div class="welcome-device" id="welcome-device">Device ID: —</div>
+    </div>
+    <div id="power-pill" class="power-pill on">
+      <span class="power-dot on" id="power-dot"></span>
+      <span id="power-label">Power On</span>
+    </div>
+  </div>
+
+  <!-- Low credit / no power alerts -->
+  <div id="alert-low-credit" class="alert-banner low-credit">
+    <span>⚠️</span>
+    <div><strong>Low Credit.</strong> Your wallet balance is running low. Top up now to avoid power interruption.</div>
+  </div>
+  <div id="alert-no-power" class="alert-banner no-power">
+    <span>🔴</span>
+    <div><strong>Power Locked.</strong> Your device has been locked due to insufficient credit. Top up to restore power.</div>
+  </div>
+
+  <!-- KPI strip -->
+  <div class="kpi-grid">
+    <div class="kpi green">
+      <div class="kpi-label">Wallet Balance</div>
+      <div class="kpi-val" id="kpi-balance" style="color:var(--green)">—</div>
+      <div class="kpi-sub" id="kpi-days">— days est.</div>
+    </div>
+    <div class="kpi amber">
+      <div class="kpi-label">Solar Now</div>
+      <div class="kpi-val" id="kpi-solar" style="color:var(--amber)">—</div>
+      <div class="kpi-sub" id="kpi-solar-sub">Generation</div>
+    </div>
+    <div class="kpi blue">
+      <div class="kpi-label">Battery</div>
+      <div class="kpi-val" id="kpi-battery" style="color:var(--blue)">—</div>
+      <div class="kpi-sub" id="kpi-battery-sub">State of charge</div>
+    </div>
+    <div class="kpi teal">
+      <div class="kpi-label">Consumption</div>
+      <div class="kpi-val" id="kpi-cons" style="color:var(--teal)">—</div>
+      <div class="kpi-sub">Current draw</div>
+    </div>
+  </div>
+
+  <!-- Credit progress bar -->
+  <div class="credit-bar-wrap">
+    <div class="credit-bar-head">
+      <span class="credit-bar-label">Credit Level</span>
+      <span class="credit-pct" id="credit-pct" style="color:var(--green)">—</span>
+    </div>
+    <div class="credit-track"><div class="credit-fill" id="credit-fill" style="width:0%;background:var(--green)"></div></div>
+    <div class="credit-meta" id="credit-meta">Calculating remaining credit…</div>
+  </div>
+
+  <!-- Tab bar -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('overview')">📊 Overview</button>
+    <button class="tab" onclick="switchTab('pay')">💳 Pay</button>
+    <button class="tab" onclick="switchTab('history')">🧾 History</button>
+    <button class="tab" onclick="switchTab('energy')">⚡ Energy</button>
+    <button class="tab" onclick="switchTab('account')">👤 Account</button>
+  </div>
+
+  <!-- ══ OVERVIEW TAB ══ -->
+  <div id="tab-overview" class="tab-content active">
+
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Live Device Metrics</span>
+        <span class="chip chip-green">Real-time</span>
+      </div>
+      <div class="metrics-grid">
+        <div class="metric-cell">
+          <div class="metric-label">Voltage</div>
+          <div class="metric-val" id="m-voltage" style="color:var(--blue)">—</div>
+          <div class="metric-trend">DC output</div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-label">Current</div>
+          <div class="metric-val" id="m-current" style="color:var(--purple)">—</div>
+          <div class="metric-trend">Amps draw</div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-label">Generation</div>
+          <div class="metric-val" id="m-gen" style="color:var(--amber)">—</div>
+          <div class="metric-trend">Solar output</div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-label">Consumption</div>
+          <div class="metric-val" id="m-cons" style="color:var(--teal)">—</div>
+          <div class="metric-trend">Load draw</div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-label">Battery</div>
+          <div class="metric-val" id="m-bat" style="color:var(--green)">—</div>
+          <div class="metric-trend" id="m-bat-status">Charging</div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-label">Surplus</div>
+          <div class="metric-val" id="m-surplus" style="color:var(--green)">—</div>
+          <div class="metric-trend">Gen − Load</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Quick Actions</span>
+      </div>
+      <div class="action-row">
+        <button class="action-btn primary" onclick="switchTab('pay')">💳 Top Up Now</button>
+        <button class="action-btn secondary" onclick="switchTab('history')">🧾 View Receipts</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Recent Transactions</span>
+        <span class="chip chip-blue" id="recent-count">—</span>
+      </div>
+      <div class="tx-wrap">
+        <table class="tx-table">
+          <thead><tr><th>Date</th><th>Amount</th><th>Status</th><th>Receipt</th></tr></thead>
+          <tbody id="recent-tx-body">
+            <tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══ PAY TAB ══ -->
+  <div id="tab-pay" class="tab-content">
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Buy Energy via M-Pesa</span>
+        <span class="chip chip-green">STK Push</span>
+      </div>
+      <div class="pay-wrap">
+
+        <div class="form-group">
+          <label class="form-label">Quick Amounts (KES)</label>
+          <div class="presets">
+            <button class="preset-btn" onclick="setAmount(50)">50</button>
+            <button class="preset-btn" onclick="setAmount(100)">100</button>
+            <button class="preset-btn" onclick="setAmount(200)">200</button>
+            <button class="preset-btn" onclick="setAmount(500)">500</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="pay-amount">Amount (KES)</label>
+          <input id="pay-amount" class="form-input" type="number" min="10" max="10000" placeholder="Enter amount…" oninput="onAmountChange()" />
+          <div class="kwh-hint" id="kwh-hint">≈ — kWh · Est. — days of power</div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="pay-phone">M-Pesa Phone Number</label>
+          <input id="pay-phone" class="form-input" type="tel" placeholder="e.g. 0712 345 678" />
+        </div>
+
+        <button class="pay-btn" id="pay-btn" onclick="submitPayment()">
+          <span id="pay-btn-text">Pay with M-Pesa</span>
+        </button>
+
+        <div class="pay-status" id="pay-status"></div>
+
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Pricing</span>
+      </div>
+      <div style="padding:14px 18px;display:flex;flex-direction:column;gap:8px">
+        <div class="info-row"><span class="info-key">Rate per kWh</span><span class="info-val" style="color:var(--amber)">KES 25</span></div>
+        <div class="info-row"><span class="info-key">Minimum top-up</span><span class="info-val">KES 10</span></div>
+        <div class="info-row"><span class="info-key">Maximum top-up</span><span class="info-val">KES 10,000</span></div>
+        <div class="info-row"><span class="info-key">Payment method</span><span class="info-val" style="color:var(--green)">M-Pesa STK Push</span></div>
+        <div class="info-row"><span class="info-key">Power restored</span><span class="info-val">Within ~5 seconds</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ HISTORY TAB ══ -->
+  <div id="tab-history" class="tab-content">
+    <div class="panel">
+      <div class="tx-summary">
+        <div class="tx-sum-cell">
+          <div class="tx-sum-label">Total Spent</div>
+          <div class="tx-sum-val" id="hist-total" style="color:var(--green)">—</div>
+        </div>
+        <div class="tx-sum-cell">
+          <div class="tx-sum-label">Transactions</div>
+          <div class="tx-sum-val" id="hist-count" style="color:var(--blue)">—</div>
+        </div>
+        <div class="tx-sum-cell">
+          <div class="tx-sum-label">Last Payment</div>
+          <div class="tx-sum-val" id="hist-last" style="color:var(--amber);font-size:12px">—</div>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">All Transactions</span>
+        <span class="chip chip-blue" id="hist-badge">Loading…</span>
+      </div>
+      <div class="tx-wrap">
+        <table class="tx-table">
+          <thead>
+            <tr>
+              <th>#</th><th>Date & Time</th><th>Amount</th><th>Status</th><th>M-Pesa Receipt</th>
+            </tr>
+          </thead>
+          <tbody id="hist-body">
+            <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">Loading transactions…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ ENERGY TAB ══ -->
+  <div id="tab-energy" class="tab-content">
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">24-Hour Energy Profile</span>
+        <span class="chip chip-amber">Last 24 h</span>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-canvas-wrap">
+          <canvas id="energy-chart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">AI Generation Forecast — Next 6 Hours</span>
+        <span class="chip chip-blue">AI · 92% accuracy</span>
+      </div>
+      <div class="fc-grid" id="fc-grid">
+        <div style="grid-column:1/-1;text-align:center;color:var(--muted);font-size:11px;padding:14px">Loading forecast…</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Energy Saving Tips</span>
+        <span class="chip chip-green">Personalised</span>
+      </div>
+      <div class="tips-list" id="tips-list">
+        <div class="tip-row success"><span class="tip-icon">☀️</span><span>Peak solar generation is between <strong>10:00 – 14:00</strong>. Run heavy appliances (pumps, heaters) during this window to use free solar energy.</span></div>
+        <div class="tip-row info"><span class="tip-icon">🔋</span><span>Keep battery above 20% to extend its lifespan. Avoid deep discharging every cycle.</span></div>
+        <div class="tip-row warning"><span class="tip-icon">💡</span><span>Switch to LED lighting if still on incandescent bulbs — up to 80% energy saving per bulb.</span></div>
+        <div class="tip-row info"><span class="tip-icon">📱</span><span>Charge phones and small devices during the day (solar hours) to reduce evening battery drain.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ ACCOUNT TAB ══ -->
+  <div id="tab-account" class="tab-content">
+    <div class="panel">
+      <div class="account-section">
+        <div class="account-section-title">Account Details</div>
+        <div class="info-row"><span class="info-key">Device ID</span><span class="info-val" id="acc-device">—</span></div>
+        <div class="info-row"><span class="info-key">Account Role</span><span class="info-val" id="acc-role">Customer</span></div>
+        <div class="info-row"><span class="info-key">Wallet Balance</span><span class="info-val" id="acc-balance" style="color:var(--green)">—</span></div>
+        <div class="info-row"><span class="info-key">Power Status</span><span class="info-val" id="acc-power">—</span></div>
+        <div class="info-row"><span class="info-key">Battery Level</span><span class="info-val" id="acc-battery">—</span></div>
+      </div>
+      <div class="account-section">
+        <div class="account-section-title">Device Performance</div>
+        <div class="info-row"><span class="info-key">Solar Generation</span><span class="info-val" id="acc-gen" style="color:var(--amber)">—</span></div>
+        <div class="info-row"><span class="info-key">Current Consumption</span><span class="info-val" id="acc-cons" style="color:var(--teal)">—</span></div>
+        <div class="info-row"><span class="info-key">System Voltage</span><span class="info-val" id="acc-voltage" style="color:var(--blue)">—</span></div>
+        <div class="info-row"><span class="info-key">Efficiency Score</span><span class="info-val" style="color:var(--green)">94%</span></div>
+      </div>
+      <div class="account-section">
+        <div class="account-section-title">Support</div>
+        <div class="support-row">
+          <div class="support-icon" style="background:rgba(16,185,129,.1)">📞</div>
+          <div><div class="support-label">Customer Helpline</div><div class="support-val">0800 123 456 (toll-free)</div></div>
+        </div>
+        <div class="support-row">
+          <div class="support-icon" style="background:rgba(59,130,246,.1)">💬</div>
+          <div><div class="support-label">WhatsApp Support</div><div class="support-val">+254 712 345 678</div></div>
+        </div>
+        <div class="support-row">
+          <div class="support-icon" style="background:rgba(139,92,246,.1)">✉️</div>
+          <div><div class="support-label">Email</div><div class="support-val">support@solarpayg.co.ke</div></div>
+        </div>
+        <div class="support-row">
+          <div class="support-icon" style="background:rgba(245,158,11,.1)">🕐</div>
+          <div><div class="support-label">Support Hours</div><div class="support-val">Mon – Sat, 7:00 – 20:00</div></div>
+        </div>
+      </div>
+      <div class="account-section">
+        <button onclick="logout()" style="width:100%;padding:11px;border-radius:10px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.07);color:var(--red);font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;cursor:pointer;transition:all .18s" onmouseover="this.style.background='rgba(239,68,68,.14)'" onmouseout="this.style.background='rgba(239,68,68,.07)'">
+          Log Out
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /shell -->
+
+<!-- Status bar -->
+<div class="statusbar">
+  <div class="sb-left" id="sb-time">SolarPAYG Customer</div>
+  <div class="sb-right">
+    <span class="chip chip-green">M-Pesa Active</span>
+    <span class="chip chip-amber" id="sb-balance-chip">Balance: —</span>
+    <span class="chip chip-blue" id="sb-power-chip">Power On</span>
+  </div>
+</div>
+
+<script>
+/* ══ FORMATTERS ══ */
+const _compact = new Intl.NumberFormat('en', { notation: 'compact', maximumSignificantDigits: 3 });
+const _integer  = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
+const fmtKES    = v => { const n = Number(v)||0; return `KES ${n >= 10000 ? _compact.format(n) : _integer.format(n)}`; };
+const fmtPower  = w => { w = Number(w)||0; return w >= 1000 ? `${(w/1000).toFixed(1)} kW` : `${Math.round(w)} W`; };
+const fmtDate   = d => d ? new Date(d).toLocaleString('en-KE',{dateStyle:'short',timeStyle:'short'}) : '—';
+
+/* ══ STATE ══ */
+const token = localStorage.getItem('authToken');
+if (!token) window.location.href = '/login.html';
+
+let state     = {};
+let userInfo  = {};
+let energyHistory = null;
+let allTxs    = [];
+let energyChart = null;
+let payPolling  = null;
+
+/* ══ GREETING ══ */
+function greetingTime() {
+  const h = new Date().getHours();
+  if (h < 12) return 'morning';
+  if (h < 18) return 'afternoon';
+  return 'evening';
+}
+
+/* ══ TABS ══ */
+function switchTab(id) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + id)?.classList.add('active');
+  const buttons = document.querySelectorAll('.tab');
+  const labels  = ['overview','pay','history','energy','account'];
+  const idx     = labels.indexOf(id);
+  if (idx >= 0) buttons[idx]?.classList.add('active');
+  if (id === 'history')  loadHistory();
+  if (id === 'energy')   loadEnergy();
+}
+
+/* ══ FETCH HELPERS ══ */
+const API = '/api';
+function authFetch(url, opts = {}) {
+  return fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+}
+
+/* ══ LOAD STATE ══ */
+async function loadState() {
+  try {
+    const [stateR, meR] = await Promise.allSettled([
+      fetch(`${API}/state`).then(r => r.ok ? r.json() : null),
+      authFetch(`${API}/auth/me`).then(r => r.ok ? r.json() : null)
+    ]);
+
+    if (stateR.status === 'fulfilled' && stateR.value) {
+      state = stateR.value;
+    }
+    if (meR.status === 'fulfilled' && meR.value) {
+      userInfo = meR.value;
+      if (userInfo.walletBalance != null) state.walletBalance = userInfo.walletBalance;
+    }
+
+    renderAll();
+  } catch (e) {
+    console.warn('loadState error:', e);
+  }
+}
+
+/* ══ RENDER ══ */
+function renderAll() {
+  const bal     = Number(state.walletBalance) || 0;
+  const gen     = Number(state.generation)    || 0;
+  const cons    = Number(state.consumption)   || 0;
+  const bat     = Number(state.batteryLevel)  || 0;
+  const volt    = Number(state.voltage)       || 0;
+  const amp     = Number(state.current)       || 0;
+  const powered = state.powerEnabled !== false;
+  const surplus = gen - cons;
+
+  /* Welcome */
+  document.getElementById('greeting-time').textContent = greetingTime();
+  const deviceId = userInfo.deviceId || state.deviceId || 'DEMO-001';
+  document.getElementById('welcome-name').textContent  = `Device ${deviceId}`;
+  document.getElementById('welcome-device').textContent = `ID: ${deviceId} · Role: ${userInfo.role || 'customer'}`;
+
+  /* Power pill */
+  const pill = document.getElementById('power-pill');
+  const dot  = document.getElementById('power-dot');
+  const lbl  = document.getElementById('power-label');
+  pill.className = `power-pill ${powered ? 'on' : 'off'}`;
+  dot.className  = `power-dot  ${powered ? 'on' : 'off'}`;
+  lbl.textContent = powered ? 'Power On' : 'Power Locked';
+
+  /* Alerts */
+  const lowCredit = bal < 100 && bal > 0;
+  const noPower   = !powered;
+  document.getElementById('alert-low-credit').classList.toggle('show', lowCredit && !noPower);
+  document.getElementById('alert-no-power').classList.toggle('show', noPower);
+
+  /* KPIs */
+  document.getElementById('kpi-balance').textContent = fmtKES(bal);
+  const daysEst = cons > 0 ? (bal / (cons * 24 / 1000 * 25)).toFixed(1) : '—';
+  document.getElementById('kpi-days').textContent    = `~${daysEst} days est.`;
+  document.getElementById('kpi-solar').textContent   = fmtPower(gen);
+  document.getElementById('kpi-battery').textContent = `${Math.round(bat)}%`;
+  document.getElementById('kpi-battery-sub').textContent = bat > 50 ? 'Healthy' : bat > 20 ? 'Low' : 'Critical';
+  document.getElementById('kpi-cons').textContent    = fmtPower(cons);
+
+  /* Credit bar */
+  const maxBal  = 2000;
+  const pct     = Math.min(100, Math.round((bal / maxBal) * 100));
+  const barColor = pct > 40 ? 'var(--green)' : pct > 15 ? 'var(--amber)' : 'var(--red)';
+  document.getElementById('credit-fill').style.width      = pct + '%';
+  document.getElementById('credit-fill').style.background = barColor;
+  document.getElementById('credit-pct').textContent       = pct + '%';
+  document.getElementById('credit-pct').style.color       = barColor;
+  document.getElementById('credit-meta').textContent      =
+    bal <= 0 ? 'No credit — top up to restore power'
+    : lowCredit ? `Low credit — top up soon to avoid interruption`
+    : `Credit healthy · ${fmtKES(bal)} remaining`;
+
+  /* Live metrics */
+  const bc = bat > 50 ? 'var(--green)' : bat > 20 ? 'var(--amber)' : 'var(--red)';
+  document.getElementById('m-voltage').textContent  = volt ? `${volt.toFixed(1)} V`  : '—';
+  document.getElementById('m-current').textContent  = amp  ? `${amp.toFixed(1)} A`   : '—';
+  document.getElementById('m-gen').textContent      = fmtPower(gen);
+  document.getElementById('m-cons').textContent     = fmtPower(cons);
+  document.getElementById('m-bat').textContent      = `${Math.round(bat)}%`;
+  document.getElementById('m-bat').style.color      = bc;
+  document.getElementById('m-bat-status').textContent = gen > cons ? 'Charging' : 'Discharging';
+  document.getElementById('m-surplus').textContent  = (surplus >= 0 ? '+' : '') + fmtPower(Math.abs(surplus));
+  document.getElementById('m-surplus').style.color  = surplus >= 0 ? 'var(--green)' : 'var(--red)';
+
+  /* Account tab */
+  document.getElementById('acc-device').textContent  = deviceId;
+  document.getElementById('acc-role').textContent    = userInfo.role || 'customer';
+  document.getElementById('acc-balance').textContent = fmtKES(bal);
+  document.getElementById('acc-power').textContent   = powered ? '🟢 Active' : '🔴 Locked';
+  document.getElementById('acc-battery').textContent = `${Math.round(bat)}% — ${bat > 50 ? 'Good' : bat > 20 ? 'Low' : 'Critical'}`;
+  document.getElementById('acc-gen').textContent     = fmtPower(gen);
+  document.getElementById('acc-cons').textContent    = fmtPower(cons);
+  document.getElementById('acc-voltage').textContent = volt ? `${volt.toFixed(1)} V` : '—';
+
+  /* Status bar */
+  document.getElementById('sb-time').textContent       = `${new Date().toLocaleTimeString('en-KE',{hour:'2-digit',minute:'2-digit'})} · SolarPAYG`;
+  document.getElementById('sb-balance-chip').textContent = `Balance: ${fmtKES(bal)}`;
+  document.getElementById('sb-power-chip').textContent   = powered ? 'Power On' : 'Power Locked';
+  document.getElementById('sb-power-chip').className     = powered ? 'chip chip-green' : 'chip chip-red';
+
+  /* Pre-fill phone */
+  const phoneEl = document.getElementById('pay-phone');
+  if (!phoneEl.value && userInfo.phone) phoneEl.value = userInfo.phone;
+}
+
+/* ══ LOAD RECENT TXS (overview tab) ══ */
+async function loadRecentTxs() {
+  try {
+    const r = await fetch(`${API}/audit/charts`);
+    if (!r.ok) return;
+    const data = await r.json();
+    allTxs = data.recentPayments || [];
+    renderRecentTxs(allTxs.slice(0, 5));
+    document.getElementById('recent-count').textContent = `${allTxs.length} total`;
+  } catch (e) { /* silently ignore */ }
+}
+
+function txRow(p, idx, cols = 4) {
+  const s = p.status || 'pending';
+  const cls = s === 'completed' ? 's-completed' : s === 'failed' ? 's-failed' : 's-pending';
+  if (cols === 4) {
+    return `<tr>
+      <td class="tx-date">${fmtDate(p.completed_at || p.created_at)}</td>
+      <td class="tx-amt">${fmtKES(p.amount)}</td>
+      <td><span class="status-badge ${cls}">${s}</span></td>
+      <td class="tx-rcpt">${p.mpesa_receipt || p.checkout_request_id?.slice(-10) || '—'}</td>
+    </tr>`;
+  }
+  return `<tr>
+    <td style="color:var(--muted);font-size:10px">${idx + 1}</td>
+    <td class="tx-date">${fmtDate(p.completed_at || p.created_at)}</td>
+    <td class="tx-amt">${fmtKES(p.amount)}</td>
+    <td><span class="status-badge ${cls}">${s}</span></td>
+    <td class="tx-rcpt">${p.mpesa_receipt || p.checkout_request_id?.slice(-12) || '—'}</td>
+  </tr>`;
+}
+
+function renderRecentTxs(list) {
+  const tbody = document.getElementById('recent-tx-body');
+  tbody.innerHTML = list.length
+    ? list.map(p => txRow(p, 0, 4)).join('')
+    : '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">No transactions yet</td></tr>';
+}
+
+/* ══ HISTORY TAB ══ */
+async function loadHistory() {
+  if (!allTxs.length) {
+    try {
+      const r = await fetch(`${API}/audit/charts`);
+      if (r.ok) { const d = await r.json(); allTxs = d.recentPayments || []; }
+    } catch (e) { /* ignore */ }
+  }
+  const list = allTxs;
+  const total = list.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const completed = list.filter(p => p.status === 'completed');
+  const last = list.find(p => p.completed_at || p.created_at);
+
+  document.getElementById('hist-total').textContent  = fmtKES(total);
+  document.getElementById('hist-count').textContent  = list.length.toLocaleString('en');
+  document.getElementById('hist-last').textContent   = last ? fmtDate(last.completed_at || last.created_at) : '—';
+  document.getElementById('hist-badge').textContent  = `${list.length} records`;
+
+  const tbody = document.getElementById('hist-body');
+  tbody.innerHTML = list.length
+    ? list.map((p, i) => txRow(p, i, 5)).join('')
+    : '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">No transactions found</td></tr>';
+}
+
+/* ══ ENERGY TAB ══ */
+async function loadEnergy() {
+  /* Chart */
+  if (!energyHistory) {
+    try {
+      const deviceId = userInfo.deviceId || 'DEMO-001';
+      const r = await fetch(`${API}/energy/history?deviceId=${deviceId}&limit=24`);
+      if (r.ok) energyHistory = await r.json();
+    } catch (e) { /* ignore */ }
+  }
+
+  if (energyHistory?.labels?.length) {
+    const labels = energyHistory.labels;
+    const gen    = energyHistory.generation  || [];
+    const cons   = energyHistory.consumption || [];
+
+    if (energyChart) energyChart.destroy();
+    const ctx = document.getElementById('energy-chart').getContext('2d');
+    energyChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Solar Generated (W)', data: gen,  borderColor: 'rgb(245,158,11)', backgroundColor: 'rgba(245,158,11,0.10)', fill: true,  tension: 0.4, pointRadius: 2 },
+          { label: 'Consumed (W)',        data: cons, borderColor: 'rgb(59,130,246)',  backgroundColor: 'rgba(59,130,246,0.07)',  fill: true,  tension: 0.4, pointRadius: 2 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'top', labels: { color: '#94a3b8', usePointStyle: true, padding: 12, font: { size: 11 } } }, tooltip: { backgroundColor: '#1e293b', titleColor: '#f1f5f9', bodyColor: '#cbd5e1' } },
+        scales: { x: { grid: { color: 'rgba(148,163,184,0.07)' }, ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 10 } } }, y: { grid: { color: 'rgba(148,163,184,0.07)' }, ticks: { color: '#64748b', font: { size: 10 } } } }
+      }
+    });
+  }
+
+  /* Forecast */
+  try {
+    const r = await fetch(`${API}/forecast`);
+    if (r.ok) {
+      const data = await r.json();
+      const preds = data?.forecast?.predictions || [];
+      const grid  = document.getElementById('fc-grid');
+      if (preds.length) {
+        grid.innerHTML = preds.slice(0, 6).map(f => {
+          const surplus = (f.predictedGeneration || 0) > (f.consumption || 0);
+          return `<div class="fc-cell ${surplus ? 'surplus' : 'deficit'}">
+            <div class="fc-time">+${f.hour}h</div>
+            <div class="fc-icon">${surplus ? '✅' : '⚠️'}</div>
+            <div class="fc-gen">${fmtPower(f.predictedGeneration || 0)}</div>
+            <div class="fc-cons" style="color:var(--red)">${fmtPower(f.consumption || 0)}</div>
+          </div>`;
+        }).join('');
+      } else {
+        grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);font-size:11px;padding:14px">Forecast unavailable</div>';
+      }
+    }
+  } catch (e) { /* ignore */ }
+}
+
+/* ══ PAYMENT ══ */
+const RATE_PER_KWH = 25;
+
+function setAmount(amt) {
+  document.getElementById('pay-amount').value = amt;
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  onAmountChange();
+}
+
+function onAmountChange() {
+  const amt = parseFloat(document.getElementById('pay-amount').value) || 0;
+  const kwh  = (amt / RATE_PER_KWH).toFixed(2);
+  const cons = Number(state.consumption) || 120;
+  const days = cons > 0 ? ((amt / RATE_PER_KWH) * 1000 / cons / 24).toFixed(1) : '—';
+  document.getElementById('kwh-hint').textContent = amt > 0 ? `≈ ${kwh} kWh · Est. ${days} days of power` : '≈ — kWh · Est. — days of power';
+  document.querySelectorAll('.preset-btn').forEach(b => {
+    b.classList.toggle('active', Number(b.textContent) === amt);
+  });
+}
+
+function setPayStatus(type, html) {
+  const el = document.getElementById('pay-status');
+  el.className = `pay-status ${type}`;
+  el.innerHTML = html;
+  el.style.display = html ? 'block' : 'none';
+}
+
+async function submitPayment() {
+  const amount = parseFloat(document.getElementById('pay-amount').value);
+  const phone  = document.getElementById('pay-phone').value.trim().replace(/\s/g,'');
+
+  if (!amount || amount < 10) { setPayStatus('error', '❌ Minimum top-up is KES 10.'); return; }
+  if (!phone)                  { setPayStatus('error', '❌ Please enter your M-Pesa phone number.'); return; }
+
+  const btn     = document.getElementById('pay-btn');
+  const btnText = document.getElementById('pay-btn-text');
+  btn.disabled  = true;
+  btnText.innerHTML = '<span class="pay-spinner"></span> Processing…';
+  setPayStatus('info', '📱 Sending STK push to your phone…');
+
+  try {
+    const r    = await authFetch(`${API}/pay`, { method: 'POST', body: JSON.stringify({ amount: Math.floor(amount), phoneNumber: phone }) });
+    const data = await r.json();
+
+    if (r.ok && data.success) {
+      setPayStatus('info', `📱 STK push sent! Check your phone and enter your M-Pesa PIN.<br><small style="color:var(--muted)">Request ID: ${data.checkoutRequestId || '—'}</small>`);
+      if (data.simulated) {
+        setTimeout(() => {
+          setPayStatus('success', `✅ Payment of ${fmtKES(amount)} confirmed! Power restored.`);
+          btn.disabled  = false;
+          btnText.textContent = 'Pay with M-Pesa';
+          document.getElementById('pay-amount').value = '';
+          document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+          onAmountChange();
+          loadState();
+          allTxs = [];
+        }, 4500);
+      } else {
+        pollPayment(data.checkoutRequestId, amount);
+      }
+    } else {
+      setPayStatus('error', `❌ ${data.message || data.error || 'Payment initiation failed.'}`);
+      btn.disabled = false;
+      btnText.textContent = 'Pay with M-Pesa';
+    }
+  } catch (e) {
+    setPayStatus('error', '❌ Network error. Please try again.');
+    btn.disabled = false;
+    btnText.textContent = 'Pay with M-Pesa';
+  }
+}
+
+function pollPayment(checkoutId, amount) {
+  let attempts = 0;
+  clearInterval(payPolling);
+  payPolling = setInterval(async () => {
+    attempts++;
+    if (attempts > 20) {
+      clearInterval(payPolling);
+      setPayStatus('error', '⏱ Payment timed out. If deducted, it will reflect shortly.');
+      document.getElementById('pay-btn').disabled  = false;
+      document.getElementById('pay-btn-text').textContent = 'Pay with M-Pesa';
+      return;
+    }
+    try {
+      const r = await authFetch(`${API}/auth/me`);
+      if (!r.ok) return;
+      const me = await r.json();
+      if (me.walletBalance > (Number(state.walletBalance) || 0)) {
+        clearInterval(payPolling);
+        setPayStatus('success', `✅ Payment of ${fmtKES(amount)} confirmed! Power restored.`);
+        state.walletBalance = me.walletBalance;
+        document.getElementById('pay-btn').disabled  = false;
+        document.getElementById('pay-btn-text').textContent = 'Pay with M-Pesa';
+        loadState(); allTxs = [];
+      }
+    } catch (e) { /* ignore */ }
+  }, 3000);
+}
+
+/* ══ LOGOUT ══ */
+function logout() {
+  localStorage.removeItem('authToken');
+  window.location.href = '/login.html';
+}
+
+/* ══ BOOT ══ */
+async function boot() {
+  document.getElementById('greeting-time').textContent = greetingTime();
+  await loadState();
+  await loadRecentTxs();
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('loading-overlay').classList.add('hidden');
+
+  /* Refresh state every 30 s */
+  setInterval(loadState, 30000);
+  /* Clock tick */
+  setInterval(() => {
+    document.getElementById('sb-time').textContent = `${new Date().toLocaleTimeString('en-KE',{hour:'2-digit',minute:'2-digit'})} · SolarPAYG`;
+  }, 30000);
+}
+
+boot();
+</script>
+
+<script>
+  if (!document.querySelector('meta[name="nav-inserted"]')) {
+    document.addEventListener('DOMContentLoaded', async () => {
+      try {
+        const res  = await fetch('/nav.html');
+        if (!res.ok) return;
+        const html = await res.text();
+        const temp = document.createElement('template');
+        temp.innerHTML = html.trim();
+        const nav  = temp.content.firstElementChild;
+        if (nav) {
+          document.body.prepend(nav);
+          const m = document.createElement('meta');
+          m.name  = 'nav-inserted';
+          document.head.appendChild(m);
+          document.body.classList.add('with-nav');
+        }
+      } catch (e) { console.warn('Nav load failed:', e); }
+    });
+  }
+</script>
+</body>
+</html>
