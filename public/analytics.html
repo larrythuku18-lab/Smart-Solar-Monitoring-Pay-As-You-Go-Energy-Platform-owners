@@ -77,27 +77,6 @@
   <!-- Analytics Dashboard React component -->
   <script type="text/babel" data-presets="react" src="./analytics.jsx"></script>
 
-  <!-- Inject global nav bar -->
-  <script>
-    document.addEventListener('DOMContentLoaded', async () => {
-      if (document.querySelector('meta[name="nav-inserted"]')) return;
-      try {
-        const res = await fetch('/nav.html');
-        if (!res.ok) return;
-        const html = await res.text();
-        const tpl  = document.createElement('template');
-        tpl.innerHTML = html.trim();
-        const nav = tpl.content.firstElementChild;
-        if (nav) {
-          document.body.prepend(nav);
-          const m = document.createElement('meta');
-          m.name  = 'nav-inserted';
-          document.head.appendChild(m);
-        }
-      } catch (e) {
-        console.warn('[SolarPAYG] Nav load failed:', e);
-      }
-    });
-  </script>
+  <script src="/nav-init.js"></script>
 </body>
 </html>

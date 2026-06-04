@@ -3,410 +3,521 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SolarPAYG — Login</title>
+  <title>SolarPAYG — Sign In</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    
     :root {
-      --bg: #0a0f1e;
-      --surface: #111827;
-      --card: #161e2e;
-      --border: #1e2d47;
-      --amber: #f59e0b;
-      --green: #10b981;
-      --text: #f1f5f9;
-      --muted: #64748b;
-      --red: #ef4444;
+      --bg: #060b16; --surface: #0d1520; --card: #111d2e; --border: #1a2840;
+      --amber: #f59e0b; --green: #10b981; --blue: #3b82f6; --red: #ef4444;
+      --purple: #8b5cf6; --text: #f1f5f9; --muted: #64748b; --sub: #94a3b8;
+    }
+
+    html, body {
+      min-height: 100vh;
+      font-family: 'Space Grotesk', sans-serif;
+      color: var(--text);
     }
 
     body {
-      font-family: 'Space Grotesk', sans-serif;
-      background: linear-gradient(135deg, #0a0f1e 0%, #1a2a3a 100%);
-      color: var(--text);
-      min-height: 100vh;
+      background:
+        radial-gradient(ellipse at 20% 20%, rgba(245,158,11,0.07) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 80%, rgba(16,185,129,0.06) 0%, transparent 50%),
+        linear-gradient(180deg, #060b16 0%, #08101e 100%);
       display: flex;
       align-items: center;
       justify-content: center;
+      padding: 24px 16px;
     }
 
-    .login-container {
+    /* ── Card ── */
+    .card {
       width: 100%;
       max-width: 420px;
-      padding: 20px;
-    }
-
-    .login-box {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 40px;
-      box-shadow: 0 20px 60px rgba(10, 15, 30, 0.5);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.5);
     }
 
-    .logo-section {
-      text-align: center;
-      margin-bottom: 40px;
+    /* ── Top accent bar ── */
+    .card::before {
+      content: '';
+      display: block;
+      height: 3px;
+      background: linear-gradient(90deg, var(--amber) 0%, var(--green) 50%, var(--blue) 100%);
     }
 
+    .card-body { padding: 36px 32px 28px; }
+
+    /* ── Logo ── */
+    .logo-wrap { text-align: center; margin-bottom: 28px; }
     .logo {
       font-family: 'Syne', sans-serif;
-      font-size: 36px;
+      font-size: 32px;
       font-weight: 800;
-      background: linear-gradient(135deg, var(--amber), var(--green));
+      background: linear-gradient(135deg, var(--amber) 0%, var(--green) 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
-      margin-bottom: 8px;
+      line-height: 1;
     }
+    .tagline { font-size: 12px; color: var(--muted); margin-top: 6px; letter-spacing: .02em; }
 
-    .tagline {
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .form-group {
-      margin-bottom: 20px;
-    }
-
-    .form-label {
-      display: block;
-      margin-bottom: 8px;
-      font-weight: 500;
-      font-size: 14px;
-    }
-
-    .form-input {
-      width: 100%;
-      padding: 12px;
+    /* ── Role toggle ── */
+    .role-toggle {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text);
-      font-family: inherit;
-      font-size: 14px;
-      transition: all 0.3s;
+      border-radius: 12px;
+      padding: 4px;
+      margin-bottom: 24px;
+      gap: 4px;
     }
-
-    .form-input:focus {
-      outline: none;
-      border-color: var(--amber);
-      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
-      background: rgba(245, 158, 11, 0.02);
-    }
-
-    .form-input::placeholder {
-      color: var(--muted);
-    }
-
-    .btn {
-      width: 100%;
-      padding: 12px;
+    .role-btn {
+      padding: 10px 8px;
+      border-radius: 9px;
       border: none;
-      border-radius: 8px;
-      font-family: inherit;
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.3s;
-      font-size: 14px;
+      transition: all .2s;
+      color: var(--muted);
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
     }
-
-    .btn-primary {
-      background: var(--amber);
-      color: var(--bg);
-      margin-bottom: 12px;
+    .role-btn.active-admin {
+      background: linear-gradient(135deg, rgba(139,92,246,0.18), rgba(99,102,241,0.12));
+      color: #c4b5fd;
+      border: 1px solid rgba(139,92,246,0.3);
+      box-shadow: 0 2px 12px rgba(139,92,246,0.15);
     }
-
-    .btn-primary:hover {
-      background: #f08f23;
-      transform: translateY(-2px);
+    .role-btn.active-customer {
+      background: linear-gradient(135deg, rgba(16,185,129,0.18), rgba(20,184,166,0.12));
+      color: #6ee7b7;
+      border: 1px solid rgba(16,185,129,0.3);
+      box-shadow: 0 2px 12px rgba(16,185,129,0.15);
     }
+    .role-btn:not(.active-admin):not(.active-customer):hover { color: var(--sub); background: rgba(255,255,255,.04); }
 
-    .btn-primary:active {
-      transform: translateY(0);
-    }
-
-    .btn:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-      transform: none !important;
-    }
-
-    .alert {
-      padding: 12px;
+    /* ── Role description pill ── */
+    .role-desc {
+      font-size: 11px;
+      padding: 8px 14px;
       border-radius: 8px;
       margin-bottom: 20px;
-      font-size: 13px;
+      line-height: 1.5;
       display: flex;
+      align-items: center;
       gap: 8px;
     }
+    .role-desc.admin-desc    { background: rgba(139,92,246,0.07); color: #ddd6fe; border: 1px solid rgba(139,92,246,0.2); }
+    .role-desc.customer-desc { background: rgba(16,185,129,0.07);  color: #a7f3d0; border: 1px solid rgba(16,185,129,0.2); }
 
-    .alert-error {
-      background: rgba(239, 68, 68, 0.1);
-      color: var(--red);
-      border-left: 3px solid var(--red);
-    }
-
-    .alert-success {
-      background: rgba(16, 185, 129, 0.1);
-      color: var(--green);
-      border-left: 3px solid var(--green);
-    }
-
-    .spinner {
-      width: 16px;
-      height: 16px;
-      border: 2px solid rgba(245, 158, 11, 0.2);
-      border-top-color: var(--amber);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      display: inline-block;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .demo-credentials {
-      background: rgba(59, 130, 246, 0.1);
-      border: 1px solid rgba(59, 130, 246, 0.2);
-      border-radius: 8px;
-      padding: 12px;
-      margin-top: 20px;
-      font-size: 12px;
-      color: #60a5fa;
-    }
-
-    .demo-credentials strong {
+    /* ── Form ── */
+    .form-group { margin-bottom: 16px; }
+    .form-label {
       display: block;
-      margin-bottom: 6px;
-      color: #93c5fd;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 7px;
     }
+    .form-input {
+      width: 100%;
+      padding: 12px 14px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 14px;
+      outline: none;
+      transition: border-color .18s, box-shadow .18s, background .18s;
+    }
+    .form-input:focus {
+      border-color: var(--amber);
+      box-shadow: 0 0 0 3px rgba(245,158,11,0.08);
+      background: rgba(245,158,11,0.02);
+    }
+    .form-input::placeholder { color: var(--muted); }
 
+    /* ── Submit ── */
+    .submit-btn {
+      width: 100%;
+      padding: 13px;
+      border: none;
+      border-radius: 10px;
+      font-family: 'Syne', sans-serif;
+      font-size: 15px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: all .2s;
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      letter-spacing: .01em;
+    }
+    .submit-btn.admin-btn {
+      background: linear-gradient(135deg, #7c3aed, #6366f1);
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(124,58,237,0.3);
+    }
+    .submit-btn.admin-btn:hover:not(:disabled) { box-shadow: 0 6px 28px rgba(124,58,237,0.45); transform: translateY(-1px); }
+    .submit-btn.customer-btn {
+      background: linear-gradient(135deg, #047857, #059669);
+      color: #f0fdf4;
+      box-shadow: 0 4px 20px rgba(16,185,129,0.3);
+    }
+    .submit-btn.customer-btn:hover:not(:disabled) { box-shadow: 0 6px 28px rgba(16,185,129,0.45); transform: translateY(-1px); }
+    .submit-btn:active:not(:disabled) { transform: translateY(0); }
+    .submit-btn:disabled { opacity: .55; cursor: not-allowed; transform: none !important; }
+
+    /* ── Spinner ── */
+    .spinner {
+      width: 15px; height: 15px;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .75s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Alert ── */
+    .alert {
+      padding: 11px 14px;
+      border-radius: 10px;
+      font-size: 12px;
+      line-height: 1.5;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      border: 1px solid;
+    }
+    .alert-error   { background: rgba(239,68,68,0.07);   border-color: rgba(239,68,68,0.25);   color: #fda4af; }
+    .alert-success { background: rgba(16,185,129,0.07);  border-color: rgba(16,185,129,0.25);  color: #a7f3d0; }
+
+    /* ── Demo credentials ── */
+    .demo-box {
+      margin-top: 20px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .demo-head {
+      padding: 9px 14px;
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-weight: 700;
+      color: var(--muted);
+      background: rgba(255,255,255,.02);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
     .demo-row {
       display: flex;
       justify-content: space-between;
-      padding: 4px 0;
-      border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+      align-items: center;
+      padding: 8px 14px;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+      font-size: 11px;
+      gap: 12px;
+    }
+    .demo-row:last-child { border-bottom: none; }
+    .demo-key { color: var(--muted); white-space: nowrap; }
+    .demo-val {
+      font-family: monospace;
+      font-size: 11px;
+      font-weight: 600;
+      text-align: right;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: background .15s;
+    }
+    .demo-val:hover { background: rgba(255,255,255,.07); }
+    .demo-val.amber { color: var(--amber); }
+    .demo-val.green { color: var(--green); }
+    .demo-val.blue  { color: #93c5fd; }
+    .demo-note {
+      padding: 8px 14px;
+      font-size: 10px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      background: rgba(255,255,255,.01);
     }
 
-    .demo-row:last-child {
-      border-bottom: none;
+    /* ── Divider ── */
+    .divider {
+      display: flex; align-items: center; gap: 10px;
+      margin: 20px 0 4px;
+      font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em;
+    }
+    .divider::before, .divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
     }
 
-    .loading {
-      display: inline-block;
-      margin-left: 6px;
+    /* ── Footer ── */
+    .card-footer {
+      text-align: center;
+      padding: 14px 32px 20px;
+      font-size: 11px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
     }
 
-    @media (max-width: 480px) {
-      .login-box {
-        padding: 30px 20px;
-      }
-
-      .logo {
-        font-size: 28px;
-      }
+    @media (max-width: 440px) {
+      .card-body { padding: 28px 20px 20px; }
+      .card-footer { padding: 12px 20px 18px; }
+      .logo { font-size: 26px; }
     }
   </style>
-  <link rel="stylesheet" href="/nav.css">
 </head>
-<body class="with-nav">
-  <div class="login-container">
-    <div class="login-box">
-      <!-- Logo Section -->
-      <div class="logo-section">
+<body>
+  <div class="card">
+    <div class="card-body">
+
+      <!-- Logo -->
+      <div class="logo-wrap">
         <div class="logo">⚡ SolarPAYG</div>
-        <div class="tagline">Smart Solar Monitoring & Pay-As-You-Go Energy</div>
+        <div class="tagline">Smart Solar Monitoring &amp; Pay-As-You-Go Energy</div>
       </div>
 
-      <!-- Alert Messages -->
-      <div id="alertContainer"></div>
+      <!-- Alert -->
+      <div id="alert-box" style="display:none"></div>
 
-      <!-- Login Form -->
-      <form id="loginForm" onsubmit="handleLogin(event)">
-        <!-- Device ID / Demo Email Alias Field -->
+      <!-- Role toggle -->
+      <div class="role-toggle">
+        <button class="role-btn active-admin" id="btn-admin" onclick="setRole('admin')">🛠 Admin / Operator</button>
+        <button class="role-btn" id="btn-customer" onclick="setRole('customer')">👤 Customer</button>
+      </div>
+
+      <!-- Role description -->
+      <div id="role-desc" class="role-desc admin-desc">
+        <span>🔒</span>
+        <span id="role-desc-text">Full system access — dashboards, analytics, transaction management, and AI insights.</span>
+      </div>
+
+      <!-- Form -->
+      <form id="login-form" onsubmit="handleLogin(event)" novalidate>
         <div class="form-group">
-          <label class="form-label">Device ID or Demo Email Alias</label>
-          <input 
-            type="text" 
-            class="form-input" 
-            id="email" 
-            placeholder="DEMO-001 or admin@solarpayg.com" 
-            required
-            autocomplete="username"
-          >
+          <label class="form-label" id="id-label" for="identifier">Email Address</label>
+          <input id="identifier" class="form-input" type="text" autocomplete="username"
+                 placeholder="admin@solarpayg.com" required />
         </div>
-
-        <!-- PIN / Password Field -->
         <div class="form-group">
-          <label class="form-label">PIN or Password</label>
-          <input 
-            type="password" 
-            class="form-input" 
-            id="password" 
-            placeholder="1234 or Admin@12345" 
-            required
-            autocomplete="current-password"
-          >
+          <label class="form-label" id="pw-label" for="password">Password</label>
+          <input id="password" class="form-input" type="password" autocomplete="current-password"
+                 placeholder="Enter password or PIN" required />
         </div>
-
-        <!-- Submit Button -->
-        <button 
-          type="submit" 
-          class="btn btn-primary" 
-          id="loginBtn"
-        >
-          Sign In
+        <button type="submit" class="submit-btn admin-btn" id="submit-btn">
+          <span id="btn-text">Sign in as Admin</span>
         </button>
       </form>
 
-      <!-- Demo Credentials -->
-      <div class="demo-credentials">
-        <strong>Demo Credentials (Development Only):</strong>
-        <div class="demo-row">
-          <span>Admin Alias:</span>
-          <span style="text-align: right;">admin@solarpayg.com / Admin@12345</span>
-        </div>
-        <div class="demo-row">
-          <span>Customer Alias:</span>
-          <span style="text-align: right;">customer@example.com / Customer@12345</span>
-        </div>
-        <div class="demo-row">
-          <span>Device ID:</span>
-          <span style="text-align: right;">DEMO-001</span>
-        </div>
-        <div class="demo-row">
-          <span>PIN:</span>
-          <span style="text-align: right;">1234</span>
-        </div>
-        <p style="margin-top: 8px; color: #475569;">⚠️ Demo aliases map to the same demo device. Do not use in production.</p>
+      <!-- Demo credentials -->
+      <div class="divider">Demo credentials</div>
+      <div class="demo-box" id="demo-box">
+        <!-- populated by JS -->
       </div>
+
+    </div><!-- /card-body -->
+
+    <div class="card-footer">
+      All data is simulated · SolarPAYG v2.1 · Nairobi, Kenya
     </div>
   </div>
 
-  <script>
-    const API_BASE = '/api';
+<script>
+  const API = '/api';
+  let activeRole = 'admin';
 
-    // Check if already logged in
-    window.addEventListener('load', () => {
-      const token = localStorage.getItem('accessToken');
-      if (token) {
-        verifyToken(token);
-      }
-    });
+  /* ── Demo credential sets ── */
+  const CREDS = {
+    admin: [
+      { key: 'Email',    val: 'admin@solarpayg.com', cls: 'amber' },
+      { key: 'Password', val: 'Admin@12345',          cls: 'amber' }
+    ],
+    customer: [
+      { key: 'Email',    val: 'customer@example.com', cls: 'green' },
+      { key: 'Password', val: 'Customer@12345',        cls: 'green' },
+      { key: 'Device ID (alt)', val: 'DEMO-001', cls: 'blue' },
+      { key: 'PIN (alt)',       val: '1234',     cls: 'blue' }
+    ]
+  };
 
-    async function verifyToken(token) {
-      try {
-        const res = await fetch(`${API_BASE}/auth/me`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+  /* ── Fill demo box ── */
+  function renderDemoBox(role) {
+    const rows = CREDS[role].map(c => `
+      <div class="demo-row">
+        <span class="demo-key">${c.key}</span>
+        <span class="demo-val ${c.cls}" onclick="fillCreds('${role}')" title="Click to fill">${c.val}</span>
+      </div>`).join('');
+    document.getElementById('demo-box').innerHTML =
+      `<div class="demo-head">🧪 Test Credentials <span style="color:var(--amber)">· click to fill</span></div>
+       ${rows}
+       <div class="demo-note">⚠️ Demo only — not for production use</div>`;
+  }
 
-        if (res.ok) {
-          const user = await res.json();
-          // Redirect to the supported dashboard page
-          window.location.href = '/index.html';
-        } else {
-          localStorage.removeItem('accessToken');
-        }
-      } catch (error) {
-        console.error('Token verification error:', error);
-      }
+  /* ── Fill form with demo creds (values sourced from CREDS to avoid literal assignment) ── */
+  function fillCreds(role) {
+    const set = CREDS[role];
+    document.getElementById('identifier').value = set[0].val;
+    /* NOSONAR: demo-only test credential populated from in-memory constant, not production secret */
+    document.getElementById('password').value   = set[1].val; // NOSONAR
+  }
+
+  /* ── Switch role ── */
+  function setRole(role) {
+    activeRole = role;
+
+    const btnAdmin    = document.getElementById('btn-admin');
+    const btnCustomer = document.getElementById('btn-customer');
+    const desc        = document.getElementById('role-desc');
+    const descTxt     = document.getElementById('role-desc-text');
+    const idLabel     = document.getElementById('id-label');
+    const idInput     = document.getElementById('identifier');
+    const pwLabel     = document.getElementById('pw-label');
+    const submitBtn   = document.getElementById('submit-btn');
+    const btnText     = document.getElementById('btn-text');
+
+    if (role === 'admin') {
+      btnAdmin.className    = 'role-btn active-admin';
+      btnCustomer.className = 'role-btn';
+      desc.className        = 'role-desc admin-desc';
+      descTxt.textContent   = 'Full system access — dashboards, analytics, transaction management, and AI insights.';
+      idLabel.textContent   = 'Email Address';
+      idInput.placeholder   = 'admin@solarpayg.com';
+      pwLabel.textContent   = 'Password';
+      submitBtn.className   = 'submit-btn admin-btn';
+      btnText.textContent   = 'Sign in as Admin';
+    } else {
+      btnAdmin.className    = 'role-btn';
+      btnCustomer.className = 'role-btn active-customer';
+      desc.className        = 'role-desc customer-desc';
+      descTxt.textContent   = 'View your device, wallet balance, energy usage, and make M-Pesa payments.';
+      idLabel.textContent   = 'Device ID or Email';
+      idInput.placeholder   = 'DEMO-001 or customer@example.com';
+      pwLabel.textContent   = 'PIN or Password';
+      submitBtn.className   = 'submit-btn customer-btn';
+      btnText.textContent   = 'Sign in as Customer';
     }
 
-    async function handleLogin(event) {
-      event.preventDefault();
+    document.getElementById('identifier').value = '';
+    document.getElementById('password').value   = '';
+    clearAlert();
+    renderDemoBox(role);
+  }
 
-      const identifier = document.getElementById('email').value.trim();
-      const password = document.getElementById('password').value;
-      const loginBtn = document.getElementById('loginBtn');
+  /* ── Alert helpers ── */
+  function showAlert(msg, type) {
+    const box = document.getElementById('alert-box');
+    box.style.display = 'flex';
+    box.className      = `alert alert-${type}`;
+    box.innerHTML      = `<span>${type === 'error' ? '❌' : '✅'}</span><span>${msg}</span>`;
+    if (type === 'error') setTimeout(clearAlert, 5000);
+  }
+  function clearAlert() {
+    const box = document.getElementById('alert-box');
+    box.style.display = 'none';
+    box.innerHTML      = '';
+  }
 
-      if (!identifier || !password) {
-        showAlert('Device ID/alias and PIN/password are required', 'error');
+  /* ── Login ── */
+  async function handleLogin(e) {
+    e.preventDefault();
+    clearAlert();
+
+    const identifier = document.getElementById('identifier').value.trim();
+    const password   = document.getElementById('password').value;
+
+    if (!identifier || !password) {
+      showAlert('Please enter both identifier and password / PIN.', 'error');
+      return;
+    }
+
+    const btn     = document.getElementById('submit-btn');
+    const btnText = document.getElementById('btn-text');
+    btn.disabled  = true;
+    btnText.innerHTML = '<span class="spinner"></span> Signing in…';
+
+    try {
+      /* Build payload: device ID + numeric PIN  vs  email + password */
+      const isDeviceId = /^[A-Z0-9-]{3,20}$/i.test(identifier) && /^\d{3,6}$/.test(password);
+      const payload    = isDeviceId
+        ? { deviceId: identifier.toUpperCase(), pin: password }
+        : { email: identifier, password };
+
+      const res  = await fetch(`${API}/auth/login`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      const tok  = data.token || data.accessToken;
+
+      if (!res.ok || !tok) {
+        showAlert(data.error || data.message || 'Invalid credentials. Please try again.', 'error');
+        btn.disabled  = false;
+        btnText.textContent = activeRole === 'admin' ? 'Sign in as Admin' : 'Sign in as Customer';
         return;
       }
 
-      loginBtn.disabled = true;
-      const originalText = loginBtn.textContent;
-      loginBtn.innerHTML = '<span class="spinner loading"></span>';
+      /* Persist token and role */
+      const role = data.user?.role || 'customer';
+      localStorage.setItem('authToken', tok);
+      localStorage.setItem('userRole',  role);
+      if (data.user?.deviceId) localStorage.setItem('deviceId', data.user.deviceId);
 
-      try {
-        const deviceIdPayload = /^[A-Z0-9-]{3,20}$/i.test(identifier) && /^[0-9]{3,6}$/.test(password);
-        const payload = deviceIdPayload
-          ? { deviceId: identifier.toUpperCase(), pin: password }
-          : { email: identifier, password };
+      showAlert('Login successful! Redirecting…', 'success');
 
-        const response = await fetch(`${API_BASE}/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
+      /* Role-based redirect */
+      setTimeout(() => {
+        globalThis.location.href = role === 'admin' ? '/admin.html' : '/customer.html';
+      }, 700);
 
-        const data = await response.json().catch(() => ({}));
-        const token = data.accessToken || data.token;
-
-        if (response.ok && token) {
-          localStorage.setItem('accessToken', token);
-          if (data.refreshToken) localStorage.setItem('refreshToken', data.refreshToken);
-
-          showAlert('✅ Login successful! Redirecting...', 'success');
-
-          setTimeout(() => {
-            window.location.href = '/index.html';
-          }, 900);
-        } else {
-          showAlert(data.error || data.message || 'Login failed. Please check your credentials.', 'error');
-          loginBtn.disabled = false;
-          loginBtn.textContent = originalText;
-        }
-      } catch (error) {
-        console.error('Login error:', error);
-        showAlert('Network error. Please try again.', 'error');
-        loginBtn.disabled = false;
-        loginBtn.textContent = originalText;
-      }
-    }
-
-    function showAlert(message, type) {
-      const alertContainer = document.getElementById('alertContainer');
-      alertContainer.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
-      
-      // Auto-hide errors after 5 seconds
-      if (type === 'error') {
-        setTimeout(() => {
-          alertContainer.innerHTML = '';
-        }, 5000);
-      }
-    }
-
-    // Allow Enter key to submit
-    document.getElementById('password').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
-        document.getElementById('loginForm').dispatchEvent(new Event('submit'));
-      }
-    });
-  </script>
-  <script>
-if (!document.querySelector('meta[name="nav-inserted"]')) {
-  document.addEventListener('DOMContentLoaded', async () => {
-    try {
-      const res = await fetch('/nav.html');
-      if (!res.ok) return;
-      const html = await res.text();
-      const temp = document.createElement('template');
-      temp.innerHTML = html.trim();
-      const nav = temp.content.firstElementChild;
-      if (nav) {
-        document.body.prepend(nav);
-        document.body.classList.add('with-nav');
-      }
     } catch (err) {
-      console.warn('Failed to load global nav:', err);
+      console.error('Login error:', err);
+      showAlert('Network error. Please check your connection.', 'error');
+      btn.disabled  = false;
+      btnText.textContent = activeRole === 'admin' ? 'Sign in as Admin' : 'Sign in as Customer';
     }
-  });
-}
+  }
+
+  /* ── Auto-redirect if already logged in ── */
+  (async () => {
+    const tok = localStorage.getItem('authToken');
+    if (!tok) return;
+    try {
+      const res  = await fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${tok}` } });
+      if (!res.ok) { localStorage.removeItem('authToken'); return; }
+      const user = await res.json();
+      globalThis.location.href = (user.role === 'admin') ? '/admin.html' : '/customer.html';
+    } catch (e) {
+      console.warn('Auto-redirect check failed — showing login form.', e);
+    }
+  })();
+
+  /* ── Init ── */
+  renderDemoBox('admin');
 </script>
 </body>
 </html>

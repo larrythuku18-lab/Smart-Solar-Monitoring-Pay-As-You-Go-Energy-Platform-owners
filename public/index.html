@@ -471,27 +471,8 @@
 </div>
 
 <script type="module" src="index.js"></script>
+<script src="/nav-init.js"></script>
 <script>
-  /* ── Nav injection ── */
-  if (!document.querySelector('meta[name="nav-inserted"]')) {
-    document.addEventListener('DOMContentLoaded', async () => {
-      try {
-        const res = await fetch('/nav.html');
-        if (!res.ok) return;
-        const html = await res.text();
-        const temp = document.createElement('template');
-        temp.innerHTML = html.trim();
-        const nav = temp.content.firstElementChild;
-        if (nav) {
-          document.body.prepend(nav);
-          const m = document.createElement('meta');
-          m.name = 'nav-inserted';
-          document.head.appendChild(m);
-          document.body.classList.add('with-nav');
-        }
-      } catch (e) { console.warn('Nav load failed:', e); }
-    });
-  }
 
   /* ── Mark active nav link ── */
   document.addEventListener('DOMContentLoaded', () => {

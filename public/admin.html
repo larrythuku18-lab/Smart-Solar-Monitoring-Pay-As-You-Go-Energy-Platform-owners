@@ -202,6 +202,18 @@
 </head>
 <body class="with-nav">
 
+<!-- Auth guard: redirect non-admins immediately, before any paint -->
+<script>
+  (function () {
+    const tok = localStorage.getItem('authToken');
+    /* Always verify server-side — localStorage role could be stale */
+    fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + (tok || '') } })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => { if (!u || u.role !== 'admin') globalThis.location.replace('/login.html'); })
+      .catch(() => globalThis.location.replace('/login.html'));
+  }());
+</script>
+
 <!-- Loading -->
 <div id="loading-overlay">
   <div class="loading-spinner"></div>
@@ -584,26 +596,7 @@
   setTimeout(fetchAdminData, 1200);
   setInterval(fetchAdminData, 90000);
 
-  /* ── Nav injection ── */
-  if (!document.querySelector('meta[name="nav-inserted"]')) {
-    document.addEventListener('DOMContentLoaded', async () => {
-      try {
-        const res = await fetch('/nav.html');
-        if (!res.ok) return;
-        const html = await res.text();
-        const temp = document.createElement('template');
-        temp.innerHTML = html.trim();
-        const nav = temp.content.firstElementChild;
-        if (nav) {
-          document.body.prepend(nav);
-          const m = document.createElement('meta');
-          m.name = 'nav-inserted';
-          document.head.appendChild(m);
-          document.body.classList.add('with-nav');
-        }
-      } catch (e) { console.warn('Nav load failed:', e); }
-    });
-  }
 </script>
+<script src="/nav-init.js"></script>
 </body>
 </html>

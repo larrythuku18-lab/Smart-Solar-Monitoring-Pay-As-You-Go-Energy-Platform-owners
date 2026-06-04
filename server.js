@@ -39,6 +39,9 @@ const {
   getAdminSummary,
   createAlert,
   getAlerts,
+  getPaymentsByUserId,
+  getAlertsByUserId,
+  getLatestEnergy,
   savePrediction,
   getExpiredWalletUsers
 } = require('./db');
@@ -370,6 +373,62 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load user', message: err.message });
+  }
+});
+
+/* ── Customer summary — authenticated, scoped to the requesting user ─────── */
+app.get('/api/customer/summary', authMiddleware, async (req, res) => {
+  try {
+    const user = await getUserById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const device   = await getDeviceByUserId(user.id);
+    const deviceId = device?.device_id || user.device_id || 'DEMO-001';
+
+    const [latest, payments, alerts] = await Promise.all([
+      getLatestEnergy(deviceId),
+      getPaymentsByUserId(user.id, 30),
+      getAlertsByUserId(user.id, 10)
+    ]);
+
+    const completed    = payments.filter(p => p.status === 'completed');
+    const totalSpent   = completed.reduce((s, p) => s + Number(p.amount || 0), 0);
+    const lastPayment  = completed[0] || null;
+
+    res.json({
+      user: {
+        id:            user.id,
+        deviceId:      user.device_id,
+        name:          user.name   || null,
+        phone:         user.phone  || null,
+        walletBalance: user.wallet_balance
+      },
+      device: device
+        ? { deviceId: device.device_id, name: device.name, location: device.location, relayState: device.relay_state, isActive: device.is_active }
+        : null,
+      energy: {
+        batteryLevel:  latest?.battery_level     ?? 0,
+        generation:    latest?.generation_watts  ?? 0,
+        consumption:   latest?.consumption_watts ?? 0,
+        voltage:       latest?.voltage           ?? 0,
+        current:       latest?.current_amps      ?? 0,
+        powerEnabled:  device?.relay_state === 'on',
+        recordedAt:    latest?.recorded_at       ?? null
+      },
+      payments,
+      alerts,
+      stats: {
+        totalSpent,
+        totalPayments:     payments.length,
+        completedPayments: completed.length,
+        pendingPayments:   payments.filter(p => p.status === 'pending').length,
+        failedPayments:    payments.filter(p => p.status === 'failed').length,
+        lastPaymentAt:     lastPayment?.completed_at || lastPayment?.created_at || null,
+        lastPaymentAmount: lastPayment?.amount       || null
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load customer summary', message: err.message });
   }
 });
 

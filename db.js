@@ -381,6 +381,22 @@ async function getRecentPayments(limit = 20) {
   return rows;
 }
 
+async function getPaymentsByUserId(userId, limit = 30) {
+  const { rows } = await q(
+    `SELECT * FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [userId, limit]
+  );
+  return rows;
+}
+
+async function getAlertsByUserId(userId, limit = 10) {
+  const { rows } = await q(
+    `SELECT * FROM maintenance_alerts WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [userId, limit]
+  );
+  return rows;
+}
+
 async function getPaymentTrend() {
   const { rows } = await q(`
     SELECT created_at::date::text                                          AS day,
@@ -565,11 +581,13 @@ module.exports = {
   failPayment,
   getPaymentStats,
   getRecentPayments,
+  getPaymentsByUserId,
   getPaymentTrend,
   /* alerts */
   createAlert,
   getAlerts,
   getAlertSeverityCounts,
+  getAlertsByUserId,
   /* ai */
   savePrediction,
   /* audit */

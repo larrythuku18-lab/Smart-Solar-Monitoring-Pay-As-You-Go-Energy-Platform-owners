@@ -251,6 +251,17 @@
 </head>
 <body class="with-nav">
 
+<!-- Auth guard: redirect unauthenticated visitors to login -->
+<script>
+  (function () {
+    const tok = localStorage.getItem('authToken');
+    fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + (tok || '') } })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => { if (!u) globalThis.location.replace('/login.html'); })
+      .catch(() => globalThis.location.replace('/login.html'));
+  }());
+</script>
+
 <div id="loading-overlay">
   <div class="loading-spinner"></div>
   <div class="loading-text">Loading your account…</div>
@@ -625,23 +636,47 @@ function authFetch(url, opts = {}) {
   return fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers || {}) } });
 }
 
-/* ══ LOAD STATE ══ */
+/* ══ LOAD STATE — uses /api/customer/summary for per-user scoped data ══ */
 async function loadState() {
   try {
-    const [stateR, meR] = await Promise.allSettled([
-      fetch(`${API}/state`).then(r => r.ok ? r.json() : null),
-      authFetch(`${API}/auth/me`).then(r => r.ok ? r.json() : null)
-    ]);
+    const r = await authFetch(`${API}/customer/summary`);
+    if (!r.ok) { console.warn('customer/summary failed', r.status); return; }
+    const data = await r.json();
 
-    if (stateR.status === 'fulfilled' && stateR.value) {
-      state = stateR.value;
-    }
-    if (meR.status === 'fulfilled' && meR.value) {
-      userInfo = meR.value;
-      if (userInfo.walletBalance != null) state.walletBalance = userInfo.walletBalance;
-    }
+    /* Map the summary response onto the shared state/userInfo objects */
+    userInfo = {
+      id:            data.user.id,
+      deviceId:      data.user.deviceId,
+      name:          data.user.name,
+      phone:         data.user.phone,
+      walletBalance: data.user.walletBalance,
+      role:          'customer'
+    };
+
+    state = {
+      walletBalance: data.user.walletBalance,
+      batteryLevel:  data.energy.batteryLevel,
+      generation:    data.energy.generation,
+      consumption:   data.energy.consumption,
+      voltage:       data.energy.voltage,
+      current:       data.energy.current,
+      powerEnabled:  data.energy.powerEnabled,
+      deviceId:      data.user.deviceId
+    };
+
+    /* Cache customer-scoped transactions — never mix with other users' data */
+    allTxs = data.payments || [];
 
     renderAll();
+    renderRecentTxs(allTxs.slice(0, 5));
+    document.getElementById('recent-count').textContent = `${allTxs.length} total`;
+
+    /* Show any device alerts specific to this user */
+    if (data.alerts?.length) {
+      const alertMeta = document.getElementById('credit-meta');
+      const critical  = data.alerts.find(a => a.severity === 'high');
+      if (critical) alertMeta.textContent = `⚠️ ${critical.message}`;
+    }
   } catch (e) {
     console.warn('loadState error:', e);
   }
@@ -733,16 +768,10 @@ function renderAll() {
   if (!phoneEl.value && userInfo.phone) phoneEl.value = userInfo.phone;
 }
 
-/* ══ LOAD RECENT TXS (overview tab) ══ */
-async function loadRecentTxs() {
-  try {
-    const r = await fetch(`${API}/audit/charts`);
-    if (!r.ok) return;
-    const data = await r.json();
-    allTxs = data.recentPayments || [];
-    renderRecentTxs(allTxs.slice(0, 5));
-    document.getElementById('recent-count').textContent = `${allTxs.length} total`;
-  } catch (e) { /* silently ignore */ }
+/* ══ LOAD RECENT TXS — allTxs is populated by loadState(), nothing extra needed ══ */
+function loadRecentTxs() {
+  renderRecentTxs(allTxs.slice(0, 5));
+  document.getElementById('recent-count').textContent = `${allTxs.length} total`;
 }
 
 function txRow(p, idx, cols = 4) {
@@ -772,23 +801,17 @@ function renderRecentTxs(list) {
     : '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">No transactions yet</td></tr>';
 }
 
-/* ══ HISTORY TAB ══ */
-async function loadHistory() {
-  if (!allTxs.length) {
-    try {
-      const r = await fetch(`${API}/audit/charts`);
-      if (r.ok) { const d = await r.json(); allTxs = d.recentPayments || []; }
-    } catch (e) { /* ignore */ }
-  }
-  const list = allTxs;
-  const total = list.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+/* ══ HISTORY TAB — uses allTxs already scoped to this user by /api/customer/summary ══ */
+function loadHistory() {
+  const list      = allTxs;
   const completed = list.filter(p => p.status === 'completed');
-  const last = list.find(p => p.completed_at || p.created_at);
+  const totalSpent = completed.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const last      = completed[0] || list[0] || null;
 
-  document.getElementById('hist-total').textContent  = fmtKES(total);
-  document.getElementById('hist-count').textContent  = list.length.toLocaleString('en');
-  document.getElementById('hist-last').textContent   = last ? fmtDate(last.completed_at || last.created_at) : '—';
-  document.getElementById('hist-badge').textContent  = `${list.length} records`;
+  document.getElementById('hist-total').textContent = fmtKES(totalSpent);
+  document.getElementById('hist-count').textContent = list.length.toLocaleString('en');
+  document.getElementById('hist-last').textContent  = last ? fmtDate(last.completed_at || last.created_at) : '—';
+  document.getElementById('hist-badge').textContent = `${list.length} records`;
 
   const tbody = document.getElementById('hist-body');
   tbody.innerHTML = list.length
@@ -965,8 +988,7 @@ function logout() {
 /* ══ BOOT ══ */
 async function boot() {
   document.getElementById('greeting-time').textContent = greetingTime();
-  await loadState();
-  await loadRecentTxs();
+  await loadState();   /* loadState() now also populates allTxs and renders recent txs */
   document.getElementById('app').style.display = 'block';
   document.getElementById('loading-overlay').classList.add('hidden');
 
@@ -981,26 +1003,6 @@ async function boot() {
 boot();
 </script>
 
-<script>
-  if (!document.querySelector('meta[name="nav-inserted"]')) {
-    document.addEventListener('DOMContentLoaded', async () => {
-      try {
-        const res  = await fetch('/nav.html');
-        if (!res.ok) return;
-        const html = await res.text();
-        const temp = document.createElement('template');
-        temp.innerHTML = html.trim();
-        const nav  = temp.content.firstElementChild;
-        if (nav) {
-          document.body.prepend(nav);
-          const m = document.createElement('meta');
-          m.name  = 'nav-inserted';
-          document.head.appendChild(m);
-          document.body.classList.add('with-nav');
-        }
-      } catch (e) { console.warn('Nav load failed:', e); }
-    });
-  }
-</script>
+<script src="/nav-init.js"></script>
 </body>
 </html>
