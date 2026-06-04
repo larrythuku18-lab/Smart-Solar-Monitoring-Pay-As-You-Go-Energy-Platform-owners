@@ -462,17 +462,16 @@
   const API = '/api';
   let allTransactions = [];
 
-  function fmtKES(v) {
-    const n = Number(v || 0);
-    if (n >= 1_000_000) return `KES ${(n / 1_000_000).toFixed(2)}M`;
-    if (n >= 1_000)     return `KES ${(n / 1_000).toFixed(1)}K`;
-    return `KES ${Math.round(n).toLocaleString('en-KE')}`;
-  }
+  const _compact = new Intl.NumberFormat('en', { notation: 'compact', maximumSignificantDigits: 3 });
+  const _integer = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
+
   function fmtCount(n) {
-    n = Number(n || 0);
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}K`;
-    return n.toLocaleString('en-KE');
+    n = Number(n) || 0;
+    return n >= 10000 ? _compact.format(n) : _integer.format(n);
+  }
+  function fmtKES(v) {
+    const n = Number(v) || 0;
+    return `KES ${n >= 10000 ? _compact.format(n) : _integer.format(n)}`;
   }
   function fmtDate(d) {
     if (!d) return '—';

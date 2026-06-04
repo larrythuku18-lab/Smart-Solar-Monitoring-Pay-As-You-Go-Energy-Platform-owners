@@ -127,26 +127,31 @@ const elements = {
 
 // ===== UTILITY FUNCTIONS =====
 
-function fmtPower(watts) {
-  if (watts >= 1000) return `${(watts / 1000).toFixed(1)} kW`;
-  return `${Math.round(watts)} W`;
+// Intl formatters — compact strips trailing zeros automatically (12K not 12.0K)
+const _compact = new Intl.NumberFormat('en', { notation: 'compact', maximumSignificantDigits: 3 });
+const _integer = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
+
+function fmtCount(n) {
+  n = Number(n) || 0;
+  return n >= 10_000 ? _compact.format(n) : _integer.format(n);
 }
 
 function fmtKES(value) {
-  if (value >= 1_000_000) return `KES ${(value / 1_000_000).toFixed(2)}M`;
-  if (value >= 1_000)     return `KES ${(value / 1_000).toFixed(1)}K`;
-  return `KES ${Math.round(value).toLocaleString('en-KE')}`;
+  const n = Number(value) || 0;
+  const num = n >= 10_000 ? _compact.format(n) : _integer.format(n);
+  return `KES ${num}`;
 }
 
-function fmtCount(n) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}K`;
-  return n.toLocaleString('en-KE');
+function fmtPower(watts) {
+  const w = Number(watts) || 0;
+  if (w >= 1000) return `${(w / 1000).toFixed(1)} kW`;
+  return `${Math.round(w)} W`;
 }
 
 function fmtEnergy(kwh) {
-  if (kwh >= 1000) return `${(kwh / 1000).toFixed(1)} MWh`;
-  return `${Number(kwh).toFixed(1)} kWh`;
+  const k = Number(kwh) || 0;
+  if (k >= 1000) return `${(k / 1000).toFixed(1)} MWh`;
+  return `${k.toFixed(2)} kWh`;
 }
 
 function updateClock() {
