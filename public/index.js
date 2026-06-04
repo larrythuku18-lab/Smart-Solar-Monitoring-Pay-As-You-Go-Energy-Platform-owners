@@ -127,6 +127,28 @@ const elements = {
 
 // ===== UTILITY FUNCTIONS =====
 
+function fmtPower(watts) {
+  if (watts >= 1000) return `${(watts / 1000).toFixed(1)} kW`;
+  return `${Math.round(watts)} W`;
+}
+
+function fmtKES(value) {
+  if (value >= 1_000_000) return `KES ${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000)     return `KES ${(value / 1_000).toFixed(1)}K`;
+  return `KES ${Math.round(value).toLocaleString('en-KE')}`;
+}
+
+function fmtCount(n) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}K`;
+  return n.toLocaleString('en-KE');
+}
+
+function fmtEnergy(kwh) {
+  if (kwh >= 1000) return `${(kwh / 1000).toFixed(1)} MWh`;
+  return `${Number(kwh).toFixed(1)} kWh`;
+}
+
 function updateClock() {
   if (!elements.topbarDate) return;
   const now = new Date();
@@ -331,36 +353,39 @@ async function runAIModels() {
 // ===== RENDERING FUNCTIONS =====
 
 function renderDashboardMetrics() {
-  // Solar generation KPI with weather impact
+  const weatherMultiplier = state.weather?.solarImpact || 1;
+  const adjustedGen = Math.round(state.generation * weatherMultiplier);
+
   if (elements.kpiSolar) {
-    const weatherMultiplier = state.weather?.solarImpact || 1;
-    const adjustedGen = Math.round(state.generation * weatherMultiplier);
-    elements.kpiSolar.textContent = `${adjustedGen}W`;
+    elements.kpiSolar.textContent = fmtPower(adjustedGen);
   }
-  
+
   if (elements.kpiSolarD) {
     const trend = state.trends.length > 1 ? (state.trends.at(-1) - state.trends.at(-2)) : 0;
-    let direction = '→';
-    if (trend > 0) {
-      direction = '↑';
-    } else if (trend < 0) {
-      direction = '↓';
-    }
-    elements.kpiSolarD.textContent = `${direction} ${Math.abs(trend)}W vs 5m ago`;
+    const dir = trend > 0 ? '↑' : trend < 0 ? '↓' : '→';
+    elements.kpiSolarD.textContent = `${dir} ${fmtPower(Math.abs(trend))} vs 5m ago`;
     elements.kpiSolarD.style.color = trend > 0 ? 'var(--green)' : 'var(--amber)';
   }
-  
-  // Customers KPI (simulated)
-  if (elements.kpiCustomers) elements.kpiCustomers.textContent = '247';
-  
-  // Revenue KPI (simulated)
-  if (elements.kpiRevenue) elements.kpiRevenue.textContent = 'KES 12.4K';
-  
-  // Offline devices
+
+  if (elements.kpiCustomers) elements.kpiCustomers.textContent = fmtCount(247);
+
+  if (elements.kpiRevenue) elements.kpiRevenue.textContent = fmtKES(12400);
+
   if (elements.kpiOffline) {
     const offlineCount = state.maintenanceAlerts.filter(a => a.severity === 'high').length;
-    elements.kpiOffline.textContent = offlineCount;
+    elements.kpiOffline.textContent = fmtCount(offlineCount);
   }
+
+  // Overview panel
+  const ovDevices  = document.getElementById('overview-active-devices');
+  const ovEnergy   = document.getElementById('overview-energy-today');
+  const ovUsers    = document.getElementById('overview-connected-users');
+  const ovRefresh  = document.getElementById('overview-next-refresh');
+
+  if (ovDevices) ovDevices.textContent = fmtCount(1247);
+  if (ovEnergy)  ovEnergy.textContent  = fmtEnergy((adjustedGen * 8) / 1000);
+  if (ovUsers)   ovUsers.textContent   = fmtCount(247);
+  if (ovRefresh) ovRefresh.textContent = '60 s';
 }
 
 function getSolarImpactLabel(multiplier) {

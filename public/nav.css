@@ -82,12 +82,23 @@ body.with-nav .content {
   .site-nav {
     flex-direction: column;
     align-items: flex-start;
-    padding: 12px 16px;
+    padding: 10px 16px;
+    gap: 8px;
   }
 
   .site-links {
     width: 100%;
     overflow-x: auto;
     padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Nav is now ~100px tall (brand row + links row + padding) */
+  body.with-nav {
+    padding-top: 105px;
+  }
+
+  body.with-nav .content {
+    padding-top: 20px;
   }
 }
