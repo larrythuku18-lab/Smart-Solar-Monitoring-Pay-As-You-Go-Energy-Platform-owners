@@ -675,11 +675,39 @@ const EmptyState = ({ message = 'No data available' }) => (
 );
 
 /* ══════════════════════════════════════════════════════════════
+   LIVE CLOCK — isolated so its 1-second tick never re-renders the charts
+══════════════════════════════════════════════════════════════ */
+const LiveClock = () => {
+  const [t, setT] = useState(new Date());
+  useEffect(() => {
+    const id = setInterval(() => setT(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '10px 16px', borderRadius: 12,
+      background: 'rgba(13,21,32,0.90)',
+      border: '1px solid rgba(148,163,184,0.12)'
+    }}>
+      <span className="live-dot" />
+      <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}>
+        <span style={{ fontSize: 11, color: '#64748b', fontWeight: 500 }}>
+          {t.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+        </span>
+        <span style={{ fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#f1f5f9' }}>
+          {t.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+        </span>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════════════════
    MAIN ANALYTICS DASHBOARD
 ══════════════════════════════════════════════════════════════ */
 const AnalyticsDashboard = () => {
   const [activeTab, setActiveTab] = useState('energy');
-  const [time,      setTime]      = useState(new Date());
   const [loading,   setLoading]   = useState(true);
 
   /* Live API state */
@@ -862,9 +890,8 @@ const AnalyticsDashboard = () => {
 
   useEffect(() => {
     fetchAll();
-    const dataTimer  = setInterval(fetchAll, 30000);
-    const clockTimer = setInterval(() => setTime(new Date()), 1000);
-    return () => { clearInterval(dataTimer); clearInterval(clockTimer); };
+    const dataTimer = setInterval(fetchAll, 30000);
+    return () => clearInterval(dataTimer);
   }, [fetchAll]);
 
   /* ── Tab definitions ── */
@@ -899,24 +926,9 @@ const AnalyticsDashboard = () => {
             </p>
           </div>
 
-          {/* Live date + time pill — always visible, no Tailwind dependency */}
+          {/* Live date + time pill — isolated component so it never re-renders the charts */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 10,
-              padding: '10px 16px', borderRadius: 12,
-              background: 'rgba(13,21,32,0.90)',
-              border: '1px solid rgba(148,163,184,0.12)'
-            }}>
-              <span className="live-dot" />
-              <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}>
-                <span style={{ fontSize: 11, color: '#64748b', fontWeight: 500 }}>
-                  {time.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
-                </span>
-                <span style={{ fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#f1f5f9' }}>
-                  {time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                </span>
-              </div>
-            </div>
+            <LiveClock />
             <button
               onClick={fetchAll}
               style={{

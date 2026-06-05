@@ -466,10 +466,18 @@ const usePrefersDarkMode = () => {
   return isDark;
 };
 
+const LiveClock = () => {
+  const [t, setT] = useState(new Date());
+  useEffect(() => {
+    const id = setInterval(() => setT(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <span className="text-sm font-semibold tabular-nums">{t.toLocaleTimeString()}</span>;
+};
+
 const SolarDashboard = () => {
   const isDark = usePrefersDarkMode();
   const [activeTab, setActiveTab] = useState('energy');
-  const [time, setTime] = useState(new Date());
   const [refresh, setRefresh] = useState(0);
   const chartRefs = useRef({});
   const [globalStats, setGlobalStats] = useState({ devicesOnline: 1247, todayRevenue: 45680, activeCustomers: 892 });
@@ -674,7 +682,6 @@ const SolarDashboard = () => {
   }, []);
 
   useEffect(() => {
-    const clock = setInterval(() => setTime(new Date()), 1000);
     const stats = setInterval(() => {
       setGlobalStats((prev) => ({
         devicesOnline: Math.max(832, prev.devicesOnline + Math.round(Math.random() * 16 - 8)),
@@ -684,7 +691,6 @@ const SolarDashboard = () => {
     }, 5000);
     const live = setInterval(refreshAllCharts, 9000);
     return () => {
-      clearInterval(clock);
       clearInterval(stats);
       clearInterval(live);
     };
@@ -813,7 +819,7 @@ const SolarDashboard = () => {
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-3 shadow-sm">
             <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <span className="text-sm font-medium text-slate-500 dark:text-slate-400">Live —</span>
-            <span className="text-sm font-semibold tabular-nums">{time.toLocaleTimeString()}</span>
+            <LiveClock />
           </div>
         </div>
 
