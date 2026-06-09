@@ -4,7 +4,7 @@
   "description": "Smart Solar Monitoring Pay-As-You-Go Energy Platform",
   "main": "server.js",
   "scripts": {
-    "start": "pm2 start ecosystem.config.js",
+    "start": "node server.js",
     "stop": "pm2 stop solarpayg",
     "reload": "pm2 reload solarpayg",
     "logs": "pm2 logs solarpayg",
@@ -35,12 +35,12 @@
     "helmet": "^8.2.0",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^3.0.3",
-    "pg": "^8.21.0",
-    "playwright": "^1.60.0"
+    "pg": "^8.21.0"
   },
   "devDependencies": {
     "@babel/standalone": "^7.29.7",
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "playwright": "^1.60.0"
   },
   "engines": {
     "node": ">=22.5.0"

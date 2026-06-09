@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: Smart-Solar-Monitoring-Pay-As-You-Go-Energy-Platform
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 24h
+      - key: DATABASE_URL
+        fromDatabase:
+          name: solarpayg-db
+          property: connectionString
+      - key: MPESA_ENVIRONMENT
+        value: sandbox
+      # Set these manually in the Render dashboard:
+      # MPESA_CONSUMER_KEY
+      # MPESA_CONSUMER_SECRET
+      # MPESA_SHORTCODE
+      # MPESA_PASSKEY
+      # MPESA_CALLBACK_URL
+      # ALLOWED_ORIGINS
+
+databases:
+  - name: solarpayg-db
+    databaseName: solarpayg
+    plan: free
