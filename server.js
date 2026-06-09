@@ -274,8 +274,7 @@ app.get('/health', (req, res) => {
 
 app.get('/api/state', async (req, res) => {
   try {
-    const state = await getDashboardState();
-    const stats = await getPaymentStats();
+    const [state, stats] = await Promise.all([getDashboardState(), getPaymentStats()]);
     res.json({ ...state, paymentStats: stats });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load state', message: err.message });
