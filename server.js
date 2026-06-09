@@ -10,13 +10,14 @@ require('dotenv').config();
 
 const express  = require('express');
 const cors     = require('cors');
-const path     = require('path');
-const crypto    = require('crypto');
-const axios     = require('axios');
-const cron      = require('node-cron');
-const bcrypt    = require('bcryptjs');
-const helmet    = require('helmet');
-const rateLimit = require('express-rate-limit');
+const path     = require('node:path');
+const crypto   = require('node:crypto');
+const axios       = require('axios');
+const cron        = require('node-cron');
+const bcrypt      = require('bcryptjs');
+const helmet      = require('helmet');
+const rateLimit   = require('express-rate-limit');
+const compression = require('compression');
 const { body, validationResult } = require('express-validator');
 
 const {
@@ -103,7 +104,7 @@ async function getMpesaAccessToken() {
 }
 
 function generateMpesaPassword() {
-  const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, -3);
+  const timestamp = new Date().toISOString().replace(/\D/g, '').slice(0, -3);
   const password  = Buffer.from(
     `${process.env.MPESA_SHORTCODE}${process.env.MPESA_PASSKEY}${timestamp}`
   ).toString('base64');
@@ -182,7 +183,20 @@ function parseMpesaCallback(callbackData) {
 ══════════════════════════════════════════════════════════════════════════ */
 
 /* Security headers (XSS, clickjacking, MIME sniffing, HSTS, etc.) */
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc:  ["'self'"],
+      scriptSrc:   ["'self'", "'unsafe-inline'", "'unsafe-eval'",
+                    'https://cdn.tailwindcss.com', 'https://unpkg.com',
+                    'https://cdn.jsdelivr.net', 'https://fonts.googleapis.com'],
+      styleSrc:    ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc:     ["'self'", 'https://fonts.gstatic.com'],
+      imgSrc:      ["'self'", 'data:'],
+      connectSrc:  ["'self'"],
+    }
+  }
+}));
 
 /* CORS — restrict to known origins in production */
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -228,7 +242,23 @@ const apiLimiter = rateLimit({
 
 app.use('/api/', apiLimiter);
 
-app.use(express.static(path.join(__dirname, 'public')));
+/* Gzip/Brotli compress all responses — cuts transfer size ~70% */
+app.use(compression());
+
+/* Static files with cache headers:
+   - nav files:    5 min  (change often enough that short TTL matters)
+   - everything else: 1 hour */
+const publicDir = path.join(__dirname, 'public');
+
+app.use('/nav.html',    (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'nav.html')));
+app.use('/nav.css',     (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'nav.css')));
+app.use('/nav-init.js', (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'nav-init.js')));
+
+app.use(express.static(publicDir, {
+  maxAge: '1h',
+  etag:   true,
+  lastModified: true
+}));
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -658,7 +688,7 @@ app.get('/api/payments/stats', async (req, res) => {
 app.get('/api/energy/history', async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
-    const limit    = Math.min(parseInt(req.query.limit, 10) || 48, 200);
+    const limit    = Math.min(Number.parseInt(req.query.limit, 10) || 48, 200);
     const readings = await getEnergyHistoryAsc(deviceId, limit);
     res.json({
       deviceId,
@@ -677,7 +707,7 @@ app.get('/api/energy/history', async (req, res) => {
 
 app.get('/api/audit/timeline', async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 30, 100);
+    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 30, 100);
     res.json({ events: await getAuditTimeline(limit) });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load audit timeline', message: err.message });
