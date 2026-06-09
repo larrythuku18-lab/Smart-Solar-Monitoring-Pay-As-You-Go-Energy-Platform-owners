@@ -27,10 +27,12 @@ const isLocal =
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/solarpayg',
-  ssl: isLocal ? false : { rejectUnauthorized: false },
-  max: 10,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000
+  ssl: isLocal ? false : { rejectUnauthorized: true },
+  max: parseInt(process.env.DB_POOL_MAX  || '20', 10),
+  min: parseInt(process.env.DB_POOL_MIN  ||  '2', 10),
+  idleTimeoutMillis:    30_000,
+  connectionTimeoutMillis: 5_000,
+  allowExitOnIdle: true
 });
 
 pool.on('error', (err) => {
@@ -56,10 +58,17 @@ async function runMigrations() {
       name           VARCHAR(128),
       pin            VARCHAR(20)   NOT NULL,
       phone          VARCHAR(20),
+      email          VARCHAR(255)  UNIQUE,
+      password_hash  VARCHAR(255),
+      role           VARCHAR(20)   NOT NULL DEFAULT 'customer',
       wallet_balance NUMERIC(12,2) DEFAULT 0,
       relay_unlocked BOOLEAN       DEFAULT FALSE,
       created_at     TIMESTAMPTZ   DEFAULT NOW()
     );
+    -- Add columns to existing tables without destroying data
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email         VARCHAR(255) UNIQUE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS role          VARCHAR(20) NOT NULL DEFAULT 'customer';
 
     -- ── Devices ────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS devices (
@@ -146,9 +155,13 @@ async function runMigrations() {
     -- ── Indexes ────────────────────────────────────────────────────────────
     CREATE INDEX IF NOT EXISTS idx_energy_device_ts  ON energy_readings(device_id, recorded_at DESC);
     CREATE INDEX IF NOT EXISTS idx_payments_user     ON payments(user_id);
+    CREATE INDEX IF NOT EXISTS idx_payments_status   ON payments(status);
     CREATE INDEX IF NOT EXISTS idx_payments_checkout ON payments(checkout_request_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_device     ON maintenance_alerts(device_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_pred_device       ON ai_predictions(device_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_users_email       ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_users_device      ON users(device_id);
+    CREATE INDEX IF NOT EXISTS idx_users_role        ON users(role);
   `);
 
   console.log('✅ PostgreSQL migrations complete');
@@ -196,6 +209,21 @@ async function seedDemoData() {
 async function getUserByDeviceId(deviceId) {
   const { rows } = await q('SELECT * FROM users WHERE device_id = $1', [deviceId]);
   return rows[0] ?? null;
+}
+
+async function getUserByEmail(email) {
+  const { rows } = await q('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
+  return rows[0] ?? null;
+}
+
+async function createUser({ deviceId, name, email, passwordHash, phone, pin, role = 'customer' }) {
+  const { rows } = await q(
+    `INSERT INTO users (device_id, name, email, password_hash, phone, pin, role)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING *`,
+    [deviceId, name || null, email?.toLowerCase() || null, passwordHash || null, phone || null, pin || '0000', role]
+  );
+  return rows[0];
 }
 
 async function getUserById(id) {
@@ -561,6 +589,8 @@ module.exports = {
   seedDemoData,
   /* users */
   getUserByDeviceId,
+  getUserByEmail,
+  createUser,
   getUserById,
   updateWallet,
   setWalletBalance,

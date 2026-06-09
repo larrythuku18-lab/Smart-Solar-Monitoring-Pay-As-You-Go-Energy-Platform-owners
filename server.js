@@ -11,9 +11,12 @@ require('dotenv').config();
 const express  = require('express');
 const cors     = require('cors');
 const path     = require('path');
-const crypto   = require('crypto');
-const axios    = require('axios');
-const cron     = require('node-cron');
+const crypto    = require('crypto');
+const axios     = require('axios');
+const cron      = require('node-cron');
+const bcrypt    = require('bcryptjs');
+const helmet    = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
 
 const {
@@ -43,7 +46,9 @@ const {
   getAlertsByUserId,
   getLatestEnergy,
   savePrediction,
-  getExpiredWalletUsers
+  getExpiredWalletUsers,
+  getUserByEmail,
+  createUser
 } = require('./db');
 
 const { authMiddleware, signToken } = require('./authMiddleware');
@@ -78,7 +83,13 @@ function getMpesaBaseUrl() {
     : 'https://sandbox.safaricom.co.ke';
 }
 
+/* Cache the M-Pesa token — tokens are valid for 3600 s; refresh 60 s early */
+let _mpesaToken = null;
+let _mpesaTokenExpiry = 0;
+
 async function getMpesaAccessToken() {
+  if (_mpesaToken && Date.now() < _mpesaTokenExpiry) return _mpesaToken;
+
   const auth = Buffer.from(
     `${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`
   ).toString('base64');
@@ -86,7 +97,9 @@ async function getMpesaAccessToken() {
     `${getMpesaBaseUrl()}/oauth/v1/generate?grant_type=client_credentials`,
     { headers: { Authorization: `Basic ${auth}` } }
   );
-  return data.access_token;
+  _mpesaToken       = data.access_token;
+  _mpesaTokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
+  return _mpesaToken;
 }
 
 function generateMpesaPassword() {
@@ -165,11 +178,56 @@ function parseMpesaCallback(callbackData) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   MIDDLEWARE
+   MIDDLEWARE — Security + Scalability
 ══════════════════════════════════════════════════════════════════════════ */
-app.use(cors({ origin: '*' }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+/* Security headers (XSS, clickjacking, MIME sniffing, HSTS, etc.) */
+app.use(helmet({ contentSecurityPolicy: false }));
+
+/* CORS — restrict to known origins in production */
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true
+}));
+
+/* Body size limits — prevents oversized payload DoS */
+app.use(express.json({ limit: '64kb' }));
+app.use(express.urlencoded({ extended: true, limit: '64kb' }));
+
+/* Rate limiters */
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: 20,                   // 20 login attempts per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts — try again in 15 minutes' }
+});
+
+const payLimiter = rateLimit({
+  windowMs: 60 * 1000,       // 1 min
+  max: 5,                    // 5 payment requests per IP per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many payment requests — slow down' }
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,                  // 120 general API calls per IP per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Rate limit exceeded' }
+});
+
+app.use('/api/', apiLimiter);
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/', (req, res) => {
@@ -302,62 +360,79 @@ app.get('/api/ai-insights', async (req, res) => {
    AUTH
 ══════════════════════════════════════════════════════════════════════════ */
 
-const demoLoginAliases = {
-  'admin@solarpayg.com':    { deviceId: 'DEMO-001', pin: '1234', password: 'Admin@12345',    role: 'admin'    },
-  'customer@example.com':   { deviceId: 'DEMO-001', pin: '1234', password: 'Customer@12345', role: 'customer' }
-};
-
-app.post('/api/auth/login', async (req, res) => {
+/* POST /api/auth/login
+   Supports three login methods:
+   1. email + password  → bcrypt check against users.password_hash
+   2. deviceId + pin    → plain PIN check (IoT device login)
+   3. email + pin       → treats email field as deviceId if it looks like one
+*/
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { deviceId, pin, email, password } = req.body;
 
-  let loginDeviceId = deviceId;
-  let loginPin      = pin;
-  let inferredRole  = 'customer';
-
-  if (email && password) {
-    const alias = demoLoginAliases[email.toLowerCase()];
-    if (alias) {
-      if (alias.password !== password) {
+  try {
+    /* ── Method 1: email + password (real user account) ── */
+    if (email && password && !pin) {
+      const user = await getUserByEmail(email);
+      if (!user || !user.password_hash) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
-      loginDeviceId = alias.deviceId;
-      loginPin      = alias.pin;
-      inferredRole  = alias.role;
-    } else if (/^[A-Z0-9-]+$/i.test(email) && /^[0-9]{3,6}$/.test(password)) {
-      loginDeviceId = email;
-      loginPin      = password;
-    } else {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      const match = await bcrypt.compare(password, user.password_hash);
+      if (!match) return res.status(401).json({ error: 'Invalid email or password' });
+
+      const token = signToken({ id: user.id, deviceId: user.device_id, role: user.role });
+      return res.json({
+        token,
+        user: { id: user.id, deviceId: user.device_id, role: user.role, walletBalance: user.wallet_balance }
+      });
     }
-  }
 
-  if (!loginDeviceId || !loginPin) {
-    return res.status(400).json({ error: 'deviceId and pin are required' });
-  }
+    /* ── Method 2: deviceId + pin (IoT / customer PIN login) ── */
+    const lookupId = deviceId || email;
+    const lookupPin = pin || password;
+    if (!lookupId || !lookupPin) {
+      return res.status(400).json({ error: 'Provide email+password or deviceId+pin' });
+    }
 
-  try {
-    const user = await getUserByDeviceId(loginDeviceId);
-    if (!user || user.pin !== String(loginPin)) {
+    const user = await getUserByDeviceId(lookupId);
+    if (!user || user.pin !== String(lookupPin)) {
       return res.status(401).json({ error: 'Invalid device ID or PIN' });
     }
 
-    const token = signToken({
-      id:       user.id,
-      deviceId: user.device_id,
-      role:     inferredRole || (loginDeviceId === 'ADMIN' ? 'admin' : 'customer')
+    const token = signToken({ id: user.id, deviceId: user.device_id, role: user.role || 'customer' });
+    return res.json({
+      token,
+      user: { id: user.id, deviceId: user.device_id, role: user.role || 'customer', walletBalance: user.wallet_balance }
     });
 
-    res.json({
-      token,
-      user: {
-        id:            user.id,
-        deviceId:      user.device_id,
-        walletBalance: user.wallet_balance,
-        role:          inferredRole || (user.device_id === 'ADMIN' ? 'admin' : 'customer')
-      }
-    });
   } catch (err) {
     res.status(500).json({ error: 'Login failed', message: err.message });
+  }
+});
+
+/* POST /api/auth/register
+   Creates a new user account with a hashed password.
+   Assign a device later via the admin panel or device provisioning.
+*/
+app.post('/api/auth/register', authLimiter, async (req, res) => {
+  const { name, email, password, phone, deviceId } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'email and password are required' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+
+  try {
+    const existing = await getUserByEmail(email);
+    if (existing) return res.status(409).json({ error: 'Email already registered' });
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const newDeviceId  = deviceId || `USER-${Date.now()}`;
+    const user = await createUser({ deviceId: newDeviceId, name, email, passwordHash, phone, role: 'customer' });
+
+    const token = signToken({ id: user.id, deviceId: user.device_id, role: user.role });
+    res.status(201).json({
+      token,
+      user: { id: user.id, deviceId: user.device_id, role: user.role, walletBalance: user.wallet_balance }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Registration failed', message: err.message });
   }
 });
 
@@ -467,7 +542,7 @@ app.post('/api/fraud-check', authMiddleware, [
   }
 });
 
-app.post('/api/pay', authMiddleware, async (req, res) => {
+app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
   try {
     const { amount, phoneNumber } = req.body;
     const user = await getUserById(req.user.id);
@@ -751,6 +826,15 @@ async function startup() {
 startup().catch(err => {
   console.error('💥 Fatal startup error:', err.message);
   process.exit(1);
+});
+
+/* Global error handler — never leak stack traces to clients */
+app.use((err, req, res, _next) => {
+  console.error('Unhandled error:', err);
+  const status = err.status || 500;
+  res.status(status).json({
+    error: status === 500 ? 'Internal server error' : err.message
+  });
 });
 
 module.exports = app;
