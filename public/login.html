@@ -488,9 +488,9 @@
 
       showAlert('Login successful! Redirecting…', 'success');
 
-      /* Role-based redirect */
+      /* Role-based redirect — show intro on fresh login */
       setTimeout(() => {
-        globalThis.location.href = role === 'admin' ? '/admin.html' : '/customer.html';
+        globalThis.location.href = '/intro.html';
       }, 700);
 
     } catch (err) {
