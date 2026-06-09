@@ -763,7 +763,7 @@ cron.schedule('*/15 * * * *', async () => {
         severity: 'high',
         message:  'Wallet balance depleted — power cut applied'
       });
-      console.log(`🔒 Locked relay for ${deviceId} (wallet expired)`);
+      console.log(`[RELAY] Locked for ${deviceId} (wallet expired)`);
     }
   } catch (err) {
     console.error('Wallet expiry cron error:', err.message);
@@ -798,7 +798,7 @@ setInterval(() => {
    5. Start the HTTP server.
 ══════════════════════════════════════════════════════════════════════════ */
 async function startup() {
-  console.log('🔌 Connecting to PostgreSQL…');
+  console.log('[DB] Connecting to PostgreSQL…');
   await runMigrations();
   await seedDemoData();
 
@@ -815,16 +815,16 @@ async function startup() {
   }
 
   app.listen(PORT, () => {
-    console.log(`🚀 SolarPAYG server running on http://localhost:${PORT}`);
-    console.log(`📊 Dashboard:  http://localhost:${PORT}/index.html`);
-    console.log(`📈 Analytics:  http://localhost:${PORT}/analytics.html`);
-    console.log(`💳 M-Pesa mode: ${mpesaConfigured() ? 'live (sandbox/production)' : 'simulation'}`);
-    console.log(`🔑 Demo login:  deviceId=DEMO-001  pin=1234`);
+    console.log(`[START] SolarPAYG server running on http://localhost:${PORT}`);
+    console.log(`  Dashboard:  http://localhost:${PORT}/index.html`);
+    console.log(`  Analytics:  http://localhost:${PORT}/analytics.html`);
+    console.log(`  M-Pesa mode: ${mpesaConfigured() ? 'live (sandbox/production)' : 'simulation'}`);
+    console.log(`  Demo login:  deviceId=DEMO-001  pin=1234`);
   });
 }
 
 startup().catch(err => {
-  console.error('💥 Fatal startup error:', err.message);
+  console.error('[FATAL] startup error:', err.message);
   process.exit(1);
 });
 

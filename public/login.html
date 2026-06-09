@@ -297,7 +297,7 @@
 
       <!-- Logo -->
       <div class="logo-wrap">
-        <div class="logo">⚡ SolarPAYG</div>
+        <div class="logo">SolarPAYG</div>
         <div class="tagline">Smart Solar Monitoring &amp; Pay-As-You-Go Energy</div>
       </div>
 
@@ -306,13 +306,12 @@
 
       <!-- Role toggle -->
       <div class="role-toggle">
-        <button class="role-btn active-admin" id="btn-admin" onclick="setRole('admin')">🛠 Admin / Operator</button>
-        <button class="role-btn" id="btn-customer" onclick="setRole('customer')">👤 Customer</button>
+        <button class="role-btn active-admin" id="btn-admin" onclick="setRole('admin')">Admin / Operator</button>
+        <button class="role-btn" id="btn-customer" onclick="setRole('customer')">Customer</button>
       </div>
 
       <!-- Role description -->
       <div id="role-desc" class="role-desc admin-desc">
-        <span>🔒</span>
         <span id="role-desc-text">Full system access — dashboards, analytics, transaction management, and AI insights.</span>
       </div>
 
@@ -372,9 +371,9 @@
         <span class="demo-val ${c.cls}" onclick="fillCreds('${role}')" title="Click to fill">${c.val}</span>
       </div>`).join('');
     document.getElementById('demo-box').innerHTML =
-      `<div class="demo-head">🧪 Test Credentials <span style="color:var(--amber)">· click to fill</span></div>
+      `<div class="demo-head">Test Credentials <span style="color:var(--amber)">· click to fill</span></div>
        ${rows}
-       <div class="demo-note">⚠️ Demo only — not for production use</div>`;
+       <div class="demo-note">Demo only — not for production use</div>`;
   }
 
   /* ── Fill form with demo creds (values sourced from CREDS to avoid literal assignment) ── */
@@ -432,7 +431,7 @@
     const box = document.getElementById('alert-box');
     box.style.display = 'flex';
     box.className      = `alert alert-${type}`;
-    box.innerHTML      = `<span>${type === 'error' ? '❌' : '✅'}</span><span>${msg}</span>`;
+    box.innerHTML      = `<span>${msg}</span>`;
     if (type === 'error') setTimeout(clearAlert, 5000);
   }
   function clearAlert() {

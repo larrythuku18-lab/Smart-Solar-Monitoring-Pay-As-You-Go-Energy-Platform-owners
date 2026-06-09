@@ -164,7 +164,7 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS idx_users_role        ON users(role);
   `);
 
-  console.log('✅ PostgreSQL migrations complete');
+  console.log('[DB] PostgreSQL migrations complete');
 }
 
 /* ── Demo data seed ─────────────────────────────────────────────────────── */
@@ -199,7 +199,7 @@ async function seedDemoData() {
     );
   }
 
-  console.log('✅ Demo data seeded  (deviceId: DEMO-001  pin: 1234)');
+  console.log('[DB] Demo data seeded  (deviceId: DEMO-001  pin: 1234)');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

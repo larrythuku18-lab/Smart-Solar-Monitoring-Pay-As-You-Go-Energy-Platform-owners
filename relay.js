@@ -41,7 +41,7 @@ async function sendRelayCommand(deviceId, state) {
 async function unlockRelay(deviceId) {
   try {
     await sendRelayCommand(deviceId, true);
-    console.log(`🔓 Relay unlocked for device ${deviceId}`);
+    console.log(`[RELAY] Unlocked for device ${deviceId}`);
     return { success: true };
   } catch (err) {
     console.error(`Failed to unlock relay for ${deviceId}:`, err.message);
@@ -54,7 +54,7 @@ async function unlockRelay(deviceId) {
 async function lockRelay(deviceId) {
   try {
     await sendRelayCommand(deviceId, false);
-    console.log(`🔒 Relay locked for device ${deviceId}`);
+    console.log(`[RELAY] Locked for device ${deviceId}`);
     return { success: true };
   } catch (err) {
     console.error(`Failed to lock relay for ${deviceId}:`, err.message);
@@ -69,7 +69,7 @@ async function processRetryQueue() {
     try {
       await sendRelayCommand(cmd.device_id, cmd.command === 'unlock');
       await removePendingCommand(cmd.id);
-      console.log(`✅ Retry succeeded for ${cmd.device_id} (${cmd.command})`);
+      console.log(`[RELAY] Retry succeeded for ${cmd.device_id} (${cmd.command})`);
     } catch (err) {
       await updatePendingCommand(cmd.id, cmd.attempts + 1, err.message);
       console.warn(`Retry failed for ${cmd.device_id}: ${err.message}`);

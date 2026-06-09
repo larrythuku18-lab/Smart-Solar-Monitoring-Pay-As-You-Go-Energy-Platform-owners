@@ -284,11 +284,9 @@
 
   <!-- Low credit / no power alerts -->
   <div id="alert-low-credit" class="alert-banner low-credit">
-    <span>⚠️</span>
     <div><strong>Low Credit.</strong> Your wallet balance is running low. Top up now to avoid power interruption.</div>
   </div>
   <div id="alert-no-power" class="alert-banner no-power">
-    <span>🔴</span>
     <div><strong>Power Locked.</strong> Your device has been locked due to insufficient credit. Top up to restore power.</div>
   </div>
 
@@ -328,11 +326,11 @@
 
   <!-- Tab bar -->
   <div class="tabs">
-    <button class="tab active" onclick="switchTab('overview')">📊 Overview</button>
-    <button class="tab" onclick="switchTab('pay')">💳 Pay</button>
-    <button class="tab" onclick="switchTab('history')">🧾 History</button>
-    <button class="tab" onclick="switchTab('energy')">⚡ Energy</button>
-    <button class="tab" onclick="switchTab('account')">👤 Account</button>
+    <button class="tab active" onclick="switchTab('overview')">Overview</button>
+    <button class="tab" onclick="switchTab('pay')">Pay</button>
+    <button class="tab" onclick="switchTab('history')">History</button>
+    <button class="tab" onclick="switchTab('energy')">Energy</button>
+    <button class="tab" onclick="switchTab('account')">Account</button>
   </div>
 
   <!-- ══ OVERVIEW TAB ══ -->
@@ -382,8 +380,8 @@
         <span class="panel-title">Quick Actions</span>
       </div>
       <div class="action-row">
-        <button class="action-btn primary" onclick="switchTab('pay')">💳 Top Up Now</button>
-        <button class="action-btn secondary" onclick="switchTab('history')">🧾 View Receipts</button>
+        <button class="action-btn primary" onclick="switchTab('pay')">Top Up Now</button>
+        <button class="action-btn secondary" onclick="switchTab('history')">View Receipts</button>
       </div>
     </div>
 
@@ -525,10 +523,10 @@
         <span class="chip chip-green">Personalised</span>
       </div>
       <div class="tips-list" id="tips-list">
-        <div class="tip-row success"><span class="tip-icon">☀️</span><span>Peak solar generation is between <strong>10:00 – 14:00</strong>. Run heavy appliances (pumps, heaters) during this window to use free solar energy.</span></div>
-        <div class="tip-row info"><span class="tip-icon">🔋</span><span>Keep battery above 20% to extend its lifespan. Avoid deep discharging every cycle.</span></div>
-        <div class="tip-row warning"><span class="tip-icon">💡</span><span>Switch to LED lighting if still on incandescent bulbs — up to 80% energy saving per bulb.</span></div>
-        <div class="tip-row info"><span class="tip-icon">📱</span><span>Charge phones and small devices during the day (solar hours) to reduce evening battery drain.</span></div>
+        <div class="tip-row success"><span>Peak solar generation is between <strong>10:00 – 14:00</strong>. Run heavy appliances (pumps, heaters) during this window to use free solar energy.</span></div>
+        <div class="tip-row info"><span>Keep battery above 20% to extend its lifespan. Avoid deep discharging every cycle.</span></div>
+        <div class="tip-row warning"><span>Switch to LED lighting if still on incandescent bulbs — up to 80% energy saving per bulb.</span></div>
+        <div class="tip-row info"><span>Charge phones and small devices during the day (solar hours) to reduce evening battery drain.</span></div>
       </div>
     </div>
   </div>
@@ -554,19 +552,19 @@
       <div class="account-section">
         <div class="account-section-title">Support</div>
         <div class="support-row">
-          <div class="support-icon" style="background:rgba(16,185,129,.1)">📞</div>
+          <div class="support-icon" style="background:rgba(16,185,129,.1)">Tel</div>
           <div><div class="support-label">Customer Helpline</div><div class="support-val">0800 123 456 (toll-free)</div></div>
         </div>
         <div class="support-row">
-          <div class="support-icon" style="background:rgba(59,130,246,.1)">💬</div>
+          <div class="support-icon" style="background:rgba(59,130,246,.1)">WA</div>
           <div><div class="support-label">WhatsApp Support</div><div class="support-val">+254 712 345 678</div></div>
         </div>
         <div class="support-row">
-          <div class="support-icon" style="background:rgba(139,92,246,.1)">✉️</div>
+          <div class="support-icon" style="background:rgba(139,92,246,.1)">@</div>
           <div><div class="support-label">Email</div><div class="support-val">support@solarpayg.co.ke</div></div>
         </div>
         <div class="support-row">
-          <div class="support-icon" style="background:rgba(245,158,11,.1)">🕐</div>
+          <div class="support-icon" style="background:rgba(245,158,11,.1)">Hrs</div>
           <div><div class="support-label">Support Hours</div><div class="support-val">Mon – Sat, 7:00 – 20:00</div></div>
         </div>
       </div>
@@ -675,7 +673,7 @@ async function loadState() {
     if (data.alerts?.length) {
       const alertMeta = document.getElementById('credit-meta');
       const critical  = data.alerts.find(a => a.severity === 'high');
-      if (critical) alertMeta.textContent = `⚠️ ${critical.message}`;
+      if (critical) alertMeta.textContent = critical.message;
     }
   } catch (e) {
     console.warn('loadState error:', e);
@@ -751,7 +749,7 @@ function renderAll() {
   document.getElementById('acc-device').textContent  = deviceId;
   document.getElementById('acc-role').textContent    = userInfo.role || 'customer';
   document.getElementById('acc-balance').textContent = fmtKES(bal);
-  document.getElementById('acc-power').textContent   = powered ? '🟢 Active' : '🔴 Locked';
+  document.getElementById('acc-power').textContent   = powered ? 'Active' : 'Locked';
   document.getElementById('acc-battery').textContent = `${Math.round(bat)}% — ${bat > 50 ? 'Good' : bat > 20 ? 'Low' : 'Critical'}`;
   document.getElementById('acc-gen').textContent     = fmtPower(gen);
   document.getElementById('acc-cons').textContent    = fmtPower(cons);
@@ -866,7 +864,7 @@ async function loadEnergy() {
           const surplus = (f.predictedGeneration || 0) > (f.consumption || 0);
           return `<div class="fc-cell ${surplus ? 'surplus' : 'deficit'}">
             <div class="fc-time">+${f.hour}h</div>
-            <div class="fc-icon">${surplus ? '✅' : '⚠️'}</div>
+            <div class="fc-icon">${surplus ? '+' : '−'}</div>
             <div class="fc-gen">${fmtPower(f.predictedGeneration || 0)}</div>
             <div class="fc-cons" style="color:var(--red)">${fmtPower(f.consumption || 0)}</div>
           </div>`;
@@ -910,24 +908,24 @@ async function submitPayment() {
   const amount = parseFloat(document.getElementById('pay-amount').value);
   const phone  = document.getElementById('pay-phone').value.trim().replace(/\s/g,'');
 
-  if (!amount || amount < 10) { setPayStatus('error', '❌ Minimum top-up is KES 10.'); return; }
-  if (!phone)                  { setPayStatus('error', '❌ Please enter your M-Pesa phone number.'); return; }
+  if (!amount || amount < 10) { setPayStatus('error', 'Minimum top-up is KES 10.'); return; }
+  if (!phone)                  { setPayStatus('error', 'Please enter your M-Pesa phone number.'); return; }
 
   const btn     = document.getElementById('pay-btn');
   const btnText = document.getElementById('pay-btn-text');
   btn.disabled  = true;
   btnText.innerHTML = '<span class="pay-spinner"></span> Processing…';
-  setPayStatus('info', '📱 Sending STK push to your phone…');
+  setPayStatus('info', 'Sending STK push to your phone…');
 
   try {
     const r    = await authFetch(`${API}/pay`, { method: 'POST', body: JSON.stringify({ amount: Math.floor(amount), phoneNumber: phone }) });
     const data = await r.json();
 
     if (r.ok && data.success) {
-      setPayStatus('info', `📱 STK push sent! Check your phone and enter your M-Pesa PIN.<br><small style="color:var(--muted)">Request ID: ${data.checkoutRequestId || '—'}</small>`);
+      setPayStatus('info', `STK push sent. Check your phone and enter your M-Pesa PIN.<br><small style="color:var(--muted)">Request ID: ${data.checkoutRequestId || '—'}</small>`);
       if (data.simulated) {
         setTimeout(() => {
-          setPayStatus('success', `✅ Payment of ${fmtKES(amount)} confirmed! Power restored.`);
+          setPayStatus('success', `Payment of ${fmtKES(amount)} confirmed. Power restored.`);
           btn.disabled  = false;
           btnText.textContent = 'Pay with M-Pesa';
           document.getElementById('pay-amount').value = '';
@@ -940,12 +938,12 @@ async function submitPayment() {
         pollPayment(data.checkoutRequestId, amount);
       }
     } else {
-      setPayStatus('error', `❌ ${data.message || data.error || 'Payment initiation failed.'}`);
+      setPayStatus('error', data.message || data.error || 'Payment initiation failed.');
       btn.disabled = false;
       btnText.textContent = 'Pay with M-Pesa';
     }
   } catch (e) {
-    setPayStatus('error', '❌ Network error. Please try again.');
+    setPayStatus('error', 'Network error. Please try again.');
     btn.disabled = false;
     btnText.textContent = 'Pay with M-Pesa';
   }
@@ -958,7 +956,7 @@ function pollPayment(checkoutId, amount) {
     attempts++;
     if (attempts > 20) {
       clearInterval(payPolling);
-      setPayStatus('error', '⏱ Payment timed out. If deducted, it will reflect shortly.');
+      setPayStatus('error', 'Payment timed out. If deducted, it will reflect shortly.');
       document.getElementById('pay-btn').disabled  = false;
       document.getElementById('pay-btn-text').textContent = 'Pay with M-Pesa';
       return;
@@ -969,7 +967,7 @@ function pollPayment(checkoutId, amount) {
       const me = await r.json();
       if (me.walletBalance > (Number(state.walletBalance) || 0)) {
         clearInterval(payPolling);
-        setPayStatus('success', `✅ Payment of ${fmtKES(amount)} confirmed! Power restored.`);
+        setPayStatus('success', `Payment of ${fmtKES(amount)} confirmed. Power restored.`);
         state.walletBalance = me.walletBalance;
         document.getElementById('pay-btn').disabled  = false;
         document.getElementById('pay-btn-text').textContent = 'Pay with M-Pesa';
