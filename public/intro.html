@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#060b16" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>Welcome — SolarPAYG</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,13 +22,19 @@
     --ease:cubic-bezier(.22,.61,.36,1);
   }
   *,*::before,*::after{ box-sizing:border-box; margin:0; padding:0; }
-  html,body{ height:100%; overflow:hidden; }
-  body{ font-family:var(--body); color:var(--text); background:#04070f; }
+  html,body{ height:100%; overflow:hidden; overscroll-behavior:none; }
+  body{ font-family:var(--body); color:var(--text); background:#04070f;
+        /* prevent iOS rubber-band scroll showing white edges */
+        position:fixed; width:100%; }
 
   /* ──────────────── FULL-SCREEN STAGE ──────────────── */
   .stage{
     position:fixed; inset:0;
+    /* use dvh where available so iOS address bar doesn't cut off bottom */
+    height:100dvh;
     cursor:pointer; isolation:isolate;
+    touch-action:manipulation; /* removes 300ms tap delay on mobile */
+    -webkit-tap-highlight-color:transparent;
     background:
       radial-gradient(ellipse at 50% -5%, rgba(59,130,246,.13) 0%, transparent 55%),
       linear-gradient(180deg, #060b16 0%, #0a1120 60%, #040810 100%);
@@ -43,10 +52,12 @@
 
   /* ──────────────── SKIP BUTTON ──────────────── */
   .skip-btn{
-    position:absolute; top:18px; right:20px; z-index:60;
+    position:absolute; top:max(18px, env(safe-area-inset-top, 18px)); right:max(20px, env(safe-area-inset-right, 20px)); z-index:60;
     font-family:var(--body); font-size:12px; font-weight:600; letter-spacing:.04em;
     color:var(--sub); background:rgba(13,21,32,.75); border:1px solid var(--border);
-    border-radius:999px; padding:7px 16px; cursor:pointer;
+    border-radius:999px; padding:9px 18px; cursor:pointer;
+    min-height:44px; display:flex; align-items:center; /* iOS tap-target min */
+    touch-action:manipulation; -webkit-tap-highlight-color:transparent;
     backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
     transition:color .2s, border-color .2s, opacity .3s;
     opacity:0; pointer-events:none;
@@ -57,9 +68,11 @@
   /* ──────────────── SCENES ──────────────── */
   .scene{
     position:absolute; inset:0; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; padding:clamp(24px,5vw,64px);
-    /* extra bottom pad so chrome overlay doesn't cover content */
-    padding-bottom:clamp(80px,12vh,120px);
+    align-items:center; justify-content:center;
+    padding:clamp(20px,5vw,64px);
+    /* clear chrome bar + iOS home indicator */
+    padding-bottom:calc(clamp(72px,13vh,120px) + env(safe-area-inset-bottom, 0px));
+    overflow:hidden;
     opacity:0; transform:scale(1.02); pointer-events:none;
     transition:opacity .5s var(--ease), transform .6s var(--ease);
   }
@@ -67,13 +80,14 @@
 
   .eyebrow{ font-family:var(--body); font-size:clamp(9px,1.2vw,12px); letter-spacing:.26em;
             text-transform:uppercase; color:var(--amber); margin-bottom:14px; }
-  .bigtext{ font-family:var(--display); font-weight:800; line-height:1.02; letter-spacing:-.02em;
-            font-size:clamp(32px,7vw,72px); text-align:center; max-width:14ch; }
+  .bigtext{ font-family:var(--display); font-weight:800; line-height:1.04; letter-spacing:-.02em;
+            font-size:clamp(28px,6.5vw,72px); text-align:center; max-width:14ch; }
   .bigtext .amber{ color:var(--amber); } .bigtext .green{ color:var(--green); }
 
-  .caption{ position:absolute; left:0; right:0; bottom:clamp(72px,11vh,110px); z-index:45;
-    padding:28px clamp(24px,6vw,80px) 0;
-    background:linear-gradient(180deg, transparent, rgba(4,7,15,.0) 55%); text-align:center; }
+  .caption{ position:absolute; left:0; right:0;
+    bottom:calc(clamp(64px,11vh,110px) + env(safe-area-inset-bottom, 0px));
+    z-index:45; padding:28px clamp(16px,5vw,80px) 0;
+    text-align:center; }
   .caption p{ color:#d0d5e8; font-size:clamp(12px,1.6vw,16px); line-height:1.5; max-width:60ch;
     margin:0 auto; opacity:0; transform:translateY(8px);
     transition:opacity .5s var(--ease) .15s, transform .5s var(--ease) .15s; }
@@ -270,9 +284,13 @@
   /* ── CHROME OVERLAY (bottom of stage) ── */
   .chrome{
     position:absolute; bottom:0; left:0; right:0; z-index:55;
-    padding:0 clamp(18px,4vw,36px) clamp(18px,3.5vh,30px);
-    display:flex; align-items:center; gap:14px;
-    background:linear-gradient(to top, rgba(4,7,15,.88) 0%, rgba(4,7,15,.4) 60%, transparent 100%);
+    /* respect iOS home indicator */
+    padding:0 clamp(16px,4vw,36px)
+            calc(clamp(16px,3.5vh,26px) + env(safe-area-inset-bottom, 0px));
+    padding-left:calc(clamp(16px,4vw,36px) + env(safe-area-inset-left, 0px));
+    padding-right:calc(clamp(16px,4vw,36px) + env(safe-area-inset-right, 0px));
+    display:flex; align-items:center; gap:10px;
+    background:linear-gradient(to top, rgba(4,7,15,.92) 0%, rgba(4,7,15,.5) 60%, transparent 100%);
     pointer-events:none;
   }
   .chrome .segs,
@@ -293,13 +311,43 @@
   .btn:hover{ border-color:var(--amber); background:rgba(13,21,32,.95); }
   .btn:focus-visible{ outline:2px solid var(--amber); outline-offset:2px; }
 
+  /* ── Touch/pointer: remove tap highlight everywhere interactive ── */
+  button, .seg { touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+
+  /* ── Tablet / small desktop ── */
+  @media (max-width:640px){
+    .kpi-grid,.ai-grid{ grid-template-columns:repeat(2,1fr); }
+    .s2-grid{ flex-direction:column; gap:14px; }
+    .impact{ gap:14px; }
+    .close-name{ font-size:clamp(26px,9vw,52px); }
+    .close-tag{ font-size:clamp(12px,3.2vw,16px); }
+    /* shrink KPI cards on small screens */
+    .kpi .val{ font-size:clamp(15px,4.5vw,22px); }
+    .ai-grid{ max-width:100%; }
+  }
+
+  /* ── Portrait phones ── */
+  @media (max-width:430px){
+    .kpi-grid{ grid-template-columns:repeat(2,1fr); gap:7px; }
+    .kpi{ padding:10px 10px; }
+    .spark{ height:38px; }
+    .ai-ring{ width:48px; height:48px; }
+    .imp .big{ font-size:clamp(20px,7vw,30px); }
+    .imp .ic{ width:44px; height:44px; }
+    .s1-sub{ font-size:11px; }
+    /* buttons in chrome should be compact */
+    .btn{ font-size:12px; padding:7px 11px; }
+  }
+
+  /* ── Very small (SE-size, 375px) ── */
+  @media (max-width:375px){
+    .bigtext{ font-size:clamp(24px,7.5vw,40px); }
+    .ai-card .nm{ font-size:9px; }
+    .ai-card .sub{ font-size:8.5px; }
+  }
+
   @media (prefers-reduced-motion: reduce){
     *{ animation-duration:.001s !important; animation-delay:0s !important; transition-duration:.2s !important; }
-  }
-  @media (max-width:560px){
-    .kpi-grid,.ai-grid{ grid-template-columns:repeat(2,1fr); }
-    .s2-grid{ flex-direction:column; gap:16px; }
-    .impact{ gap:16px; }
   }
 </style>
 </head>
@@ -595,7 +643,14 @@
     start(sceneIdx = 0) {
       this.build();
       if (!this.out) return;
-      if (this.ac.state === 'suspended') this.ac.resume().catch(() => {});
+      /* iOS Safari: AudioContext starts suspended and must be resumed
+         synchronously inside the user-gesture handler */
+      if (this.ac.state === 'suspended') {
+        this.ac.resume().then(() => {
+          if (!this._muted) this._ramp(this.sceneVol(sceneIdx), 4.5);
+        }).catch(() => {});
+        return;
+      }
       if (!this._muted) this._ramp(this.sceneVol(sceneIdx), 4.5);
     }
 
