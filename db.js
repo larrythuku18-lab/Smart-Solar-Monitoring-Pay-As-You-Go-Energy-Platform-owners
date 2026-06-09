@@ -11,6 +11,7 @@
 
 require('dotenv').config();
 const { Pool, types } = require('pg');
+const bcrypt = require('bcryptjs');
 
 /* ── Type parsers ────────────────────────────────────────────────────────────
    pg returns NUMERIC columns as strings by default. Override so arithmetic
@@ -169,8 +170,39 @@ async function runMigrations() {
 
 /* ── Demo data seed ─────────────────────────────────────────────────────── */
 async function seedDemoData() {
-  const { rows } = await q('SELECT COUNT(*)::int AS n FROM users');
-  if (rows[0].n > 0) return;
+  /* ── Always ensure named demo accounts exist (safe to re-run) ── */
+  const adminHash    = await bcrypt.hash(process.env.ADMIN_PASSWORD    || 'Admin@12345',    10);
+  const customerHash = await bcrypt.hash(process.env.CUSTOMER_PASSWORD || 'Customer@12345', 10);
+
+  // Admin user — upsert by device_id, set email+password_hash+role
+  await q(
+    `INSERT INTO users (device_id, pin, email, password_hash, role, name, phone, wallet_balance, relay_unlocked)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (device_id) DO UPDATE
+       SET email         = EXCLUDED.email,
+           password_hash = EXCLUDED.password_hash,
+           role          = EXCLUDED.role`,
+    ['ADMIN-001', '0000',
+     process.env.ADMIN_EMAIL || 'admin@solarpayg.com',
+     adminHash, 'admin', 'System Admin', '+254700000000', 0, false]
+  );
+
+  // Customer email user — upsert by device_id
+  await q(
+    `INSERT INTO users (device_id, pin, email, password_hash, role, name, phone, wallet_balance, relay_unlocked)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (device_id) DO UPDATE
+       SET email         = EXCLUDED.email,
+           password_hash = EXCLUDED.password_hash,
+           role          = EXCLUDED.role`,
+    ['DEMO-EMAIL', '0000',
+     'customer@example.com',
+     customerHash, 'customer', 'Demo Customer', '+254722222222', 75, true]
+  );
+
+  /* ── Seed device + readings only if DEMO-001 doesn't exist yet ── */
+  const { rows } = await q("SELECT id FROM users WHERE device_id = 'DEMO-001'");
+  if (rows.length > 0) return;
 
   const { rows: [user] } = await q(
     `INSERT INTO users (device_id, pin, phone, wallet_balance, relay_unlocked)
@@ -181,10 +213,9 @@ async function seedDemoData() {
   await q(
     `INSERT INTO devices (device_id, user_id, name, device_ip, relay_state, status, location)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    ['DEMO-001', user.id, 'Demo Solar Kit', '192.168.1.100' /* demo only */, 'on', 'active', 'Nairobi, Kenya']
+    ['DEMO-001', user.id, 'Demo Solar Kit', '192.168.1.100', 'on', 'active', 'Nairobi, Kenya']
   );
 
-  /* Seed 13 energy readings covering the last hour (5-min intervals) */
   const now = Date.now();
   for (let i = 12; i >= 0; i--) {
     const ts = new Date(now - i * 5 * 60_000);
