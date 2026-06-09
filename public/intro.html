@@ -6,7 +6,8 @@
 <title>Welcome — SolarPAYG</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+<!-- Google Fonts: SRI not applicable — stylesheet is dynamically negotiated per user-agent NOSONAR -->
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet" crossorigin />
 <style>
   :root{
     --bg:#060b16; --surface:#0d1520; --card:#111d2e; --border:#1a2840;
@@ -18,62 +19,62 @@
     --ease:cubic-bezier(.22,.61,.36,1);
   }
   *,*::before,*::after{ box-sizing:border-box; margin:0; padding:0; }
-  html,body{ height:100%; }
-  body{
-    font-family:var(--body); color:var(--text);
-    background:
-      radial-gradient(700px 380px at 50% -8%, rgba(59,130,246,.12), transparent 60%),
-      #04070f;
-    display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px;
-  }
-  .wrap{ width:100%; max-width:940px; }
+  html,body{ height:100%; overflow:hidden; }
+  body{ font-family:var(--body); color:var(--text); background:#04070f; }
 
-  /* ---------- stage ---------- */
+  /* ──────────────── FULL-SCREEN STAGE ──────────────── */
   .stage{
-    position:relative; width:100%; aspect-ratio:16/9; overflow:hidden;
-    border:1px solid var(--border); border-radius:16px; cursor:pointer; isolation:isolate;
+    position:fixed; inset:0;
+    cursor:pointer; isolation:isolate;
     background:
-      radial-gradient(ellipse at 50% -10%, rgba(59,130,246,.12) 0%, transparent 55%),
+      radial-gradient(ellipse at 50% -5%, rgba(59,130,246,.13) 0%, transparent 55%),
       linear-gradient(180deg, #060b16 0%, #0a1120 60%, #040810 100%);
-    box-shadow: 0 40px 120px -40px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.04);
   }
-  .stage::after{ content:""; position:absolute; inset:0; z-index:50; pointer-events:none;
-    background: radial-gradient(140% 120% at 50% 45%, transparent 62%, rgba(0,0,0,.5) 100%); }
-  .stage::before{ content:""; position:absolute; top:0; left:0; right:0; height:2px; z-index:51;
-    background: linear-gradient(90deg, var(--amber), var(--green), var(--blue), var(--purple)); opacity:.7; }
+  /* top rainbow accent */
+  .stage::before{
+    content:""; position:absolute; top:0; left:0; right:0; height:2px; z-index:51;
+    background:linear-gradient(90deg,var(--amber),var(--green),var(--blue),var(--purple)); opacity:.75;
+  }
+  /* bottom vignette */
+  .stage::after{
+    content:""; position:absolute; inset:0; z-index:50; pointer-events:none;
+    background:radial-gradient(140% 120% at 50% 45%, transparent 58%, rgba(0,0,0,.55) 100%);
+  }
 
-  /* ---------- skip button (persistent, top-right) ---------- */
+  /* ──────────────── SKIP BUTTON ──────────────── */
   .skip-btn{
-    position:absolute; top:14px; right:16px; z-index:55;
+    position:absolute; top:18px; right:20px; z-index:60;
     font-family:var(--body); font-size:12px; font-weight:600; letter-spacing:.04em;
     color:var(--sub); background:rgba(13,21,32,.75); border:1px solid var(--border);
-    border-radius:999px; padding:6px 14px; cursor:pointer;
-    backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+    border-radius:999px; padding:7px 16px; cursor:pointer;
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
     transition:color .2s, border-color .2s, opacity .3s;
     opacity:0; pointer-events:none;
   }
   .skip-btn.visible{ opacity:1; pointer-events:auto; }
   .skip-btn:hover{ color:var(--amber); border-color:var(--amber); }
 
-  /* ---------- scenes ---------- */
+  /* ──────────────── SCENES ──────────────── */
   .scene{
     position:absolute; inset:0; display:flex; flex-direction:column;
-    align-items:center; justify-content:center; padding:clamp(20px,5vw,54px);
+    align-items:center; justify-content:center; padding:clamp(24px,5vw,64px);
+    /* extra bottom pad so chrome overlay doesn't cover content */
+    padding-bottom:clamp(80px,12vh,120px);
     opacity:0; transform:scale(1.02); pointer-events:none;
     transition:opacity .5s var(--ease), transform .6s var(--ease);
   }
   .scene.active{ opacity:1; transform:scale(1); }
 
-  .eyebrow{ font-family:var(--body); font-size:clamp(9px,1.3vw,12px); letter-spacing:.26em;
+  .eyebrow{ font-family:var(--body); font-size:clamp(9px,1.2vw,12px); letter-spacing:.26em;
             text-transform:uppercase; color:var(--amber); margin-bottom:14px; }
   .bigtext{ font-family:var(--display); font-weight:800; line-height:1.02; letter-spacing:-.02em;
-            font-size:clamp(26px,6.2vw,60px); text-align:center; max-width:15ch; }
+            font-size:clamp(32px,7vw,72px); text-align:center; max-width:14ch; }
   .bigtext .amber{ color:var(--amber); } .bigtext .green{ color:var(--green); }
 
-  .caption{ position:absolute; left:0; right:0; bottom:0; z-index:40;
-    padding:30px clamp(20px,5vw,54px) clamp(16px,3vw,26px);
-    background:linear-gradient(180deg, transparent, rgba(4,7,15,.9) 55%); text-align:center; }
-  .caption p{ color:#d8dce8; font-size:clamp(11px,1.7vw,15px); line-height:1.45; max-width:64ch;
+  .caption{ position:absolute; left:0; right:0; bottom:clamp(72px,11vh,110px); z-index:45;
+    padding:28px clamp(24px,6vw,80px) 0;
+    background:linear-gradient(180deg, transparent, rgba(4,7,15,.0) 55%); text-align:center; }
+  .caption p{ color:#d0d5e8; font-size:clamp(12px,1.6vw,16px); line-height:1.5; max-width:60ch;
     margin:0 auto; opacity:0; transform:translateY(8px);
     transition:opacity .5s var(--ease) .15s, transform .5s var(--ease) .15s; }
   .scene.active .caption p{ opacity:1; transform:none; }
@@ -96,18 +97,18 @@
   @keyframes live{ 0%{box-shadow:0 0 0 0 rgba(16,185,129,.5);} 100%{box-shadow:0 0 0 9px rgba(16,185,129,0);} }
 
   /* ── SCENE 1 ── */
-  .s1-bulb{ width:14px; height:14px; border-radius:50%; background:var(--border);
-            box-shadow:0 0 0 6px rgba(255,255,255,.02); margin-bottom:30px; }
+  .s1-bulb{ width:16px; height:16px; border-radius:50%; background:var(--border);
+            box-shadow:0 0 0 7px rgba(255,255,255,.02); margin-bottom:32px; }
   .scene.active .s1-bulb{ animation:flicker 2.6s steps(1) infinite; }
   @keyframes flicker{
-    0%,18%,22%,40%,44%,100%{ background:var(--border); box-shadow:0 0 0 6px rgba(255,255,255,.02); }
-    20%,42%{ background:#6b5a2a; box-shadow:0 0 20px 4px rgba(245,158,11,.28); } }
-  .s1-sub{ color:var(--muted); font-size:clamp(11px,1.6vw,14px); margin-top:18px; letter-spacing:.04em; }
+    0%,18%,22%,40%,44%,100%{ background:var(--border); box-shadow:0 0 0 7px rgba(255,255,255,.02); }
+    20%,42%{ background:#6b5a2a; box-shadow:0 0 24px 5px rgba(245,158,11,.28); } }
+  .s1-sub{ color:var(--muted); font-size:clamp(12px,1.6vw,15px); margin-top:20px; letter-spacing:.04em; }
 
   /* ── SCENE 2 ── */
   .s2-grid{ display:flex; align-items:center; justify-content:center;
-            gap:clamp(20px,5vw,60px); margin-top:6px; }
-  .phone{ width:clamp(118px,18vw,166px); aspect-ratio:1/2; border-radius:24px; position:relative;
+            gap:clamp(24px,5vw,70px); margin-top:8px; }
+  .phone{ width:clamp(130px,18vw,180px); aspect-ratio:1/2; border-radius:24px; position:relative;
     background:linear-gradient(160deg,#0c1626,#070d1a); border:1px solid var(--border);
     box-shadow:0 24px 60px -16px rgba(0,0,0,.7), inset 0 0 0 4px #04070f; padding:16px 11px;
     display:flex; flex-direction:column; }
@@ -124,7 +125,7 @@
   .stk .pin{ font-size:15px; letter-spacing:5px; color:var(--amber); min-height:18px; margin-top:2px; }
   .stk .status{ margin-top:8px; font-size:10px; font-weight:600; color:var(--amber); }
   .stk .status.ok{ color:var(--green); }
-  .ring-wrap{ position:relative; width:clamp(150px,24vw,220px); aspect-ratio:1; }
+  .ring-wrap{ position:relative; width:clamp(160px,24vw,240px); aspect-ratio:1; }
   .ring-wrap svg{ width:100%; height:100%; transform:rotate(-90deg); }
   .ring-bg{ fill:none; stroke:var(--border); stroke-width:9; }
   .ring-fg{ fill:none; stroke:url(#sg); stroke-width:9; stroke-linecap:round;
@@ -133,18 +134,18 @@
   @keyframes charge{ to{ stroke-dashoffset:120; } }
   .ring-core{ position:absolute; inset:0; display:flex; flex-direction:column;
     align-items:center; justify-content:center; gap:4px; }
-  .ring-core .sun{ width:clamp(34px,5vw,46px); height:clamp(34px,5vw,46px); border-radius:50%;
+  .ring-core .sun{ width:clamp(36px,5.5vw,50px); height:clamp(36px,5.5vw,50px); border-radius:50%;
     background:radial-gradient(circle at 35% 30%, #ffd27a, var(--amber)); opacity:.25; }
   .scene.active .ring-core .sun{ animation:sunon 1s var(--ease) 3.4s both; }
-  @keyframes sunon{ to{ opacity:1; box-shadow:0 0 32px 4px rgba(245,158,11,.6); } }
-  .ring-core .pwr{ font-family:var(--display); font-weight:800; font-size:clamp(13px,2vw,18px);
+  @keyframes sunon{ to{ opacity:1; box-shadow:0 0 36px 6px rgba(245,158,11,.6); } }
+  .ring-core .pwr{ font-family:var(--display); font-weight:800; font-size:clamp(14px,2vw,20px);
     color:var(--amber); opacity:0; }
   .scene.active .ring-core .pwr{ animation:fade .6s ease 3.3s both; }
 
   /* ── SCENE 3 ── */
-  .dash{ width:100%; max-width:90%; }
+  .dash{ width:100%; max-width:min(90%,820px); }
   .dash-top{ display:flex; align-items:center; gap:10px; margin-bottom:12px; }
-  .dash-title{ font-family:var(--display); font-weight:800; font-size:clamp(13px,2vw,18px); }
+  .dash-title{ font-family:var(--display); font-weight:800; font-size:clamp(14px,2.2vw,20px); }
   .dash-title .pg{ color:var(--amber); }
   .dash-badges{ margin-left:auto; display:flex; gap:6px; flex-wrap:wrap; }
   .kpi-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
@@ -152,7 +153,7 @@
     padding:13px 14px; position:relative; overflow:hidden; }
   .kpi::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--ac); }
   .kpi .lbl{ font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--sub); }
-  .kpi .val{ font-family:var(--display); font-weight:800; font-size:clamp(17px,2.6vw,26px);
+  .kpi .val{ font-family:var(--display); font-weight:800; font-size:clamp(18px,2.8vw,28px);
     margin-top:7px; color:var(--ac); }
   .kpi .dl{ font-size:10px; color:var(--sub); margin-top:5px; }
   .kpi.amber{ --ac:var(--amber); } .kpi.green{ --ac:var(--green); }
@@ -160,10 +161,10 @@
   .scene.active .kpi{ animation:up .6s var(--ease) both; }
   .kpi.k1{ animation-delay:.15s !important; } .kpi.k2{ animation-delay:.3s !important; }
   .kpi.k3{ animation-delay:.45s !important; } .kpi.k4{ animation-delay:.6s !important; }
-  .spark{ margin-top:12px; height:44px; background:var(--card); border:1px solid var(--border);
-    border-radius:13px; padding:8px 12px; display:flex; align-items:center; gap:10px; }
+  .spark{ margin-top:12px; height:48px; background:var(--card); border:1px solid var(--border);
+    border-radius:13px; padding:8px 14px; display:flex; align-items:center; gap:10px; }
   .spark .sl{ font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--sub); white-space:nowrap; }
-  .spark svg{ flex:1; height:30px; }
+  .spark svg{ flex:1; height:32px; }
   .spark .ln{ fill:none; stroke:var(--amber); stroke-width:2; stroke-linecap:round; stroke-linejoin:round;
     stroke-dasharray:300; stroke-dashoffset:300; }
   .scene.active .spark .ln{ animation:draw 1.6s var(--ease) .7s both; }
@@ -171,14 +172,14 @@
 
   /* ── SCENE 4 ── */
   .ai-head{ display:flex; align-items:center; gap:10px; margin-bottom:14px; }
-  .ai-head .t{ font-family:var(--display); font-weight:800; font-size:clamp(13px,2vw,18px); }
-  .ai-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; width:100%; max-width:92%; }
+  .ai-head .t{ font-family:var(--display); font-weight:800; font-size:clamp(14px,2.2vw,20px); }
+  .ai-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; width:100%; max-width:min(92%,820px); }
   .ai-card{ background:var(--card); border:1px solid var(--border); border-radius:13px;
     padding:14px 12px; text-align:center; position:relative; overflow:hidden;
     border-top:2px solid var(--ac); }
   .ai-card .nm{ font-size:10px; color:var(--sub); letter-spacing:.04em; min-height:24px;
     display:flex; align-items:center; justify-content:center; }
-  .ai-ring{ width:56px; height:56px; margin:6px auto 8px; position:relative; }
+  .ai-ring{ width:60px; height:60px; margin:6px auto 8px; position:relative; }
   .ai-ring svg{ width:100%; height:100%; transform:rotate(-90deg); }
   .ai-ring .bg{ fill:none; stroke:var(--border); stroke-width:6; }
   .ai-ring .fg{ fill:none; stroke:var(--ac); stroke-width:6; stroke-linecap:round;
@@ -199,347 +200,444 @@
   .ai-foot b{ color:var(--teal); }
 
   /* ── SCENE 5 ── */
-  .impact{ display:flex; gap:clamp(14px,3vw,40px); justify-content:center; flex-wrap:wrap; }
-  .imp{ display:flex; flex-direction:column; align-items:center; gap:8px; min-width:120px; }
-  .imp .ic{ width:48px; height:48px; border-radius:14px; display:flex; align-items:center; justify-content:center;
+  .impact{ display:flex; gap:clamp(18px,4vw,56px); justify-content:center; flex-wrap:wrap; }
+  .imp{ display:flex; flex-direction:column; align-items:center; gap:8px; min-width:130px; }
+  .imp .ic{ width:52px; height:52px; border-radius:15px; display:flex; align-items:center; justify-content:center;
     background:var(--card); border:1px solid var(--border); }
-  .imp .ic svg{ width:26px; height:26px; }
-  .imp .big{ font-family:var(--display); font-weight:800; font-size:clamp(20px,3.4vw,32px); }
-  .imp .cap{ font-size:10.5px; color:var(--sub); letter-spacing:.02em; }
+  .imp .ic svg{ width:28px; height:28px; }
+  .imp .big{ font-family:var(--display); font-weight:800; font-size:clamp(22px,4vw,38px); }
+  .imp .cap{ font-size:11px; color:var(--sub); letter-spacing:.02em; }
   .scene.active .imp{ animation:up .65s var(--ease) both; }
   .imp.i1{ animation-delay:.2s !important; } .imp.i2{ animation-delay:.45s !important; }
   .imp.i3{ animation-delay:.7s !important; }
 
-  /* ── SCENE 6 — close / enter ── */
-  .close-mark{ display:flex; align-items:center; gap:16px; }
-  .close-sun{ width:clamp(46px,7vw,64px); height:clamp(46px,7vw,64px); border-radius:50%;
+  /* ── SCENE 6 — enter ── */
+  .close-mark{ display:flex; align-items:center; gap:18px; }
+  .close-sun{ width:clamp(52px,8vw,72px); height:clamp(52px,8vw,72px); border-radius:50%;
     background:radial-gradient(circle at 35% 30%, #ffd27a, var(--amber));
-    box-shadow:0 0 36px -2px rgba(245,158,11,.6); position:relative; }
-  .close-sun::after{ content:""; position:absolute; inset:-10px; border-radius:50%;
-    border:1.5px dashed rgba(245,158,11,.35); }
-  .close-name{ font-family:var(--display); font-weight:800; font-size:clamp(30px,6vw,58px); letter-spacing:-.02em; }
+    box-shadow:0 0 44px -2px rgba(245,158,11,.65); position:relative; }
+  .close-sun::after{ content:""; position:absolute; inset:-12px; border-radius:50%;
+    border:1.5px dashed rgba(245,158,11,.35); animation:spin 8s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  .close-name{ font-family:var(--display); font-weight:800; font-size:clamp(34px,7vw,66px); letter-spacing:-.02em; }
   .close-name .pg{ color:var(--amber); }
-  .close-tag{ color:var(--sub); font-size:clamp(12px,2vw,17px); margin-top:18px; }
-
-  /* "Enter dashboard" CTA — replaces "Partner with us" */
+  .close-tag{ color:var(--sub); font-size:clamp(13px,2vw,18px); margin-top:20px; }
   .enter-cta{
-    display:inline-flex; align-items:center; gap:10px; margin-top:18px;
-    background:var(--amber); color:#1a1206; padding:12px 28px; border-radius:999px;
-    font-weight:700; font-size:clamp(13px,1.8vw,16px); border:none; cursor:pointer;
+    display:inline-flex; align-items:center; gap:10px; margin-top:22px;
+    background:var(--amber); color:#1a1206; padding:14px 32px; border-radius:999px;
+    font-weight:700; font-size:clamp(14px,2vw,17px); border:none; cursor:pointer;
     font-family:var(--body); letter-spacing:.02em;
-    box-shadow:0 8px 32px -8px rgba(245,158,11,.5);
+    box-shadow:0 10px 36px -8px rgba(245,158,11,.55);
     transition:transform .15s, box-shadow .15s;
   }
-  .enter-cta:hover{ transform:translateY(-2px); box-shadow:0 12px 40px -8px rgba(245,158,11,.65); }
+  .enter-cta:hover{ transform:translateY(-2px); box-shadow:0 14px 44px -8px rgba(245,158,11,.7); }
   .enter-cta .arrow{ display:inline-block; }
   .scene.active .enter-cta .arrow{ animation:nudge 1.6s var(--ease) 1s infinite; }
   @keyframes nudge{ 0%,100%{transform:translateX(0);} 50%{transform:translateX(5px);} }
 
-  /* progress ring around enter button (auto-advance countdown) */
-  .enter-wrap{ position:relative; display:inline-flex; align-items:center; justify-content:center; }
-  .countdown-ring{ position:absolute; width:calc(100% + 20px); height:calc(100% + 20px);
-    pointer-events:none; overflow:visible; }
-  .cr-track{ fill:none; stroke:rgba(245,158,11,.18); stroke-width:2; }
-  .cr-fill { fill:none; stroke:var(--amber); stroke-width:2; stroke-linecap:round;
-    stroke-dasharray:1; stroke-dashoffset:1; opacity:0; }
-  .cr-fill.running{ opacity:1; animation:crdrain linear forwards; }
-  @keyframes crdrain{ from{stroke-dashoffset:0;} to{stroke-dashoffset:1;} }
-
-  /* redirect overlay */
+  /* ── REDIRECT VEIL ── */
   .redirect-veil{
     position:absolute; inset:0; z-index:70; display:flex; flex-direction:column;
     align-items:center; justify-content:center; gap:14px;
-    background:rgba(4,7,15,.88); opacity:0; pointer-events:none;
+    background:rgba(4,7,15,.9); opacity:0; pointer-events:none;
     transition:opacity .4s var(--ease);
-    font-family:var(--display); font-weight:800; font-size:clamp(18px,3vw,28px);
+    font-family:var(--display); font-weight:800; font-size:clamp(20px,3.5vw,32px);
   }
   .redirect-veil.show{ opacity:1; }
   .redirect-veil .rv-role{ color:var(--amber); font-size:clamp(11px,1.4vw,13px);
     font-family:var(--body); font-weight:600; letter-spacing:.12em; text-transform:uppercase; }
 
-  /* ---------- start gate ---------- */
+  /* ── START GATE ── */
   .startgate{ position:absolute; inset:0; z-index:60; cursor:pointer; border:0;
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
-    background:radial-gradient(120% 90% at 50% 50%, rgba(10,17,32,.5), rgba(4,7,15,.84));
-    -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px); color:var(--text);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px;
+    background:radial-gradient(120% 90% at 50% 50%, rgba(10,17,32,.45), rgba(4,7,15,.86));
+    -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px); color:var(--text);
     font-family:var(--body); transition:opacity .45s var(--ease); }
-  .startgate .sg-btn{ width:74px; height:74px; border-radius:50%; padding-left:5px;
-    display:flex; align-items:center; justify-content:center; font-size:26px; color:#1a1206;
+  .startgate .sg-btn{ width:80px; height:80px; border-radius:50%; padding-left:5px;
+    display:flex; align-items:center; justify-content:center; font-size:28px; color:#1a1206;
     background:radial-gradient(circle at 35% 30%, #ffd27a, var(--amber));
-    box-shadow:0 14px 44px -8px rgba(245,158,11,.6), 0 0 0 8px rgba(245,158,11,.12); }
-  .startgate .sg-txt{ font-size:13px; letter-spacing:.05em; color:#cfd5e6; }
-  .startgate .sg-sub{ font-size:10.5px; color:var(--muted); }
+    box-shadow:0 16px 48px -8px rgba(245,158,11,.65), 0 0 0 10px rgba(245,158,11,.12); }
+  .startgate .sg-txt{ font-size:14px; letter-spacing:.05em; color:#cfd5e6; font-weight:600; }
+  .startgate .sg-sub{ font-size:11px; color:var(--muted); }
   .startgate .sg-skip{
-    margin-top:6px; font-size:12px; color:var(--muted); text-decoration:underline;
-    cursor:pointer; background:none; border:none; color:var(--muted); font-family:var(--body);
+    margin-top:8px; font-size:12px; color:var(--muted); text-decoration:underline;
+    cursor:pointer; background:none; border:none; font-family:var(--body);
     transition:color .2s;
   }
   .startgate .sg-skip:hover{ color:var(--sub); }
   .startgate.hidden{ opacity:0; pointer-events:none; }
 
-  /* ---------- voice bar ---------- */
-  .voicebar{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; padding:0 4px;
-    font-size:11.5px; color:var(--muted); }
-  .voicebar .vlabel{ color:var(--sub); font-weight:600; }
-  .voicebar select{ font-family:var(--body); font-size:11.5px; color:var(--text); max-width:230px;
-    background:var(--card); border:1px solid var(--border); border-radius:7px; padding:4px 8px; cursor:pointer; }
-  .voicebar select:focus-visible{ outline:2px solid var(--amber); outline-offset:2px; }
-  .voicebar .vnote{ margin-left:auto; color:var(--muted); }
-  .voicebar .vnote b{ color:var(--green); }
+  /* ── CHROME OVERLAY (bottom of stage) ── */
+  .chrome{
+    position:absolute; bottom:0; left:0; right:0; z-index:55;
+    padding:0 clamp(18px,4vw,36px) clamp(18px,3.5vh,30px);
+    display:flex; align-items:center; gap:14px;
+    background:linear-gradient(to top, rgba(4,7,15,.88) 0%, rgba(4,7,15,.4) 60%, transparent 100%);
+    pointer-events:none;
+  }
+  .chrome .segs,
+  .chrome .btn{ pointer-events:auto; }
 
-  /* ---------- chrome ---------- */
-  .chrome{ display:flex; align-items:center; gap:14px; margin-top:16px; padding:0 4px; }
   .segs{ display:flex; gap:6px; flex:1; }
   .seg{ height:4px; flex:1; border-radius:2px; background:var(--border); overflow:hidden; cursor:pointer; }
   .seg i{ display:block; height:100%; width:0; background:var(--amber); border-radius:2px; }
   .seg.done i{ width:100%; }
   .seg.now i{ animation:segfill linear forwards; }
   @keyframes segfill{ from{width:0;} to{width:100%;} }
+
   .btn{ font-family:var(--body); font-size:13px; font-weight:600; color:var(--text);
-    background:var(--card); border:1px solid var(--border); border-radius:9px;
+    background:rgba(13,21,32,.8); border:1px solid var(--border); border-radius:9px;
     padding:8px 14px; cursor:pointer; display:flex; align-items:center; gap:7px;
-    transition:border-color .2s; white-space:nowrap; }
-  .btn:hover{ border-color:var(--amber); }
+    transition:border-color .2s, background .2s; white-space:nowrap;
+    backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
+  .btn:hover{ border-color:var(--amber); background:rgba(13,21,32,.95); }
   .btn:focus-visible{ outline:2px solid var(--amber); outline-offset:2px; }
-  .hint{ color:var(--muted); font-size:11.5px; text-align:center; margin-top:12px; line-height:1.5; }
-  .hint b{ color:#aeb6cc; font-weight:600; }
 
   @media (prefers-reduced-motion: reduce){
     *{ animation-duration:.001s !important; animation-delay:0s !important; transition-duration:.2s !important; }
   }
-  @media (max-width:560px){ .kpi-grid,.ai-grid{ grid-template-columns:repeat(2,1fr); } }
+  @media (max-width:560px){
+    .kpi-grid,.ai-grid{ grid-template-columns:repeat(2,1fr); }
+    .s2-grid{ flex-direction:column; gap:16px; }
+    .impact{ gap:16px; }
+  }
 </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="stage" id="stage" role="region" aria-label="Welcome to SolarPAYG — animated introduction">
 
-      <!-- SCENE 1 — HOOK -->
-      <section class="scene" data-i="0">
-        <div class="s1-bulb"></div>
-        <div class="bigtext u-up">Power you<br>can't depend on.</div>
-        <div class="s1-sub u-up" style="animation-delay:.3s">Off-grid · Unreliable · Expensive</div>
-        <div class="caption"><p>Across Africa, millions live with power that's unreliable and expensive.</p></div>
-      </section>
+<section class="stage" id="stage" aria-label="Welcome to SolarPAYG — animated introduction">
 
-      <!-- SCENE 2 — PAY -->
-      <section class="scene" data-i="1">
-        <div class="bigtext u-fade">Pay as <span class="amber">you go</span>.</div>
-        <div class="s2-grid">
-          <div class="phone u-up" style="animation-delay:.2s">
-            <div class="notch"></div>
-            <div class="stk">
-              <div class="brandrow"><div class="mlogo">M</div><div class="mt">M-PESA · STK Push</div></div>
-              <div class="row">Pay SolarPAYG Energy</div>
-              <div class="amt">KES 50.00</div>
-              <div class="row">Enter M-PESA PIN</div>
-              <div class="pin" id="pin"></div>
-              <div class="status" id="stkStatus">Processing…</div>
-            </div>
-          </div>
-          <div class="ring-wrap u-up" style="animation-delay:.4s">
-            <svg viewBox="0 0 160 160">
-              <defs>
-                <linearGradient id="sg" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0" stop-color="#ffd27a"/><stop offset="1" stop-color="#f59e0b"/>
-                </linearGradient>
-                <filter id="glow"><feGaussianBlur stdDeviation="2" result="b"/>
-                  <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-              </defs>
-              <circle class="ring-bg" cx="80" cy="80" r="70"/>
-              <circle class="ring-fg" cx="80" cy="80" r="70"/>
-            </svg>
-            <div class="ring-core"><div class="sun"></div><div class="pwr">Powered</div></div>
-          </div>
-        </div>
-        <div class="caption"><p>SolarPAYG changes that — customers pay only for what they use, a few shillings over M-Pesa, and their power comes on instantly.</p></div>
-      </section>
+  <!-- SCENE 1 — HOOK -->
+  <section class="scene" data-i="0">
+    <div class="s1-bulb"></div>
+    <div class="bigtext u-up">Power you<br>can't depend on.</div>
+    <div class="s1-sub u-up" style="animation-delay:.3s">Off-grid · Unreliable · Expensive</div>
+    <div class="caption"><p>Across Africa, millions live with power that's unreliable and expensive.</p></div>
+  </section>
 
-      <!-- SCENE 3 — LIVE MONITOR -->
-      <section class="scene" data-i="2">
-        <div class="dash">
-          <div class="dash-top">
-            <span class="live-dot"></span>
-            <div class="dash-title"><span class="pg">SolarPAYG</span> — Live Monitor</div>
-            <div class="dash-badges">
-              <span class="badge badge-green">IoT Live</span>
-              <span class="badge badge-blue">M-Pesa Active</span>
-              <span class="badge badge-red">Fraud Shield ON</span>
-            </div>
-          </div>
-          <div class="kpi-grid">
-            <div class="kpi amber k1">
-              <div class="lbl">Solar Generation</div>
-              <div class="val"><span data-count="6.4" data-dec="1"></span><span style="font-size:.55em"> kW</span></div>
-              <div class="dl" style="color:var(--amber)">↑ Live from field</div>
-            </div>
-            <div class="kpi green k2">
-              <div class="lbl">Active Customers</div>
-              <div class="val"><span data-count="1284" data-comma="1"></span></div>
-              <div class="dl" style="color:var(--green)">↑ 8 this week</div>
-            </div>
-            <div class="kpi blue k3">
-              <div class="lbl">M-Pesa Revenue</div>
-              <div class="val"><span data-count="184320" data-comma="1" data-prefix="KES "></span></div>
-              <div class="dl" style="color:var(--blue)">↑ 23% MTD</div>
-            </div>
-            <div class="kpi red k4">
-              <div class="lbl">Devices Offline</div>
-              <div class="val"><span data-count="3"></span></div>
-              <div class="dl" style="color:var(--red)">Check maintenance</div>
-            </div>
-          </div>
-          <div class="spark">
-            <div class="sl">Energy today</div>
-            <svg viewBox="0 0 300 30" preserveAspectRatio="none">
-              <path class="ln" d="M0,26 L30,22 L60,24 L90,15 L120,18 L150,10 L180,13 L210,7 L240,9 L270,4 L300,5"/>
-            </svg>
-          </div>
+  <!-- SCENE 2 — PAY -->
+  <section class="scene" data-i="1">
+    <div class="bigtext u-fade">Pay as <span class="amber">you go</span>.</div>
+    <div class="s2-grid">
+      <div class="phone u-up" style="animation-delay:.2s">
+        <div class="notch"></div>
+        <div class="stk">
+          <div class="brandrow"><div class="mlogo">M</div><div class="mt">M-PESA · STK Push</div></div>
+          <div class="row">Pay SolarPAYG Energy</div>
+          <div class="amt">KES 50.00</div>
+          <div class="row">Enter M-PESA PIN</div>
+          <div class="pin" id="pin"></div>
+          <div class="status" id="stkStatus">Processing…</div>
         </div>
-        <div class="caption"><p>Every unit reports live. One dashboard shows solar generation, active customers, M-Pesa revenue, and any device that needs attention.</p></div>
-      </section>
-
-      <!-- SCENE 4 — AI ENGINE -->
-      <section class="scene" data-i="3">
-        <div class="ai-head">
-          <span class="live-dot"></span>
-          <div class="t">AI Engine — System Health</div>
-          <span class="badge badge-green">All 4 Services Active</span>
-        </div>
-        <div class="ai-grid">
-          <div class="ai-card amber a1">
-            <div class="nm">Energy Forecast</div>
-            <div class="ai-ring" style="--off:12">
-              <svg viewBox="0 0 56 56"><circle class="bg" cx="28" cy="28" r="24"/><circle class="fg" cx="28" cy="28" r="24"/></svg>
-              <div class="pc"><span data-count="92" data-suffix="%"></span></div>
-            </div>
-            <div class="sub">↓ 15–20% defaults</div>
-          </div>
-          <div class="ai-card green a2">
-            <div class="nm">Predictive Maintenance</div>
-            <div class="ai-ring" style="--off:2">
-              <svg viewBox="0 0 56 56"><circle class="bg" cx="28" cy="28" r="24"/><circle class="fg" cx="28" cy="28" r="24"/></svg>
-              <div class="pc"><span data-count="99" data-suffix="%"></span></div>
-            </div>
-            <div class="sub">↓ 40% downtime</div>
-          </div>
-          <div class="ai-card red a3">
-            <div class="nm">Fraud Shield</div>
-            <div class="ai-ring" style="--off:22">
-              <svg viewBox="0 0 56 56"><circle class="bg" cx="28" cy="28" r="24"/><circle class="fg" cx="28" cy="28" r="24"/></svg>
-              <div class="pc"><span data-count="85" data-suffix="%"></span></div>
-            </div>
-            <div class="sub">M-Pesa protection</div>
-          </div>
-          <div class="ai-card teal a4">
-            <div class="nm">Usage Optimizer</div>
-            <div class="ai-ring" style="--off:132">
-              <svg viewBox="0 0 56 56"><circle class="bg" cx="28" cy="28" r="24"/><circle class="fg" cx="28" cy="28" r="24"/></svg>
-              <div class="pc"><span data-count="12" data-suffix="%"></span></div>
-            </div>
-            <div class="sub">Load shifting</div>
-          </div>
-        </div>
-        <div class="ai-foot">Real-time processing · powered by <b>custom AI engines</b></div>
-        <div class="caption"><p>Four AI engines run in real time — forecasting energy, predicting maintenance, blocking M-Pesa fraud, and optimizing usage.</p></div>
-      </section>
-
-      <!-- SCENE 5 — IMPACT -->
-      <section class="scene" data-i="4">
-        <div class="impact">
-          <div class="imp i1">
-            <div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M3 18 L9 12 L13 15 L21 5" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 5h-5M21 5v5" stroke="#10b981" stroke-width="2.5" stroke-linecap="round"/></svg></div>
-            <div class="big" style="color:var(--green)"><span data-count="23" data-prefix="+" data-suffix="%"></span></div>
-            <div class="cap">M-Pesa revenue (MTD)</div>
-          </div>
-          <div class="imp i2">
-            <div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2l8 3v6c0 5-3.5 8-8 11-4.5-3-8-6-8-11V5l8-3z" stroke="#ef4444" stroke-width="2" stroke-linejoin="round"/><path d="M9 12l2 2 4-5" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-            <div class="big" style="color:var(--red)"><span data-count="85" data-suffix="%"></span></div>
-            <div class="cap">of fraud blocked</div>
-          </div>
-          <div class="imp i3">
-            <div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M12 21c6-2 8-7 8-12-5 0-9 3-10 7" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 21c-1-4 0-7 3-9" stroke="#14b8a6" stroke-width="2" stroke-linecap="round"/></svg></div>
-            <div class="big" style="color:var(--teal)">Ready</div>
-            <div class="cap">Carbon / MRV data</div>
-          </div>
-        </div>
-        <div class="caption"><p>The result: 99% fault detection, 85% of M-Pesa fraud blocked, and far fewer payment defaults.</p></div>
-      </section>
-
-      <!-- SCENE 6 — ENTER DASHBOARD -->
-      <section class="scene" data-i="5">
-        <div class="close-mark u-pop">
-          <div class="close-sun"></div>
-          <div class="close-name"><span class="pg">Solar</span>PAYG</div>
-        </div>
-        <div class="close-tag u-up" style="animation-delay:.4s">Smarter solar, built for Africa.</div>
-        <div class="u-pop" style="animation-delay:.7s">
-          <div class="enter-wrap">
-            <button class="enter-cta" id="enterBtn">
-              Enter Dashboard <span class="arrow">→</span>
-            </button>
-            <svg class="countdown-ring" id="countdownRing" viewBox="0 0 1 1" preserveAspectRatio="none">
-              <rect class="cr-track" x="0" y="0" width="1" height="1" rx=".12"/>
-              <rect class="cr-fill"  id="crFill" x="0" y="0" width="1" height="1" rx=".12"/>
-            </svg>
-          </div>
-        </div>
-        <div class="caption"><p id="welcomeVO">You're in. Your dashboard is ready.</p></div>
-      </section>
-
-      <!-- redirect veil -->
-      <div class="redirect-veil" id="redirectVeil">
-        <div class="rv-role" id="rvRole">Loading…</div>
-        <div>Taking you to your dashboard</div>
       </div>
+      <div class="ring-wrap u-up" style="animation-delay:.4s">
+        <svg viewBox="0 0 160 160">
+          <defs>
+            <linearGradient id="sg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#ffd27a"/><stop offset="1" stop-color="#f59e0b"/>
+            </linearGradient>
+            <filter id="glow"><feGaussianBlur stdDeviation="2" result="b"/>
+              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          </defs>
+          <circle class="ring-bg" cx="80" cy="80" r="70"/>
+          <circle class="ring-fg" cx="80" cy="80" r="70"/>
+        </svg>
+        <div class="ring-core"><div class="sun"></div><div class="pwr">Powered</div></div>
+      </div>
+    </div>
+    <div class="caption"><p>SolarPAYG changes that — customers pay only for what they use, a few shillings over M-Pesa, and their power comes on instantly.</p></div>
+  </section>
 
-      <!-- persistent skip -->
-      <button class="skip-btn" id="skipBtn">Skip intro</button>
+  <!-- SCENE 3 — LIVE MONITOR -->
+  <section class="scene" data-i="2">
+    <div class="dash">
+      <div class="dash-top">
+        <span class="live-dot"></span>
+        <div class="dash-title"><span class="pg">SolarPAYG</span> — Live Monitor</div>
+        <div class="dash-badges">
+          <span class="badge badge-green">IoT Live</span>
+          <span class="badge badge-blue">M-Pesa Active</span>
+          <span class="badge badge-red">Fraud Shield ON</span>
+        </div>
+      </div>
+      <div class="kpi-grid">
+        <div class="kpi amber k1">
+          <div class="lbl">Solar Generation</div>
+          <div class="val"><span data-count="6.4" data-dec="1"></span><span style="font-size:.55em"> kW</span></div>
+          <div class="dl" style="color:var(--amber)">↑ Live from field</div>
+        </div>
+        <div class="kpi green k2">
+          <div class="lbl">Active Customers</div>
+          <div class="val"><span data-count="1284" data-comma="1"></span></div>
+          <div class="dl" style="color:var(--green)">↑ 8 this week</div>
+        </div>
+        <div class="kpi blue k3">
+          <div class="lbl">M-Pesa Revenue</div>
+          <div class="val"><span data-count="184320" data-comma="1" data-prefix="KES "></span></div>
+          <div class="dl" style="color:var(--blue)">↑ 23% MTD</div>
+        </div>
+        <div class="kpi red k4">
+          <div class="lbl">Devices Offline</div>
+          <div class="val"><span data-count="3"></span></div>
+          <div class="dl" style="color:var(--red)">Check maintenance</div>
+        </div>
+      </div>
+      <div class="spark">
+        <div class="sl">Energy today</div>
+        <svg viewBox="0 0 300 30" preserveAspectRatio="none">
+          <path class="ln" d="M0,26 L30,22 L60,24 L90,15 L120,18 L150,10 L180,13 L210,7 L240,9 L270,4 L300,5"/>
+        </svg>
+      </div>
+    </div>
+    <div class="caption"><p>Every unit reports live. One dashboard shows solar generation, active customers, M-Pesa revenue, and any device that needs attention.</p></div>
+  </section>
 
-      <!-- tap-to-start gate -->
-      <button class="startgate" id="startgate" aria-label="Play introduction with voice">
-        <span class="sg-btn">▶</span>
-        <span class="sg-txt">Play introduction</span>
-        <span class="sg-sub">~55 seconds · click to pause</span>
-        <button class="sg-skip" id="sgSkip" aria-label="Skip to dashboard">Skip to dashboard →</button>
+  <!-- SCENE 4 — AI ENGINE -->
+  <section class="scene" data-i="3">
+    <div class="ai-head">
+      <span class="live-dot"></span>
+      <div class="t">AI Engine — System Health</div>
+      <span class="badge badge-green">All 4 Services Active</span>
+    </div>
+    <div class="ai-grid">
+      <div class="ai-card amber a1">
+        <div class="nm">Energy Forecast</div>
+        <div class="ai-ring" style="--off:12">
+          <svg viewBox="0 0 56 56"><circle class="bg" cx="28" cy="28" r="24"/><circle class="fg" cx="28" cy="28" r="24"/></svg>
+          <div class="pc"><span data-count="92" data-suffix="%"></span></div>
+        </div>
+        <div class="sub">↓ 15–20% defaults</div>
+      </div>
+      <div class="ai-card green a2">
+        <div class="nm">Predictive Maintenance</div>
+        <div class="ai-ring" style="--off:2">
+          <svg viewBox="0 0 56 56"><circle class="bg" cx="28" cy="28" r="24"/><circle class="fg" cx="28" cy="28" r="24"/></svg>
+          <div class="pc"><span data-count="99" data-suffix="%"></span></div>
+        </div>
+        <div class="sub">↓ 40% downtime</div>
+      </div>
+      <div class="ai-card red a3">
+        <div class="nm">Fraud Shield</div>
+        <div class="ai-ring" style="--off:22">
+          <svg viewBox="0 0 56 56"><circle class="bg" cx="28" cy="28" r="24"/><circle class="fg" cx="28" cy="28" r="24"/></svg>
+          <div class="pc"><span data-count="85" data-suffix="%"></span></div>
+        </div>
+        <div class="sub">M-Pesa protection</div>
+      </div>
+      <div class="ai-card teal a4">
+        <div class="nm">Usage Optimizer</div>
+        <div class="ai-ring" style="--off:132">
+          <svg viewBox="0 0 56 56"><circle class="bg" cx="28" cy="28" r="24"/><circle class="fg" cx="28" cy="28" r="24"/></svg>
+          <div class="pc"><span data-count="12" data-suffix="%"></span></div>
+        </div>
+        <div class="sub">Load shifting</div>
+      </div>
+    </div>
+    <div class="ai-foot">Real-time processing · powered by <b>custom AI engines</b></div>
+    <div class="caption"><p>Four AI engines run in real time — forecasting energy, predicting maintenance, blocking M-Pesa fraud, and optimizing usage.</p></div>
+  </section>
+
+  <!-- SCENE 5 — IMPACT -->
+  <section class="scene" data-i="4">
+    <div class="impact">
+      <div class="imp i1">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M3 18 L9 12 L13 15 L21 5" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 5h-5M21 5v5" stroke="#10b981" stroke-width="2.5" stroke-linecap="round"/></svg></div>
+        <div class="big" style="color:var(--green)"><span data-count="23" data-prefix="+" data-suffix="%"></span></div>
+        <div class="cap">M-Pesa revenue (MTD)</div>
+      </div>
+      <div class="imp i2">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2l8 3v6c0 5-3.5 8-8 11-4.5-3-8-6-8-11V5l8-3z" stroke="#ef4444" stroke-width="2" stroke-linejoin="round"/><path d="M9 12l2 2 4-5" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div class="big" style="color:var(--red)"><span data-count="85" data-suffix="%"></span></div>
+        <div class="cap">of fraud blocked</div>
+      </div>
+      <div class="imp i3">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M12 21c6-2 8-7 8-12-5 0-9 3-10 7" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 21c-1-4 0-7 3-9" stroke="#14b8a6" stroke-width="2" stroke-linecap="round"/></svg></div>
+        <div class="big" style="color:var(--teal)">Ready</div>
+        <div class="cap">Carbon / MRV data</div>
+      </div>
+    </div>
+    <div class="caption"><p>The result: 99% fault detection, 85% of M-Pesa fraud blocked, and far fewer payment defaults.</p></div>
+  </section>
+
+  <!-- SCENE 6 — ENTER DASHBOARD -->
+  <section class="scene" data-i="5">
+    <div class="close-mark u-pop">
+      <div class="close-sun"></div>
+      <div class="close-name"><span class="pg">Solar</span>PAYG</div>
+    </div>
+    <div class="close-tag u-up" style="animation-delay:.4s">Smarter solar, built for Africa.</div>
+    <div class="u-pop" style="animation-delay:.7s">
+      <button class="enter-cta" id="enterBtn">
+        Enter Dashboard <span class="arrow">→</span>
       </button>
     </div>
+    <div class="caption"><p>You're in. Your dashboard is ready.</p></div>
+  </section>
 
-    <div class="chrome">
-      <div class="segs" id="segs"></div>
-      <button class="btn" id="sound" aria-pressed="true">Voice on</button>
-      <button class="btn" id="replay">↺ Replay</button>
-    </div>
-    <div class="voicebar">
-      <span class="vlabel">Narrator</span>
-      <select id="voiceSel" aria-label="Narrator voice"></select>
-      <span class="vlabel">Speed</span>
-      <select id="speedSel" aria-label="Narration speed">
-        <option value="0.95">Calm</option>
-        <option value="1.05" selected>Natural</option>
-        <option value="1.15">Brisk</option>
-      </select>
-      <span class="vnote">Pick an <b>on-device</b> voice for zero lag</span>
-    </div>
-    <div class="hint">Tap <b>Play introduction</b> · click the stage to <b>pause / resume</b> · <b>Skip intro</b> goes straight to your dashboard</div>
+  <!-- Redirect veil -->
+  <div class="redirect-veil" id="redirectVeil">
+    <div class="rv-role" id="rvRole">Loading…</div>
+    <div>Taking you to your dashboard</div>
   </div>
 
+  <!-- Persistent skip -->
+  <button class="skip-btn" id="skipBtn">Skip intro</button>
+
+  <!-- Start gate -->
+  <button class="startgate" id="startgate" aria-label="Play introduction with orchestral soundtrack">
+    <span class="sg-btn">▶</span>
+    <span class="sg-txt">Play introduction</span>
+    <span class="sg-sub">~55 seconds · click to pause</span>
+    <button class="sg-skip" id="sgSkip">Skip to dashboard →</button>
+  </button>
+
+  <!-- Bottom chrome overlay -->
+  <div class="chrome">
+    <div class="segs" id="segs"></div>
+    <button class="btn" id="sound" aria-pressed="true">♩ Music on</button>
+    <button class="btn" id="replay">↺ Replay</button>
+  </div>
+
+</section>
+
 <script>
-  /* ── Determine destination from stored role ── */
+  /* ── Role / destination ── */
   const role = localStorage.getItem('userRole') || 'customer';
   const DEST = role === 'admin' ? '/admin.html' : '/customer.html';
 
+  /* ════════════════════════════════════════════════════
+     ORCHESTRAL SYNTH — A-major string swell, hall reverb
+     ════════════════════════════════════════════════════ */
+  class Orchestra {
+    ac = null;
+    out = null;
+    _muted = false;
+
+    _ramp(to, dur) {
+      const t = this.ac.currentTime;
+      this.out.gain.cancelScheduledValues(t);
+      this.out.gain.setValueAtTime(this.out.gain.value, t);
+      this.out.gain.linearRampToValueAtTime(to, t + dur);
+    }
+
+    build() {
+      if (this.ac) return;
+      const Ctx = globalThis.AudioContext || globalThis.webkitAudioContext;
+      if (!Ctx) return;
+      const ac = this.ac = new Ctx();
+
+      /* ── Hall reverb impulse ── */
+      const secs = 5, sr = ac.sampleRate;
+      const rb = ac.createBuffer(2, Math.trunc(secs * sr), sr);
+      for (let c = 0; c < 2; c++) {
+        const d = rb.getChannelData(c);
+        for (let i = 0; i < d.length; i++)
+          d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2.4);
+      }
+      const verb = ac.createConvolver();
+      verb.buffer = rb;
+
+      /* ── Output bus ── */
+      this.out = ac.createGain(); this.out.gain.value = 0;
+      const dry = ac.createGain(); dry.gain.value = 0.38;
+      const wet = ac.createGain(); wet.gain.value = 0.62;
+      this.out.connect(dry); dry.connect(ac.destination);
+      this.out.connect(verb); verb.connect(wet); wet.connect(ac.destination);
+
+      /* ── Warm string bus: low-pass + LFO breath ── */
+      const sFilt = ac.createBiquadFilter();
+      sFilt.type = 'lowpass'; sFilt.frequency.value = 1050; sFilt.Q.value = 0.32;
+      sFilt.connect(this.out);
+
+      const lfo = ac.createOscillator(), lfog = ac.createGain();
+      lfo.type = 'sine'; lfo.frequency.value = 0.07;
+      lfog.gain.value = 240;
+      lfo.connect(lfog); lfog.connect(sFilt.frequency); lfo.start();
+
+      /* ── Oscillator layers ──
+         A-major chord: A1 55Hz · A2 110 · C#3 138.6 · E3 164.8
+                         A3 220 · C#4 277.2 · E4 329.6 · A4 440
+         Multiple detuned copies per note → ensemble string thickness ── */
+      const addLayer = (freq, type, vol, dets, bus) =>
+        dets.forEach(det => {
+          const o = ac.createOscillator(), g = ac.createGain();
+          o.type = type; o.frequency.value = freq; o.detune.value = det;
+          g.gain.value = vol / dets.length;
+          o.connect(g); g.connect(bus); o.start();
+        });
+
+      /* deep bass — direct, no string filter (keeps it clear) */
+      addLayer(55,     'sine',     0.14, [0],            this.out);
+      addLayer(110,    'sine',     0.06, [0],            this.out);
+
+      /* low strings */
+      addLayer(110,    'sawtooth', 0.1,  [-12, -4, 0, 4, 12], sFilt);
+      addLayer(138.59, 'sawtooth', 0.09, [-10, -3, 0, 3, 10], sFilt);
+      addLayer(164.81, 'sawtooth', 0.09, [-10, -3, 0, 3, 10], sFilt);
+
+      /* mid strings */
+      addLayer(220,    'sawtooth', 0.08, [-8, -2, 0, 2, 8],   sFilt);
+      addLayer(277.18, 'triangle', 0.06, [-6, 0, 6],           sFilt);
+      addLayer(329.63, 'triangle', 0.05, [-6, 0, 6],           sFilt);
+
+      /* upper violins / shimmer */
+      addLayer(440,    'sine',     0.04, [-4, 0, 4],           sFilt);
+      addLayer(554.37, 'sine',     0.025,[0],                   sFilt); /* C#5 */
+
+      if (ac.state === 'suspended') ac.resume().catch(() => {});
+    }
+
+    /* Per-scene volume levels — music builds through intro */
+    sceneVol(idx) {
+      return [0.2, 0.28, 0.34, 0.4, 0.44, 0.5][idx] ?? 0.44;
+    }
+
+    start(sceneIdx = 0) {
+      this.build();
+      if (!this.out) return;
+      if (this.ac.state === 'suspended') this.ac.resume().catch(() => {});
+      if (!this._muted) this._ramp(this.sceneVol(sceneIdx), 4.5);
+    }
+
+    toScene(idx) {
+      if (!this.out || this._muted) return;
+      this._ramp(this.sceneVol(idx), 1.8);
+    }
+
+    pause() { if (this.out) this._ramp(0, 0.7); }
+
+    resume(sceneIdx = 0) {
+      if (!this.out || this._muted) return;
+      this._ramp(this.sceneVol(sceneIdx), 0.5);
+    }
+
+    stop() {
+      if (!this.out) return;
+      this._ramp(0, 1.4);
+    }
+
+    mute()   { this._muted = true;  if (this.out) this._ramp(0, 0.3); }
+    unmute(sceneIdx = 0) {
+      this._muted = false;
+      if (this.out) this._ramp(this.sceneVol(sceneIdx), 0.3);
+    }
+  }
+
+  const music = new Orchestra();
+
+  /* ── Redirect ── */
+  let autoTimer = null;
   function redirectNow() {
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    music.stop();
     clearTimeout(autoTimer);
     const veil   = document.getElementById('redirectVeil');
     const rvRole = document.getElementById('rvRole');
     rvRole.textContent = role === 'admin' ? 'Admin Dashboard' : 'Customer Portal';
     veil.classList.add('show');
-    setTimeout(() => { window.location.href = DEST; }, 600);
+    setTimeout(() => { globalThis.location.href = DEST; }, 700);
   }
 
-  /* ── Scenes & timeline ── */
+  /* ── Timeline ── */
   const DUR    = [6000, 10000, 12000, 12000, 10000, 8000];
   const scenes = [...document.querySelectorAll('.scene')];
   const segsEl = document.getElementById('segs');
@@ -552,104 +650,16 @@
   });
   const segEls = [...segsEl.children];
 
-  let cur = -1, timer = null, autoTimer = null, paused = false, segStart = 0, remaining = 0;
+  let cur = -1, timer = null, paused = false, segStart = 0, remaining = 0, muted = false;
 
-  /* ── TTS ── */
-  const TTS = ('speechSynthesis' in window);
-  let voices = [], voice = null, muted = false, audioOn = false, speed = 1.05;
-  const MALE = /\b(Guy|Christopher|Eric|Brian|Davis|Tony|Steffan|Ryan|Thomas|William|Liam|Daniel|Alex|Aaron|Fred|Arthur|Oliver|David|Mark|George|James|Roger|Jacob|Andrew|Richard)\b/i;
-  const voiceSel = document.getElementById('voiceSel');
-  const speedSel = document.getElementById('speedSel');
-
-  function autoPick() {
-    let best = null, score = -1;
-    voices.forEach(v => {
-      let s = 0;
-      if (MALE.test(v.name)) s += 4;
-      if (v.localService)    s += 2;
-      if (/Natural|Online/i.test(v.name)) s += 1;
-      if (/Google UK English Male/i.test(v.name)) s += 1;
-      if (s > score) { score = s; best = v; }
-    });
-    return best || voices[0] || null;
-  }
-  function buildVoiceList() {
-    const all = speechSynthesis.getVoices();
-    voices = all.filter(v => /^en(-|_|$)/i.test(v.lang));
-    if (!voices.length) voices = all;
-    if (!voice || !voices.includes(voice)) voice = autoPick();
-    if (!voiceSel) return;
-    voiceSel.innerHTML = '';
-    voices.forEach((v, i) => {
-      const o = document.createElement('option');
-      o.value = i;
-      o.textContent = v.name.replace(/ - .*$/, '').replace(/^(Microsoft|Google)\s/, '')
-                    + (v.localService ? ' · on-device' : ' · online');
-      if (v === voice) o.selected = true;
-      voiceSel.appendChild(o);
-    });
-  }
-  if (TTS) { buildVoiceList(); speechSynthesis.onvoiceschanged = buildVoiceList; }
-
-  function speakCaption(idx) {
-    if (!TTS || muted || !audioOn) return;
-    const node = scenes[idx] && scenes[idx].querySelector('.caption p');
-    const text = node ? node.textContent.trim() : '';
-    speechSynthesis.cancel();
-    if (!text) return;
-    const u = new SpeechSynthesisUtterance(text);
-    if (voice) u.voice = voice;
-    u.rate = speed; u.pitch = 1.0; u.volume = 1;
-    setTimeout(() => { try { speechSynthesis.speak(u); } catch (_) {} }, 40);
-  }
-
-  if (voiceSel) voiceSel.addEventListener('change', e => {
-    e.stopPropagation();
-    voice = voices[+voiceSel.value] || voice;
-    if (cur >= 0) speakCaption(cur);
-  });
-  if (speedSel) speedSel.addEventListener('change', e => {
-    e.stopPropagation();
-    speed = Number.parseFloat(speedSel.value) || 1.05;
-    if (cur >= 0) speakCaption(cur);
-  });
-
-  /* ── Startgate ── */
-  document.getElementById('startgate').addEventListener('click', e => {
-    e.stopPropagation();
-    if (TTS) { try { speechSynthesis.cancel(); speechSynthesis.resume(); } catch (_) {} }
-    play();
-  });
-
-  /* Prevent the inner skip button from also triggering the startgate click */
-  document.getElementById('sgSkip').addEventListener('click', e => {
-    e.stopPropagation();
-    redirectNow();
-  });
-
-  /* ── Sound toggle ── */
-  const soundBtn = document.getElementById('sound');
-  soundBtn.addEventListener('click', e => {
-    e.stopPropagation();
-    muted = !muted;
-    soundBtn.textContent = muted ? 'Voice off' : 'Voice on';
-    soundBtn.setAttribute('aria-pressed', String(!muted));
-    if (muted) { if (TTS) speechSynthesis.cancel(); }
-    else if (cur >= 0) speakCaption(cur);
-  });
-
-  /* ── Skip button (persistent, visible after play starts) ── */
-  const skipBtn = document.getElementById('skipBtn');
-  skipBtn.addEventListener('click', e => { e.stopPropagation(); redirectNow(); });
-
-  /* ── Segment progress ── */
   function setSegState(idx) {
     segEls.forEach((s, k) => {
       s.classList.toggle('done', k < idx);
       const bar = s.querySelector('i');
       if (k === idx) {
         s.classList.add('now');
-        bar.style.animation = 'none'; void bar.offsetWidth;
+        bar.style.animation = 'none';
+        bar.getBoundingClientRect(); // force reflow so animation restarts
         bar.style.animation = `segfill ${DUR[idx]}ms linear forwards`;
       } else {
         s.classList.remove('now');
@@ -663,7 +673,6 @@
     scenes.forEach((s, k) => s.classList.toggle('active', k === idx));
     if (idx === 1) runPayScene();
     if (idx >= 0) animateCounts(scenes[idx]);
-    if (idx >= 0) speakCaption(idx);
   }
 
   function schedule(ms) {
@@ -677,8 +686,8 @@
 
   function goTo(idx) {
     cur = idx; paused = false; stage.style.filter = '';
-    if (TTS) speechSynthesis.cancel();
     show(idx); setSegState(idx); schedule(DUR[idx]);
+    music.toScene(idx);
   }
 
   function finish() {
@@ -686,43 +695,54 @@
       s.classList.remove('now'); s.classList.add('done');
       s.querySelector('i').style.width = '100%';
     });
-    /* Auto-advance 4 s after the last scene starts */
     autoTimer = setTimeout(redirectNow, 4000);
   }
 
   function play() {
-    audioOn = true;
     document.getElementById('startgate').classList.add('hidden');
-    skipBtn.classList.add('visible');
-    if (TTS) speechSynthesis.cancel();
+    document.getElementById('skipBtn').classList.add('visible');
     document.querySelectorAll('[data-count]').forEach(el => { delete el.dataset.done; el.textContent = ''; });
+    music.start(0);
     goTo(0);
   }
 
-  /* ── Enter button (scene 6) ── */
-  document.getElementById('enterBtn').addEventListener('click', e => {
+  /* ── Controls ── */
+  document.getElementById('enterBtn').addEventListener('click', e => { e.stopPropagation(); redirectNow(); });
+
+  document.getElementById('startgate').addEventListener('click', e => { e.stopPropagation(); play(); });
+
+  document.getElementById('sgSkip').addEventListener('click', e => { e.stopPropagation(); redirectNow(); });
+
+  document.getElementById('skipBtn').addEventListener('click', e => { e.stopPropagation(); redirectNow(); });
+
+  document.getElementById('replay').addEventListener('click', e => { e.stopPropagation(); play(); });
+
+  /* ── Sound toggle (music mute/unmute) ── */
+  const soundBtn = document.getElementById('sound');
+  soundBtn.addEventListener('click', e => {
     e.stopPropagation();
-    redirectNow();
+    muted = !muted;
+    soundBtn.textContent = muted ? '♩ Music off' : '♩ Music on';
+    soundBtn.setAttribute('aria-pressed', String(!muted));
+    if (muted) music.mute(); else music.unmute(Math.max(0, cur));
   });
 
   /* ── Pause / resume on stage click ── */
   stage.addEventListener('click', () => {
     if (cur < 0) return;
-    if (!paused) {
-      paused = true; clearTimeout(timer); clearTimeout(autoTimer);
-      remaining -= (performance.now() - segStart);
-      segEls[cur]?.querySelectorAll('i').forEach(b => b.style.animationPlayState = 'paused');
-      stage.style.filter = 'saturate(.7) brightness(.85)';
-      if (TTS) speechSynthesis.pause();
-    } else {
+    if (paused) {
       paused = false; stage.style.filter = '';
       segEls[cur]?.querySelectorAll('i').forEach(b => b.style.animationPlayState = 'running');
       schedule(Math.max(remaining, 200));
-      if (TTS) speechSynthesis.resume();
+      music.resume(cur);
+    } else {
+      paused = true; clearTimeout(timer); clearTimeout(autoTimer);
+      remaining -= (performance.now() - segStart);
+      segEls[cur]?.querySelectorAll('i').forEach(b => b.style.animationPlayState = 'paused');
+      stage.style.filter = 'saturate(.65) brightness(.8)';
+      music.pause();
     }
   });
-
-  document.getElementById('replay').addEventListener('click', play);
 
   /* ── Count-up animators ── */
   function fmt(el, v) {
@@ -755,7 +775,7 @@
     if (!pin) return;
     pin.textContent = ''; status.textContent = 'Processing…'; status.classList.remove('ok');
     ['•', '• •', '• • •', '• • • •'].forEach((s, k) =>
-      payTimers.push(setTimeout(() => pin.textContent = s, 600 + k * 420))
+      payTimers.push(setTimeout(() => { pin.textContent = s; }, 600 + k * 420))
     );
     payTimers.push(setTimeout(() => {
       status.textContent = '✓ Confirmed · KES 50.00';
@@ -763,7 +783,7 @@
     }, 2900));
   }
 
-  /* ── Show opening frame immediately ── */
+  /* ── Show opening scene immediately (no autoplay) ── */
   window.addEventListener('load', () => { scenes[0].classList.add('active'); });
 </script>
 </body>
