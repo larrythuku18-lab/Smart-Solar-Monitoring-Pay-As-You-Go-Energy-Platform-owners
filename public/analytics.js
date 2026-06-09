@@ -20,9 +20,11 @@ const {
    Chart.helpers.configMerge when options change. That helper was removed in
    Chart.js 3.x. We provide a simple deep-merge replacement so the two libraries
    work together without version-locking either CDN. ─────────────────────────── */
-if (Chart && Chart.helpers && !Chart.helpers.configMerge) {
+if (Chart?.helpers && !Chart.helpers.configMerge) {
   Chart.helpers.configMerge = function mergeDeep(base) {
-    const result = Object.assign({}, base);
+    const result = {
+      ...base
+    };
     for (let i = 1; i < arguments.length; i++) {
       const override = arguments[i];
       if (!override || typeof override !== 'object') continue;
@@ -125,15 +127,12 @@ const genHourlyConsumption = () => {
   const nowHour = new Date().getHours();
   const data = labels.map((_, i) => {
     const h = (nowHour - 23 + i + 24) % 24;
-    let base = h >= 18 && h <= 22 ? 270 + Math.random() * 110 :
-    // evening peak
-    h >= 6 && h <= 9 ? 210 + Math.random() * 80 :
-    // morning peak
-    h >= 12 && h <= 14 ? 175 + Math.random() * 55 :
-    // lunch peak
-    h >= 0 && h <= 5 ? 55 + Math.random() * 25 :
-    // night-low
-    120 + Math.random() * 50;
+    let base;
+    if (h >= 18 && h <= 22) base = 270 + Math.random() * 110; // evening peak
+    else if (h >= 6 && h <= 9) base = 210 + Math.random() * 80; // morning peak
+    else if (h >= 12 && h <= 14) base = 175 + Math.random() * 55; // lunch peak
+    else if (h >= 0 && h <= 5) base = 55 + Math.random() * 25; // night-low
+    else base = 120 + Math.random() * 50;
     return Number(base.toFixed(1));
   });
   return {
@@ -159,7 +158,11 @@ const genDailyUsage = () => {
     datasets: [{
       label: 'Daily Usage (kWh)',
       data,
-      backgroundColor: data.map(v => v > 5.5 ? 'rgba(239,68,68,0.82)' : v > 4.5 ? 'rgba(245,158,11,0.82)' : 'rgba(59,130,246,0.75)'),
+      backgroundColor: data.map(v => {
+        if (v > 5.5) return 'rgba(239,68,68,0.82)';
+        if (v > 4.5) return 'rgba(245,158,11,0.82)';
+        return 'rgba(59,130,246,0.75)';
+      }),
       borderRadius: 4,
       barPercentage: 0.8,
       categoryPercentage: 0.9
@@ -215,7 +218,7 @@ const genSolarVsConsumption = () => {
       borderColor: 'rgb(245,158,11)',
       backgroundColor: 'rgba(245,158,11,0.12)',
       fill: true,
-      tension: 0.40,
+      tension: 0.4,
       pointRadius: 2,
       pointHoverRadius: 5
     }, {
@@ -224,7 +227,7 @@ const genSolarVsConsumption = () => {
       borderColor: 'rgb(239,68,68)',
       backgroundColor: 'rgba(239,68,68,0.07)',
       fill: true,
-      tension: 0.40,
+      tension: 0.4,
       pointRadius: 2,
       pointHoverRadius: 5
     }]
@@ -243,7 +246,12 @@ const genSolarPeakHourly = () => {
     datasets: [{
       label: 'Solar Output (W)',
       data,
-      backgroundColor: data.map(v => v > 380 ? 'rgba(245,158,11,0.90)' : v > 200 ? 'rgba(251,191,36,0.75)' : v > 40 ? 'rgba(245,158,11,0.40)' : 'rgba(148,163,184,0.10)'),
+      backgroundColor: data.map(v => {
+        if (v > 380) return 'rgba(245,158,11,0.90)';
+        if (v > 200) return 'rgba(251,191,36,0.75)';
+        if (v > 40) return 'rgba(245,158,11,0.40)';
+        return 'rgba(148,163,184,0.10)';
+      }),
       borderRadius: 5,
       barPercentage: 0.8,
       categoryPercentage: 0.9
@@ -255,11 +263,20 @@ const genBatteryHistory = () => {
     length: 24
   }, (_, i) => `${i}:00`);
   const data = labels.map((_, i) => {
-    const base = i < 6 ? 78 - (6 - i) * 2.1 : i < 13 ? 66 + (i - 6) * 3.4 : i < 19 ? 90 - (i - 13) * 1.8 : 78 - (i - 19) * 4.5;
+    let base;
+    if (i < 6) base = 78 - (6 - i) * 2.1;else if (i < 13) base = 66 + (i - 6) * 3.4;else if (i < 19) base = 90 - (i - 13) * 1.8;else base = 78 - (i - 19) * 4.5;
     return Number(Math.max(8, Math.min(100, base + (Math.random() - 0.5) * 6)).toFixed(1));
   });
-  const col = v => v > 50 ? 'rgb(16,185,129)' : v > 20 ? 'rgb(245,158,11)' : 'rgb(239,68,68)';
-  const bgc = v => v > 50 ? 'rgba(16,185,129,0.13)' : v > 20 ? 'rgba(245,158,11,0.13)' : 'rgba(239,68,68,0.13)';
+  const col = v => {
+    if (v > 50) return 'rgb(16,185,129)';
+    if (v > 20) return 'rgb(245,158,11)';
+    return 'rgb(239,68,68)';
+  };
+  const bgc = v => {
+    if (v > 50) return 'rgba(16,185,129,0.13)';
+    if (v > 20) return 'rgba(245,158,11,0.13)';
+    return 'rgba(239,68,68,0.13)';
+  };
   return {
     labels,
     data,
@@ -279,7 +296,7 @@ const genBatteryHistory = () => {
 };
 const genChargeCycles = () => {
   const labels = weekdayLabels();
-  const charge = labels.map(() => Number((3.0 + Math.random() * 2.0).toFixed(1)));
+  const charge = labels.map(() => Number((3 + Math.random() * 2).toFixed(1)));
   const discharge = labels.map(() => Number((2.5 + Math.random() * 2.5).toFixed(1)));
   return {
     labels,
@@ -502,14 +519,13 @@ const GaugeChart = ({
      SVG Y-axis is flipped, so we subtract the sin component. */
   const ptX = a => cx + r * Math.cos(a);
   const ptY = a => cy - r * Math.sin(a);
-  const startAngle = Math.PI;
 
   /* Background: two ×90° arcs avoids the 180° ambiguity in SVG arc */
   const bgPath = [`M ${cx - r} ${cy}`, `A ${r} ${r} 0 0 0 ${cx} ${cy - r}`, `A ${r} ${r} 0 0 0 ${cx + r} ${cy}`].join(' ');
 
   /* Zone ticks (20% and 40% marks) */
-  const zone20Angle = Math.PI - 0.20 * Math.PI;
-  const zone40Angle = Math.PI - 0.40 * Math.PI;
+  const zone20Angle = Math.PI - 0.2 * Math.PI;
+  const zone40Angle = Math.PI - 0.4 * Math.PI;
 
   /* Value arc: M left  A r r 0 0(CCW) 0(small)  ex ey
      "sweep=0 + large=0" always produces the counterclockwise arc
@@ -965,15 +981,15 @@ const AnalyticsDashboard = () => {
 
   /* Chart data — initialised with mock, optionally overwritten with real data */
   const [hourlyData, setHourlyData] = useState(genHourlyConsumption);
-  const [dailyData, setDailyData] = useState(genDailyUsage);
-  const [monthlyData, setMonthlyData] = useState(genMonthlyTrend);
+  const [dailyData] = useState(genDailyUsage);
+  const [monthlyData] = useState(genMonthlyTrend);
   const [solarData, setSolarData] = useState(genSolarVsConsumption);
   const [batteryData, setBatteryData] = useState(genBatteryHistory);
   const [cycleData] = useState(genChargeCycles);
-  const [paymentsData, setPaymentsData] = useState(genPaymentsTrend);
+  const [paymentsData] = useState(genPaymentsTrend);
   const [creditData] = useState(genCreditUsage);
   const [revTrendData] = useState(genRevenueTrend);
-  const [dailyRevData, setDailyRevData] = useState(genDailyRevenue);
+  const [dailyRevData] = useState(genDailyRevenue);
   const [solarPeakData] = useState(genSolarPeakHourly);
   const energySourceData = useRef(genEnergySourceData());
   const paymentStatusData = useRef(genPaymentStatusData());
@@ -982,7 +998,7 @@ const AnalyticsDashboard = () => {
   const batteryLevel = useMemo(() => {
     if (apiState?.batteryLevel != null) return Math.max(0, Math.min(100, apiState.batteryLevel));
     const last = batteryData.data?.at(-1);
-    return last != null ? Math.round(last) : 74;
+    return last == null ? 74 : Math.round(last);
   }, [apiState, batteryData]);
   const currentPower = useMemo(() => {
     if (apiState?.consumption != null) return Math.round(apiState.consumption);
@@ -1045,7 +1061,7 @@ const AnalyticsDashboard = () => {
           borderColor: 'rgb(245,158,11)',
           backgroundColor: 'rgba(245,158,11,0.12)',
           fill: true,
-          tension: 0.40,
+          tension: 0.4,
           pointRadius: 2,
           pointHoverRadius: 5
         }, {
@@ -1054,14 +1070,22 @@ const AnalyticsDashboard = () => {
           borderColor: 'rgb(239,68,68)',
           backgroundColor: 'rgba(239,68,68,0.07)',
           fill: true,
-          tension: 0.40,
+          tension: 0.4,
           pointRadius: 2,
           pointHoverRadius: 5
         }]
       });
       if (b.length > 0) {
-        const col = v => v > 50 ? 'rgb(16,185,129)' : v > 20 ? 'rgb(245,158,11)' : 'rgb(239,68,68)';
-        const bgc = v => v > 50 ? 'rgba(16,185,129,0.12)' : v > 20 ? 'rgba(245,158,11,0.12)' : 'rgba(239,68,68,0.12)';
+        const col = v => {
+          if (v > 50) return 'rgb(16,185,129)';
+          if (v > 20) return 'rgb(245,158,11)';
+          return 'rgb(239,68,68)';
+        };
+        const bgc = v => {
+          if (v > 50) return 'rgba(16,185,129,0.12)';
+          if (v > 20) return 'rgba(245,158,11,0.12)';
+          return 'rgba(239,68,68,0.12)';
+        };
         setBatteryData({
           labels: l,
           data: b,
@@ -1148,7 +1172,9 @@ const AnalyticsDashboard = () => {
   }, []);
   useEffect(() => {
     fetchAll();
-    const dataTimer = setInterval(fetchAll, 30000);
+    const dataTimer = setInterval(() => {
+      if (!document.hidden) fetchAll();
+    }, 60000);
     return () => clearInterval(dataTimer);
   }, [fetchAll]);
 
@@ -1242,7 +1268,15 @@ const AnalyticsDashboard = () => {
       e.currentTarget.style.color = '#f59e0b';
       e.currentTarget.style.borderColor = 'rgba(245,158,11,0.4)';
     },
+    onFocus: e => {
+      e.currentTarget.style.color = '#f59e0b';
+      e.currentTarget.style.borderColor = 'rgba(245,158,11,0.4)';
+    },
     onMouseOut: e => {
+      e.currentTarget.style.color = '#94a3b8';
+      e.currentTarget.style.borderColor = 'rgba(148,163,184,0.12)';
+    },
+    onBlur: e => {
       e.currentTarget.style.color = '#94a3b8';
       e.currentTarget.style.borderColor = 'rgba(148,163,184,0.12)';
     }

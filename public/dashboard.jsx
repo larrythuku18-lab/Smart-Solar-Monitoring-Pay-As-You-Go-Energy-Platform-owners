@@ -683,13 +683,17 @@ const SolarDashboard = () => {
 
   useEffect(() => {
     const stats = setInterval(() => {
+      if (document.hidden) return;
       setGlobalStats((prev) => ({
         devicesOnline: Math.max(832, prev.devicesOnline + Math.round(Math.random() * 16 - 8)),
         todayRevenue: Math.max(12000, prev.todayRevenue + Math.round(Math.random() * 1400 - 650)),
         activeCustomers: Math.max(650, prev.activeCustomers + Math.round(Math.random() * 8 - 4))
       }));
-    }, 5000);
-    const live = setInterval(refreshAllCharts, 9000);
+    }, 30000);
+    const live = setInterval(() => {
+      if (document.hidden) return;
+      refreshAllCharts();
+    }, 60000);
     return () => {
       clearInterval(stats);
       clearInterval(live);
