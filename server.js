@@ -826,7 +826,24 @@ setInterval(() => {
    4. Load recent payments to warm the fraud model.
    5. Start the HTTP server.
 ══════════════════════════════════════════════════════════════════════════ */
+function compileJsx() {
+  try {
+    const Babel = require('@babel/standalone');
+    const fs    = require('node:fs');
+    const pub   = path.join(__dirname, 'public');
+    for (const name of ['dashboard', 'analytics']) {
+      const src  = fs.readFileSync(path.join(pub, `${name}.jsx`), 'utf8');
+      const out  = Babel.transform(src, { presets: ['react'], filename: `${name}.jsx` }).code;
+      fs.writeFileSync(path.join(pub, `${name}.js`), out, 'utf8');
+    }
+    console.log('[JSX] dashboard.js + analytics.js compiled');
+  } catch (err) {
+    console.warn('[JSX] compile warning (non-fatal):', err.message);
+  }
+}
+
 async function startup() {
+  compileJsx();
   console.log('[DB] Connecting to PostgreSQL…');
   await runMigrations();
   await seedDemoData();

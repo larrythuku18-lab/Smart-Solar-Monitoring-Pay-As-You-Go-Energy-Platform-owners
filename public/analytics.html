@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SolarPAYG — Analytics Dashboard</title>
 
-  <script src="https://cdn.tailwindcss.com" defer></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@3.4.4/dist/tailwind.min.css"
+        crossorigin integrity="sha384-OLBgp1GsljhM2TJ+sbHjaiH9txEUvgdDTAzHv2P24donTt6/529l+9Ua0vFImLlb">
   <script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"
           crossorigin integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"></script>
   <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"
@@ -14,8 +15,6 @@
           crossorigin integrity="sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g"></script>
   <script src="https://cdn.jsdelivr.net/npm/react-chartjs-2@5.2.0/dist/react-chartjs-2.min.js"
           crossorigin integrity="sha384-OLBgp1GsljhM2TJ+sbHjaiH9txEUvgdDTAzHv2P24donTt6/529l+9Ua0vFImLlb"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.24.0/babel.min.js"
-          crossorigin integrity="sha384-wVDXnilITixWtkFWH+Xu4zp0L3R7zd39Il4szMJlz9M3Vhsuerfbxy5ojdJdqOEX"></script>
 
   <!-- Global nav styles -->
   <link rel="stylesheet" href="/nav.css" />
@@ -73,7 +72,7 @@
   <div id="root"></div>
 
   <!-- Analytics Dashboard React component -->
-  <script type="text/babel" data-presets="react" src="./analytics.jsx"></script>
+  <script src="./analytics.js"></script>
 
   <script src="/nav-init.js"></script>
 </body>
