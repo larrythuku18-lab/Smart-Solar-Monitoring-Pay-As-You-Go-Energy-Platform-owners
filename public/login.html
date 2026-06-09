@@ -242,21 +242,29 @@
       gap: 12px;
     }
     .demo-row:last-child { border-bottom: none; }
+    .demo-row.clickable { cursor: pointer; transition: background .15s; }
+    .demo-row.clickable:hover { background: rgba(255,255,255,.04); }
+    .demo-row.clickable:active { background: rgba(255,255,255,.07); }
     .demo-key { color: var(--muted); white-space: nowrap; }
     .demo-val {
       font-family: monospace;
       font-size: 11px;
       font-weight: 600;
       text-align: right;
-      cursor: pointer;
       padding: 2px 6px;
       border-radius: 4px;
-      transition: background .15s;
     }
-    .demo-val:hover { background: rgba(255,255,255,.07); }
     .demo-val.amber { color: var(--amber); }
     .demo-val.green { color: var(--green); }
     .demo-val.blue  { color: #93c5fd; }
+    .demo-section-label {
+      padding: 6px 14px 3px;
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      color: var(--muted);
+      opacity: .7;
+    }
     .demo-note {
       padding: 8px 14px;
       font-size: 10px;
@@ -365,23 +373,59 @@
 
   /* ── Fill demo box ── */
   function renderDemoBox(role) {
-    const rows = CREDS[role].map(c => `
-      <div class="demo-row">
-        <span class="demo-key">${c.key}</span>
-        <span class="demo-val ${c.cls}" onclick="fillCreds('${role}')" title="Click to fill">${c.val}</span>
-      </div>`).join('');
-    document.getElementById('demo-box').innerHTML =
-      `<div class="demo-head">Test Credentials <span style="color:var(--amber)">· click to fill</span></div>
-       ${rows}
-       <div class="demo-note">Demo only — not for production use</div>`;
+    const head = `<div class="demo-head">Test Credentials <span style="color:var(--amber)">· click row to fill</span></div>`;
+    const note = `<div class="demo-note">Demo only — not for production use</div>`;
+
+    let rows = '';
+    if (role === 'admin') {
+      rows = `
+        <div class="demo-row clickable" onclick="fillCreds('admin')" title="Click to fill">
+          <span class="demo-key">Email</span>
+          <span class="demo-val amber">${CREDS.admin[0].val}</span>
+        </div>
+        <div class="demo-row clickable" onclick="fillCreds('admin')" title="Click to fill">
+          <span class="demo-key">Password</span>
+          <span class="demo-val amber">${CREDS.admin[1].val}</span>
+        </div>`;
+    } else {
+      rows = `
+        <div class="demo-section-label">Email &amp; password</div>
+        <div class="demo-row clickable" onclick="fillCreds('customer-email')" title="Click to fill">
+          <span class="demo-key">Email</span>
+          <span class="demo-val green">${CREDS.customer[0].val}</span>
+        </div>
+        <div class="demo-row clickable" onclick="fillCreds('customer-email')" title="Click to fill">
+          <span class="demo-key">Password</span>
+          <span class="demo-val green">${CREDS.customer[1].val}</span>
+        </div>
+        <div class="demo-section-label">Device ID &amp; PIN (alternative)</div>
+        <div class="demo-row clickable" onclick="fillCreds('customer-device')" title="Click to fill">
+          <span class="demo-key">Device ID</span>
+          <span class="demo-val blue">${CREDS.customer[2].val}</span>
+        </div>
+        <div class="demo-row clickable" onclick="fillCreds('customer-device')" title="Click to fill">
+          <span class="demo-key">PIN</span>
+          <span class="demo-val blue">${CREDS.customer[3].val}</span>
+        </div>`;
+    }
+
+    document.getElementById('demo-box').innerHTML = head + rows + note;
   }
 
-  /* ── Fill form with demo creds (values sourced from CREDS to avoid literal assignment) ── */
-  function fillCreds(role) {
-    const set = CREDS[role];
-    document.getElementById('identifier').value = set[0].val;
-    /* NOSONAR: demo-only test credential populated from in-memory constant, not production secret */
-    document.getElementById('password').value   = set[1].val; // NOSONAR
+  /* ── Fill form with demo creds ── */
+  function fillCreds(set) {
+    const id  = document.getElementById('identifier');
+    const pw  = document.getElementById('password');
+    if (set === 'admin') {
+      id.value = CREDS.admin[0].val;
+      pw.value = CREDS.admin[1].val; // NOSONAR
+    } else if (set === 'customer-email') {
+      id.value = CREDS.customer[0].val;
+      pw.value = CREDS.customer[1].val; // NOSONAR
+    } else if (set === 'customer-device') {
+      id.value = CREDS.customer[2].val;
+      pw.value = CREDS.customer[3].val; // NOSONAR
+    }
   }
 
   /* ── Switch role ── */
