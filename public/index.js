@@ -1,6 +1,6 @@
 const API_BASE = '/api';
 const CACHE_DURATION = 30000;
-const LOAD_TIMEOUT = 50000;
+const LOAD_TIMEOUT = 6000;
 const CRITICAL_TIMEOUT = 8000;
 const NON_CRITICAL_TIMEOUT = 15000;
 let fetchStateInProgress = false;
@@ -655,12 +655,13 @@ async function fetchState() {
       renderMaintenanceAlerts();
     }
     
-    // Render critical elements immediately
+    // Render critical elements and reveal dashboard immediately
     updateClock();
     renderDashboardMetrics();
     renderWeatherWidget();
     renderTransactionCounts();
-    
+    hideLoadingOverlay();
+
     return true;
   } catch (error) {
     console.warn('API unreachable:', error);
@@ -676,14 +677,15 @@ async function fetchState() {
     if (cachedForecast) state.forecast = cachedForecast;
     if (cachedMaintenance) state.maintenanceAlerts = cachedMaintenance;
     
-    // Render what we have
+    // Render what we have and reveal dashboard
     updateClock();
     renderDashboardMetrics();
     renderWeatherWidget();
     renderForecast();
     renderMaintenanceAlerts();
     renderTransactionCounts();
-    
+    hideLoadingOverlay();
+
     return false;
   } finally {
     fetchStateInProgress = false;
@@ -707,13 +709,18 @@ function bootstrap() {
     runAIModels();
   }, LOAD_TIMEOUT);
   
-  fetchState().then(() => {
-    clearTimeout(loadTimeout);
-    loadingTracker.updateProgress(100, 'Ready');
-    hideLoadingOverlay();
-    // Run AI models after successful load
-    runAIModels();
-  });
+  fetchState()
+    .then(() => {
+      clearTimeout(loadTimeout);
+      loadingTracker.updateProgress(100, 'Ready');
+      hideLoadingOverlay();
+      runAIModels();
+    })
+    .catch(() => {
+      clearTimeout(loadTimeout);
+      loadingTracker.updateProgress(100, 'Loaded');
+      hideLoadingOverlay();
+    });
   
   // Update every 60 seconds and avoid overlapping work
   setInterval(async () => {
