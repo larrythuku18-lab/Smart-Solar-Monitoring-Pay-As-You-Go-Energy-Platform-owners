@@ -27,7 +27,7 @@ const isLocal =
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/solarpayg',
-  ssl: isLocal ? false : { rejectUnauthorized: true },
+  ssl: isLocal ? false : { rejectUnauthorized: false },
   max: parseInt(process.env.DB_POOL_MAX  || '20', 10),
   min: parseInt(process.env.DB_POOL_MIN  ||  '2', 10),
   idleTimeoutMillis:    30_000,
