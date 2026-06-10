@@ -261,26 +261,6 @@
   .redirect-veil .rv-role{ color:var(--amber); font-size:clamp(11px,1.4vw,13px);
     font-family:var(--body); font-weight:600; letter-spacing:.12em; text-transform:uppercase; }
 
-  /* ── START GATE ── */
-  .startgate{ position:absolute; inset:0; z-index:60; cursor:pointer; border:0;
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px;
-    background:radial-gradient(120% 90% at 50% 50%, rgba(10,17,32,.45), rgba(4,7,15,.86));
-    -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px); color:var(--text);
-    font-family:var(--body); transition:opacity .45s var(--ease); }
-  .startgate .sg-btn{ width:80px; height:80px; border-radius:50%; padding-left:5px;
-    display:flex; align-items:center; justify-content:center; font-size:28px; color:#1a1206;
-    background:radial-gradient(circle at 35% 30%, #ffd27a, var(--amber));
-    box-shadow:0 16px 48px -8px rgba(245,158,11,.65), 0 0 0 10px rgba(245,158,11,.12); }
-  .startgate .sg-txt{ font-size:14px; letter-spacing:.05em; color:#cfd5e6; font-weight:600; }
-  .startgate .sg-sub{ font-size:11px; color:var(--muted); }
-  .startgate .sg-skip{
-    margin-top:8px; font-size:12px; color:var(--muted); text-decoration:underline;
-    cursor:pointer; background:none; border:none; font-family:var(--body);
-    transition:color .2s;
-  }
-  .startgate .sg-skip:hover{ color:var(--sub); }
-  .startgate.hidden{ opacity:0; pointer-events:none; }
-
   /* ── CHROME OVERLAY (bottom of stage) ── */
   .chrome{
     position:absolute; bottom:0; left:0; right:0; z-index:55;
@@ -529,15 +509,7 @@
   </div>
 
   <!-- Persistent skip -->
-  <button class="skip-btn" id="skipBtn">Skip intro</button>
-
-  <!-- Start gate -->
-  <button class="startgate" id="startgate" aria-label="Play introduction with orchestral soundtrack">
-    <span class="sg-btn">▶</span>
-    <span class="sg-txt">Play introduction</span>
-    <span class="sg-sub">~55 seconds · click to pause</span>
-    <button class="sg-skip" id="sgSkip">Skip to dashboard →</button>
-  </button>
+  <button class="skip-btn visible" id="skipBtn">Skip intro</button>
 
   <!-- Bottom chrome overlay -->
   <div class="chrome">
@@ -754,8 +726,6 @@
   }
 
   function play() {
-    document.getElementById('startgate').classList.add('hidden');
-    document.getElementById('skipBtn').classList.add('visible');
     document.querySelectorAll('[data-count]').forEach(el => { delete el.dataset.done; el.textContent = ''; });
     music.start(0);
     goTo(0);
@@ -763,10 +733,6 @@
 
   /* ── Controls ── */
   document.getElementById('enterBtn').addEventListener('click', e => { e.stopPropagation(); redirectNow(); });
-
-  document.getElementById('startgate').addEventListener('click', e => { e.stopPropagation(); play(); });
-
-  document.getElementById('sgSkip').addEventListener('click', e => { e.stopPropagation(); redirectNow(); });
 
   document.getElementById('skipBtn').addEventListener('click', e => { e.stopPropagation(); redirectNow(); });
 
@@ -838,8 +804,18 @@
     }, 2900));
   }
 
-  /* ── Show opening scene immediately (no autoplay) ── */
-  window.addEventListener('load', () => { scenes[0].classList.add('active'); });
+  /* ── Auto-play on load ── */
+  window.addEventListener('load', play);
+
+  /* If the AudioContext started suspended (autoplay policy), resume it
+     and bring the music in on the first user interaction. */
+  ['pointerdown', 'keydown', 'touchstart'].forEach(evt =>
+    document.addEventListener(evt, () => {
+      if (music.ac && music.ac.state === 'suspended') {
+        music.ac.resume().then(() => { if (!muted) music.toScene(Math.max(0, cur)); }).catch(() => {});
+      }
+    }, { once: true, passive: true })
+  );
 </script>
 </body>
 </html>
