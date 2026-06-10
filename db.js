@@ -168,38 +168,49 @@ async function runMigrations() {
   console.log('[DB] PostgreSQL migrations complete');
 }
 
+/* Upsert a named demo user by device_id, tolerating leftover rows from
+ * earlier seed runs that may already hold the target email under a
+ * different device_id (which would otherwise violate users_email_key). */
+async function upsertDemoUser({ deviceId, pin, email, passwordHash, role, name, phone, walletBalance, relayUnlocked }) {
+  const { rows: byEmail } = await q('SELECT id FROM users WHERE email = $1', [email]);
+  const { rows: byDevice } = await q('SELECT id FROM users WHERE device_id = $1', [deviceId]);
+
+  if (byEmail.length > 0 && (byDevice.length === 0 || byEmail[0].id !== byDevice[0].id)) {
+    await q('UPDATE users SET email = NULL WHERE id = $1', [byEmail[0].id]);
+  }
+
+  await q(
+    `INSERT INTO users (device_id, pin, email, password_hash, role, name, phone, wallet_balance, relay_unlocked)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (device_id) DO UPDATE
+       SET email         = EXCLUDED.email,
+           password_hash = EXCLUDED.password_hash,
+           role          = EXCLUDED.role`,
+    [deviceId, pin, email, passwordHash, role, name, phone, walletBalance, relayUnlocked]
+  );
+}
+
 /* ── Demo data seed ─────────────────────────────────────────────────────── */
 async function seedDemoData() {
   /* ── Always ensure named demo accounts exist (safe to re-run) ── */
   const adminHash    = await bcrypt.hash(process.env.ADMIN_PASSWORD    || 'Admin@12345',    10);
   const customerHash = await bcrypt.hash(process.env.CUSTOMER_PASSWORD || 'Customer@12345', 10);
 
-  // Admin user — upsert by device_id, set email+password_hash+role
-  await q(
-    `INSERT INTO users (device_id, pin, email, password_hash, role, name, phone, wallet_balance, relay_unlocked)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-     ON CONFLICT (device_id) DO UPDATE
-       SET email         = EXCLUDED.email,
-           password_hash = EXCLUDED.password_hash,
-           role          = EXCLUDED.role`,
-    ['ADMIN-001', '0000',
-     process.env.ADMIN_EMAIL || 'admin@solarpayg.com',
-     adminHash, 'admin', 'System Admin', '+254700000000', 0, false]
-  );
+  await upsertDemoUser({
+    deviceId: 'ADMIN-001', pin: '0000',
+    email: process.env.ADMIN_EMAIL || 'admin@solarpayg.com',
+    passwordHash: adminHash, role: 'admin', name: 'System Admin',
+    phone: '+254700000000', walletBalance: 0, relayUnlocked: false
+  });
 
-  // Customer email user — DEMO-001 is the demo customer's device, so the
-  // email/password login and the device-ID/PIN login share the same account.
-  await q(
-    `INSERT INTO users (device_id, pin, email, password_hash, role, name, phone, wallet_balance, relay_unlocked)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-     ON CONFLICT (device_id) DO UPDATE
-       SET email         = EXCLUDED.email,
-           password_hash = EXCLUDED.password_hash,
-           role          = EXCLUDED.role`,
-    ['DEMO-001', '1234',
-     'customer@example.com',
-     customerHash, 'customer', 'Demo Customer', '+254722222222', 75, true]
-  );
+  // DEMO-001 is the demo customer's device, so the email/password login
+  // and the device-ID/PIN login share the same account.
+  await upsertDemoUser({
+    deviceId: 'DEMO-001', pin: '1234',
+    email: 'customer@example.com',
+    passwordHash: customerHash, role: 'customer', name: 'Demo Customer',
+    phone: '+254722222222', walletBalance: 75, relayUnlocked: true
+  });
 
   /* ── Seed device + readings only if DEMO-001 doesn't exist yet ── */
   const { rows } = await q("SELECT id FROM users WHERE device_id = 'DEMO-001'");
