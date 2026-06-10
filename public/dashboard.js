@@ -555,7 +555,7 @@ const SolarDashboard = () => {
   };
   const updateChart = (key, updater) => {
     const chart = chartRefs.current[key];
-    if (!chart) return;
+    if (!chart || !chart.data) return;
     updater(chart.data);
     chart.update('none');
   };

@@ -187,7 +187,8 @@ async function seedDemoData() {
      adminHash, 'admin', 'System Admin', '+254700000000', 0, false]
   );
 
-  // Customer email user — upsert by device_id
+  // Customer email user — DEMO-001 is the demo customer's device, so the
+  // email/password login and the device-ID/PIN login share the same account.
   await q(
     `INSERT INTO users (device_id, pin, email, password_hash, role, name, phone, wallet_balance, relay_unlocked)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -195,7 +196,7 @@ async function seedDemoData() {
        SET email         = EXCLUDED.email,
            password_hash = EXCLUDED.password_hash,
            role          = EXCLUDED.role`,
-    ['DEMO-EMAIL', '0000',
+    ['DEMO-001', '1234',
      'customer@example.com',
      customerHash, 'customer', 'Demo Customer', '+254722222222', 75, true]
   );
