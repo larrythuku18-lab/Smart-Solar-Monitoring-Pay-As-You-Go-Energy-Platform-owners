@@ -908,11 +908,14 @@ const SolarDashboard = () => {
             </ChartCard>
 
             <ChartCard title="Customer Payment Status" badge="Snapshot" badgeColor="amber"
-              subtitle="Portfolio split: paid, low-credit, and defaulted." h="h-[240px]"
+              subtitle="Portfolio split: paid, low-credit, and defaulted." h="h-[320px]"
               footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{attentionCount}</span> customers need immediate attention</>}>
-              <Doughnut ref={mkRef('paymentStatus')} data={paymentStatusData.current}
-                options={{ ...baseOptions, plugins: { ...baseOptions.plugins, legend: { display: false } } }} />
-              <div className="mt-4 flex flex-wrap items-center justify-center gap-4">{paymentLegend}</div>
+              <div className="h-[200px]">
+                <Doughnut ref={mkRef('paymentStatus')} data={paymentStatusData.current}
+                  options={{ ...baseOptions, plugins: { ...baseOptions.plugins, legend: { display: false } },
+                    scales: { x: { display: false }, y: { display: false } } }} />
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">{paymentLegend}</div>
             </ChartCard>
 
             <ChartCard title="Portfolio at Risk — PAR30" badge="Target" badgeColor="red"

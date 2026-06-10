@@ -993,10 +993,12 @@ const SolarDashboard = () => {
     badge: "Snapshot",
     badgeColor: "amber",
     subtitle: "Portfolio split: paid, low-credit, and defaulted.",
-    h: "h-[240px]",
+    h: "h-[320px]",
     footer: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
       className: "font-semibold text-rose-600 dark:text-rose-400"
     }, attentionCount), " customers need immediate attention")
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h-[200px]"
   }, /*#__PURE__*/React.createElement(Doughnut, {
     ref: mkRef('paymentStatus'),
     data: paymentStatusData.current,
@@ -1007,10 +1009,18 @@ const SolarDashboard = () => {
         legend: {
           display: false
         }
+      },
+      scales: {
+        x: {
+          display: false
+        },
+        y: {
+          display: false
+        }
       }
     }
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "mt-4 flex flex-wrap items-center justify-center gap-4"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2"
   }, paymentLegend)), /*#__PURE__*/React.createElement(ChartCard, {
     title: "Portfolio at Risk \u2014 PAR30",
     badge: "Target",
