@@ -339,8 +339,7 @@
           <span class="panel-title">Recent Transactions — Full Log</span>
           <div style="display:flex;gap:8px;align-items:center">
             <input id="tx-search" type="text" placeholder="Search by device or receipt…"
-              style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none;width:220px"
-              oninput="filterTransactions()">
+              style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none;width:220px">
             <span class="badge badge-blue" style="font-size:9px" id="tx-count">Loading…</span>
           </div>
         </div>
@@ -549,6 +548,8 @@
       console.warn('Admin data fetch error:', e);
     }
   }
+
+  document.getElementById('tx-search')?.addEventListener('input', filterTransactions);
 
   // Kick off admin fetch after a short delay (let index.js init first)
   setTimeout(fetchAdminData, 1200);

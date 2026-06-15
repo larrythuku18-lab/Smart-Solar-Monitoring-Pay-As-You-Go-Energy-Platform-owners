@@ -314,8 +314,8 @@
 
       <!-- Role toggle -->
       <div class="role-toggle">
-        <button class="role-btn active-admin" id="btn-admin" onclick="setRole('admin')">Admin / Operator</button>
-        <button class="role-btn" id="btn-customer" onclick="setRole('customer')">Customer</button>
+        <button class="role-btn active-admin" id="btn-admin">Admin / Operator</button>
+        <button class="role-btn" id="btn-customer">Customer</button>
       </div>
 
       <!-- Role description -->
@@ -324,7 +324,7 @@
       </div>
 
       <!-- Form -->
-      <form id="login-form" onsubmit="handleLogin(event)" novalidate>
+      <form id="login-form" novalidate>
         <div class="form-group">
           <label class="form-label" id="id-label" for="identifier">Email Address</label>
           <input id="identifier" class="form-input" type="text" autocomplete="username"
@@ -379,31 +379,31 @@
     let rows = '';
     if (role === 'admin') {
       rows = `
-        <div class="demo-row clickable" onclick="fillCreds('admin')" title="Click to fill">
+        <div class="demo-row clickable" data-fill="admin" title="Click to fill">
           <span class="demo-key">Email</span>
           <span class="demo-val amber">${CREDS.admin[0].val}</span>
         </div>
-        <div class="demo-row clickable" onclick="fillCreds('admin')" title="Click to fill">
+        <div class="demo-row clickable" data-fill="admin" title="Click to fill">
           <span class="demo-key">Password</span>
           <span class="demo-val amber">${CREDS.admin[1].val}</span>
         </div>`;
     } else {
       rows = `
         <div class="demo-section-label">Email &amp; password</div>
-        <div class="demo-row clickable" onclick="fillCreds('customer-email')" title="Click to fill">
+        <div class="demo-row clickable" data-fill="customer-email" title="Click to fill">
           <span class="demo-key">Email</span>
           <span class="demo-val green">${CREDS.customer[0].val}</span>
         </div>
-        <div class="demo-row clickable" onclick="fillCreds('customer-email')" title="Click to fill">
+        <div class="demo-row clickable" data-fill="customer-email" title="Click to fill">
           <span class="demo-key">Password</span>
           <span class="demo-val green">${CREDS.customer[1].val}</span>
         </div>
         <div class="demo-section-label">Device ID &amp; PIN (alternative)</div>
-        <div class="demo-row clickable" onclick="fillCreds('customer-device')" title="Click to fill">
+        <div class="demo-row clickable" data-fill="customer-device" title="Click to fill">
           <span class="demo-key">Device ID</span>
           <span class="demo-val blue">${CREDS.customer[2].val}</span>
         </div>
-        <div class="demo-row clickable" onclick="fillCreds('customer-device')" title="Click to fill">
+        <div class="demo-row clickable" data-fill="customer-device" title="Click to fill">
           <span class="demo-key">PIN</span>
           <span class="demo-val blue">${CREDS.customer[3].val}</span>
         </div>`;
@@ -560,6 +560,13 @@
   })();
 
   /* ── Init ── */
+  document.getElementById('btn-admin').addEventListener('click', () => setRole('admin'));
+  document.getElementById('btn-customer').addEventListener('click', () => setRole('customer'));
+  document.getElementById('login-form').addEventListener('submit', handleLogin);
+  document.getElementById('demo-box').addEventListener('click', e => {
+    const row = e.target.closest('[data-fill]');
+    if (row) fillCreds(row.dataset.fill);
+  });
   renderDemoBox('admin');
 </script>
 </body>

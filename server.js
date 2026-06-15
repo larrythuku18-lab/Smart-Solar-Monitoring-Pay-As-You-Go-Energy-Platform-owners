@@ -113,6 +113,9 @@ function generateMpesaPassword() {
 
 async function initiateSTKPush(phoneNumber, amount, accountReference) {
   if (!mpesaConfigured()) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('M-Pesa is not configured — refusing to simulate a payment in production');
+    }
     const checkoutRequestId = `SIM-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     return {
       simulated:        true,
@@ -187,10 +190,9 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc:  ["'self'"],
-      scriptSrc:   ["'self'", "'unsafe-inline'", "'unsafe-eval'",
+      scriptSrc:   ["'self'", "'unsafe-eval'",
                     'https://cdn.tailwindcss.com', 'https://unpkg.com',
                     'https://cdn.jsdelivr.net', 'https://fonts.googleapis.com'],
-      scriptSrcAttr: ["'unsafe-inline'"],
       styleSrc:    ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc:     ["'self'", 'https://fonts.gstatic.com'],
       imgSrc:      ["'self'", 'data:'],
