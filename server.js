@@ -19,6 +19,7 @@ const helmet      = require('helmet');
 const rateLimit   = require('express-rate-limit');
 const compression = require('compression');
 const { body, validationResult } = require('express-validator');
+const { sendLoginAlert } = require('./mailer');
 
 const {
   runMigrations,
@@ -418,6 +419,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       if (!match) return res.status(401).json({ error: 'Invalid email or password' });
 
       const token = signToken({ id: user.id, deviceId: user.device_id, role: user.role });
+
+      /* Fire-and-forget login notification — never blocks or fails the response */
+      sendLoginAlert(user.email, { name: user.name, time: new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' }) });
+
       return res.json({
         token,
         user: { id: user.id, deviceId: user.device_id, role: user.role, walletBalance: user.wallet_balance }
