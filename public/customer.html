@@ -650,6 +650,7 @@ async function loadState() {
       id:            data.user.id,
       deviceId:      data.user.deviceId,
       name:          data.user.name,
+      email:         data.user.email,
       phone:         data.user.phone,
       walletBalance: data.user.walletBalance,
       role:          'customer'
@@ -698,7 +699,7 @@ function renderAll() {
   /* Welcome */
   document.getElementById('greeting-time').textContent = greetingTime();
   const deviceId = userInfo.deviceId || state.deviceId || 'DEMO-001';
-  document.getElementById('welcome-name').textContent  = userInfo.name || `Device ${deviceId}`;
+  document.getElementById('welcome-name').textContent  = userInfo.name || userInfo.email || `Device ${deviceId}`;
   document.getElementById('welcome-device').textContent = `ID: ${deviceId} · Role: ${userInfo.role || 'customer'}`;
 
   /* Power pill */

@@ -513,6 +513,7 @@ app.get('/api/customer/summary', authMiddleware, async (req, res) => {
         id:            user.id,
         deviceId:      user.device_id,
         name:          user.name   || null,
+        email:         user.email  || null,
         phone:         user.phone  || null,
         walletBalance: user.wallet_balance
       },
