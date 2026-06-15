@@ -273,6 +273,21 @@
       background: rgba(255,255,255,.01);
     }
 
+    /* ── Auth mode toggle (login / sign up) ── */
+    .auth-toggle {
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 14px;
+    }
+    .auth-toggle a {
+      color: var(--green);
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .auth-toggle a:hover { text-decoration: underline; }
+
     /* ── Divider ── */
     .divider {
       display: flex; align-items: center; gap: 10px;
@@ -325,23 +340,41 @@
 
       <!-- Form -->
       <form id="login-form" novalidate>
+        <div class="form-group" id="name-group" style="display:none">
+          <label class="form-label" for="reg-name">Full Name</label>
+          <input id="reg-name" class="form-input" type="text" autocomplete="name" placeholder="Jane Doe" />
+        </div>
         <div class="form-group">
           <label class="form-label" id="id-label" for="identifier">Email Address</label>
           <input id="identifier" class="form-input" type="text" autocomplete="username"
                  placeholder="admin@solarpayg.com" required />
+        </div>
+        <div class="form-group" id="phone-group" style="display:none">
+          <label class="form-label" for="reg-phone">Phone Number (optional)</label>
+          <input id="reg-phone" class="form-input" type="tel" autocomplete="tel" placeholder="07XXXXXXXX" />
         </div>
         <div class="form-group">
           <label class="form-label" id="pw-label" for="password">Password</label>
           <input id="password" class="form-input" type="password" autocomplete="current-password"
                  placeholder="Enter password or PIN" required />
         </div>
+        <div class="form-group" id="confirm-group" style="display:none">
+          <label class="form-label" for="confirm-password">Confirm Password</label>
+          <input id="confirm-password" class="form-input" type="password" autocomplete="new-password"
+                 placeholder="Re-enter password" />
+        </div>
         <button type="submit" class="submit-btn admin-btn" id="submit-btn">
           <span id="btn-text">Sign in as Admin</span>
         </button>
       </form>
 
+      <!-- Sign up / sign in toggle (customer only) -->
+      <div id="auth-toggle" class="auth-toggle" style="display:none">
+        <span id="auth-toggle-text">New customer?</span> <a id="auth-toggle-link">Create an account</a>
+      </div>
+
       <!-- Demo credentials -->
-      <div class="divider">Demo credentials</div>
+      <div class="divider" id="demo-divider">Demo credentials</div>
       <div class="demo-box" id="demo-box">
         <!-- populated by JS -->
       </div>
@@ -356,6 +389,7 @@
 <script>
   const API = '/api';
   let activeRole = 'admin';
+  let authMode   = 'login'; // 'login' | 'signup' (signup only available for customers)
 
   /* ── Demo credential sets ── */
   const CREDS = {
@@ -452,6 +486,7 @@
       pwLabel.textContent   = 'Password';
       submitBtn.className   = 'submit-btn admin-btn';
       btnText.textContent   = 'Sign in as Admin';
+      document.getElementById('auth-toggle').style.display = 'none';
     } else {
       btnAdmin.className    = 'role-btn';
       btnCustomer.className = 'role-btn active-customer';
@@ -462,12 +497,67 @@
       pwLabel.textContent   = 'PIN or Password';
       submitBtn.className   = 'submit-btn customer-btn';
       btnText.textContent   = 'Sign in as Customer';
+      document.getElementById('auth-toggle').style.display = 'block';
     }
 
     document.getElementById('identifier').value = '';
     document.getElementById('password').value   = '';
+    setAuthMode('login');
     clearAlert();
     renderDemoBox(role);
+  }
+
+  /* ── Default submit-button label for the current role/mode ── */
+  function defaultBtnText() {
+    if (activeRole === 'admin') return 'Sign in as Admin';
+    return authMode === 'signup' ? 'Create Account' : 'Sign in as Customer';
+  }
+
+  /* ── Switch between sign-in and sign-up (customer only) ── */
+  function setAuthMode(mode) {
+    authMode = mode;
+
+    const nameGroup    = document.getElementById('name-group');
+    const phoneGroup   = document.getElementById('phone-group');
+    const confirmGroup = document.getElementById('confirm-group');
+    const idLabel      = document.getElementById('id-label');
+    const idInput      = document.getElementById('identifier');
+    const pwLabel      = document.getElementById('pw-label');
+    const passwordEl   = document.getElementById('password');
+    const toggleText   = document.getElementById('auth-toggle-text');
+    const toggleLink   = document.getElementById('auth-toggle-link');
+    const demoDivider  = document.getElementById('demo-divider');
+    const demoBox      = document.getElementById('demo-box');
+
+    const isSignup = mode === 'signup';
+
+    nameGroup.style.display    = isSignup ? 'block' : 'none';
+    phoneGroup.style.display   = isSignup ? 'block' : 'none';
+    confirmGroup.style.display = isSignup ? 'block' : 'none';
+    demoDivider.style.display  = isSignup ? 'none'  : 'block';
+    demoBox.style.display      = isSignup ? 'none'  : 'block';
+
+    if (isSignup) {
+      idLabel.textContent    = 'Email Address';
+      idInput.placeholder    = 'you@example.com';
+      pwLabel.textContent    = 'Create Password';
+      passwordEl.placeholder = 'At least 8 characters';
+      toggleText.textContent = 'Already have an account?';
+      toggleLink.textContent = 'Sign in';
+    } else {
+      idLabel.textContent    = 'Device ID or Email';
+      idInput.placeholder    = 'DEMO-001 or customer@example.com';
+      pwLabel.textContent    = 'PIN or Password';
+      passwordEl.placeholder = 'Enter password or PIN';
+      toggleText.textContent = 'New customer?';
+      toggleLink.textContent = 'Create an account';
+    }
+
+    document.getElementById('reg-name').value        = '';
+    document.getElementById('reg-phone').value       = '';
+    document.getElementById('confirm-password').value = '';
+    document.getElementById('btn-text').textContent  = defaultBtnText();
+    clearAlert();
   }
 
   /* ── Alert helpers ── */
@@ -484,10 +574,12 @@
     box.innerHTML      = '';
   }
 
-  /* ── Login ── */
+  /* ── Login / Sign up ── */
   async function handleLogin(e) {
     e.preventDefault();
     clearAlert();
+
+    if (authMode === 'signup') return handleSignup();
 
     const identifier = document.getElementById('identifier').value.trim();
     const password   = document.getElementById('password').value;
@@ -520,7 +612,7 @@
       if (!res.ok || !tok) {
         showAlert(data.error || data.message || 'Invalid credentials. Please try again.', 'error');
         btn.disabled  = false;
-        btnText.textContent = activeRole === 'admin' ? 'Sign in as Admin' : 'Sign in as Customer';
+        btnText.textContent = defaultBtnText();
         return;
       }
 
@@ -541,7 +633,67 @@
       console.error('Login error:', err);
       showAlert('Network error. Please check your connection.', 'error');
       btn.disabled  = false;
-      btnText.textContent = activeRole === 'admin' ? 'Sign in as Admin' : 'Sign in as Customer';
+      btnText.textContent = defaultBtnText();
+    }
+  }
+
+  /* ── Sign up (customer self-registration) ── */
+  async function handleSignup() {
+    const name            = document.getElementById('reg-name').value.trim();
+    const email           = document.getElementById('identifier').value.trim();
+    const phone           = document.getElementById('reg-phone').value.trim();
+    const password        = document.getElementById('password').value;
+    const confirmPassword = document.getElementById('confirm-password').value;
+
+    if (!email || !password) {
+      showAlert('Please enter an email and password.', 'error');
+      return;
+    }
+    if (password.length < 8) {
+      showAlert('Password must be at least 8 characters.', 'error');
+      return;
+    }
+    if (password !== confirmPassword) {
+      showAlert('Passwords do not match.', 'error');
+      return;
+    }
+
+    const btn     = document.getElementById('submit-btn');
+    const btnText = document.getElementById('btn-text');
+    btn.disabled  = true;
+    btnText.innerHTML = '<span class="spinner"></span> Creating account…';
+
+    try {
+      const res  = await fetch(`${API}/auth/register`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ name, email, password, phone })
+      });
+      const data = await res.json().catch(() => ({}));
+      const tok  = data.token || data.accessToken;
+
+      if (!res.ok || !tok) {
+        showAlert(data.error || data.message || 'Could not create account. Please try again.', 'error');
+        btn.disabled  = false;
+        btnText.textContent = defaultBtnText();
+        return;
+      }
+
+      localStorage.setItem('authToken', tok);
+      localStorage.setItem('userRole',  data.user?.role || 'customer');
+      if (data.user?.deviceId) localStorage.setItem('deviceId', data.user.deviceId);
+
+      showAlert('Account created! Redirecting…', 'success');
+
+      setTimeout(() => {
+        globalThis.location.href = '/intro.html';
+      }, 700);
+
+    } catch (err) {
+      console.error('Sign up error:', err);
+      showAlert('Network error. Please check your connection.', 'error');
+      btn.disabled  = false;
+      btnText.textContent = defaultBtnText();
     }
   }
 
@@ -566,6 +718,10 @@
   document.getElementById('demo-box').addEventListener('click', e => {
     const row = e.target.closest('[data-fill]');
     if (row) fillCreds(row.dataset.fill);
+  });
+  document.getElementById('auth-toggle-link').addEventListener('click', e => {
+    e.preventDefault();
+    setAuthMode(authMode === 'login' ? 'signup' : 'login');
   });
   renderDemoBox('admin');
 </script>
