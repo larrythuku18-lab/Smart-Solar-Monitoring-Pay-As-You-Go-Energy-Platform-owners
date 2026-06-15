@@ -698,7 +698,7 @@ function renderAll() {
   /* Welcome */
   document.getElementById('greeting-time').textContent = greetingTime();
   const deviceId = userInfo.deviceId || state.deviceId || 'DEMO-001';
-  document.getElementById('welcome-name').textContent  = `Device ${deviceId}`;
+  document.getElementById('welcome-name').textContent  = userInfo.name || `Device ${deviceId}`;
   document.getElementById('welcome-device').textContent = `ID: ${deviceId} · Role: ${userInfo.role || 'customer'}`;
 
   /* Power pill */
