@@ -260,6 +260,8 @@ app.use(compression());
    - everything else: 1 hour */
 const publicDir = path.join(__dirname, 'public');
 
+app.get('/', (req, res) => res.redirect('/login.html'));
+
 app.use('/nav.html',    (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'nav.html')));
 app.use('/nav.css',     (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'nav.css')));
 app.use('/nav-init.js', (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'nav-init.js')));
@@ -267,12 +269,9 @@ app.use('/nav-init.js', (req, res) => res.setHeader('Cache-Control', 'public, ma
 app.use(express.static(publicDir, {
   maxAge: '1h',
   etag:   true,
-  lastModified: true
+  lastModified: true,
+  index:  false
 }));
-
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
 
 /* ══════════════════════════════════════════════════════════════════════════
    PUBLIC ROUTES
