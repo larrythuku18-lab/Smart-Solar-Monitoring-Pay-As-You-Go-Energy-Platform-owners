@@ -191,7 +191,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc:  ["'self'"],
-      scriptSrc:   ["'self'", "'unsafe-eval'",
+      scriptSrc:   ["'self'", "'unsafe-inline'", "'unsafe-eval'",
                     'https://cdn.tailwindcss.com', 'https://unpkg.com',
                     'https://cdn.jsdelivr.net', 'https://fonts.googleapis.com'],
       styleSrc:    ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
