@@ -30,6 +30,7 @@ const {
   getDeviceByUserId,
   createPayment,
   completePayment,
+  getPaymentByCheckoutId,
   failPayment,
   getPaymentStats,
   getEnergyHistory,
@@ -50,7 +51,10 @@ const {
   savePrediction,
   getExpiredWalletUsers,
   getUserByEmail,
-  createUser
+  createUser,
+  seedProducts,
+  getProductCatalogueWithCategories,
+  getProductById
 } = require('./db');
 
 const { authMiddleware, signToken } = require('./authMiddleware');
@@ -493,6 +497,26 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+/* ── Product catalogue — public, no auth required ─────────────────────────── */
+app.get('/api/products', async (req, res) => {
+  try {
+    const catalogue = await getProductCatalogueWithCategories();
+    res.json(catalogue);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load products', message: err.message });
+  }
+});
+
+app.get('/api/products/:id', async (req, res) => {
+  try {
+    const product = await getProductById(Number(req.params.id));
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    res.json(product);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load product', message: err.message });
+  }
+});
+
 /* ── Customer summary — authenticated, scoped to the requesting user ─────── */
 app.get('/api/customer/summary', authMiddleware, async (req, res) => {
   try {
@@ -587,11 +611,22 @@ app.post('/api/fraud-check', authMiddleware, [
 
 app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
   try {
-    const { amount, phoneNumber } = req.body;
+    const { amount, phoneNumber, productId } = req.body;
     const user = await getUserById(req.user.id);
 
     if (!user) return res.status(404).json({ error: 'User not found' });
     if (!amount || amount < 1) return res.status(400).json({ error: 'Valid amount required (minimum KES 1)' });
+
+    /* If a productId is supplied, this is a physical product purchase —
+       not an energy top-up — so it must not credit the wallet on completion. */
+    let paymentType = 'energy';
+    let productName = null;
+    if (productId) {
+      const product = await getProductById(Number(productId));
+      if (!product) return res.status(404).json({ error: 'Product not found' });
+      paymentType = 'product';
+      productName = product.name;
+    }
 
     const phone     = phoneNumber || user.phone || '254712345678';
     const device    = await getDeviceByUserId(user.id);
@@ -603,7 +638,10 @@ app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
       amount,
       phoneNumber:       phone,
       merchantRequestId: stkResult.merchantRequestId,
-      checkoutRequestId: stkResult.checkoutRequestId
+      checkoutRequestId: stkResult.checkoutRequestId,
+      paymentType,
+      productId:         productId ? Number(productId) : null,
+      productName
     });
 
     if (stkResult.simulated) {
@@ -616,7 +654,9 @@ app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
             '0',
             'Simulated success'
           );
-          if (payment) await unlockRelay(payment.device_id || user.device_id);
+          if (payment && payment.payment_type !== 'product') {
+            await unlockRelay(payment.device_id || user.device_id);
+          }
         } catch (err) {
           console.error('Simulated payment completion error:', err.message);
         }
@@ -632,6 +672,26 @@ app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
   } catch (err) {
     console.error('Payment error:', err.message);
     res.status(500).json({ error: 'Payment initiation failed', message: err.message });
+  }
+});
+
+/* ── Payment status — used by the frontend to poll for completion.
+   Checking the payment row directly (not wallet balance) works for both
+   energy top-ups and product purchases, which don't touch the wallet. ── */
+app.get('/api/pay/status/:checkoutRequestId', authMiddleware, async (req, res) => {
+  try {
+    const payment = await getPaymentByCheckoutId(req.params.checkoutRequestId);
+    if (!payment || payment.user_id !== req.user.id) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+    res.json({
+      status:      payment.status,
+      amount:      payment.amount,
+      paymentType: payment.payment_type,
+      productName: payment.product_name
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load payment status', message: err.message });
   }
 });
 
@@ -651,13 +711,16 @@ app.post('/api/mpesa/callback', async (req, res) => {
         parsed.resultDesc
       );
       if (payment) {
-        await unlockRelay(payment.device_id);
+        const isProduct = payment.payment_type === 'product';
+        if (!isProduct) await unlockRelay(payment.device_id);
         await createAlert({
           userId:   payment.user_id,
           deviceId: payment.device_id,
           type:     'payment_success',
           severity: 'low',
-          message:  `Payment of KES ${payment.amount} received. Power restored.`
+          message:  isProduct
+            ? `Order received: ${payment.product_name} (KES ${payment.amount}). We'll be in touch to arrange delivery.`
+            : `Payment of KES ${payment.amount} received. Power restored.`
         });
       }
     } else {
@@ -861,6 +924,7 @@ async function startup() {
   console.log('[DB] Connecting to PostgreSQL…');
   await runMigrations();
   await seedDemoData();
+  await seedProducts();
 
   // Warm AI models from persistent data so they resume after restarts
   try {

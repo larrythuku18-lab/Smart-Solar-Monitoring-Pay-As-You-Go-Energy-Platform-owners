@@ -29,6 +29,8 @@ services:
       # MPESA_PASSKEY
       # MPESA_CALLBACK_URL
       # ALLOWED_ORIGINS
+      # EMAIL_USER   (Gmail address used to send login notification emails)
+      # EMAIL_PASS   (Gmail App Password — https://myaccount.google.com/apppasswords)
 
 databases:
   - name: solarpayg-db

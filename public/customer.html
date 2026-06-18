@@ -167,6 +167,44 @@
     .pay-status.info    { background: rgba(59,130,246,.08);  border: 1px solid rgba(59,130,246,.25);  color: #93c5fd; }
     .pay-status.success { background: rgba(16,185,129,.08);  border: 1px solid rgba(16,185,129,.25);  color: var(--green); }
     .pay-status.error   { background: rgba(239,68,68,.08);   border: 1px solid rgba(239,68,68,.25);   color: var(--red); }
+    .product-context {
+      background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.25); border-radius: 10px;
+      padding: 10px 14px; font-size: 12px; color: var(--green); margin-bottom: 14px;
+      display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    }
+    .product-context a { color: var(--muted); text-decoration: underline; cursor: pointer; font-size: 11px; white-space: nowrap; }
+
+    /* ── Shop ── */
+    .shop-categories { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+    .shop-cat-btn {
+      padding: 7px 14px; border-radius: 20px; border: 1px solid var(--border);
+      background: transparent; color: var(--muted); font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all .15s; font-family: 'Space Grotesk', sans-serif;
+    }
+    .shop-cat-btn:hover { border-color: var(--green); color: var(--green); }
+    .shop-cat-btn.active { background: rgba(16,185,129,.15); color: var(--green); border-color: rgba(16,185,129,.4); }
+    .shop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+    .product-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+      padding: 18px; display: flex; flex-direction: column; gap: 8px; transition: border-color .18s;
+    }
+    .product-card:hover { border-color: rgba(16,185,129,.35); }
+    .product-card .p-icon { font-size: 26px; }
+    .product-card .p-name { font-size: 14px; font-weight: 700; color: var(--text); }
+    .product-card .p-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
+    .product-card .p-specs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+    .product-card .p-spec-tag {
+      font-size: 9px; padding: 3px 7px; border-radius: 6px; background: rgba(255,255,255,.04);
+      color: var(--sub); border: 1px solid var(--border);
+    }
+    .product-card .p-price { font-size: 18px; font-weight: 800; color: var(--amber); margin-top: 8px; }
+    .product-card .buy-btn {
+      width: 100%; padding: 10px; border-radius: 9px; border: none; margin-top: 6px;
+      background: linear-gradient(135deg, #047857, #059669); color: #f0fdf4;
+      font-size: 13px; font-weight: 700; cursor: pointer; font-family: 'Space Grotesk', sans-serif;
+      transition: all .18s;
+    }
+    .product-card .buy-btn:hover { box-shadow: 0 4px 16px rgba(16,185,129,.3); transform: translateY(-1px); }
     .pay-spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; flex-shrink: 0; }
 
     /* ── Transactions table ── */
@@ -332,6 +370,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="overview">Overview</button>
     <button class="tab" data-tab="pay">Pay</button>
+    <button class="tab" data-tab="shop">Shop</button>
     <button class="tab" data-tab="history">History</button>
     <button class="tab" data-tab="energy">Energy</button>
     <button class="tab" data-tab="account">Account</button>
@@ -410,12 +449,17 @@
   <div id="tab-pay" class="tab-content">
     <div class="panel">
       <div class="panel-head">
-        <span class="panel-title">Buy Energy via M-Pesa</span>
+        <span class="panel-title" id="pay-panel-title">Buy Energy via M-Pesa</span>
         <span class="chip chip-green">STK Push</span>
       </div>
       <div class="pay-wrap">
 
-        <div class="form-group">
+        <div class="product-context" id="product-context" style="display:none">
+          <span>Ordering: <strong id="product-context-name"></strong></span>
+          <a href="#" id="cancel-product-link">Cancel</a>
+        </div>
+
+        <div class="form-group" id="amount-presets-group">
           <label class="form-label">Quick Amounts (KES)</label>
           <div class="presets">
             <button class="preset-btn" data-amount="50">50</button>
@@ -455,6 +499,22 @@
         <div class="info-row"><span class="info-key">Maximum top-up</span><span class="info-val">KES 10,000</span></div>
         <div class="info-row"><span class="info-key">Payment method</span><span class="info-val" style="color:var(--green)">M-Pesa STK Push</span></div>
         <div class="info-row"><span class="info-key">Power restored</span><span class="info-val">Within ~5 seconds</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SHOP TAB ══ -->
+  <div id="tab-shop" class="tab-content">
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Solar Product Shop</span>
+        <span class="chip chip-green">M-Pesa checkout</span>
+      </div>
+      <div style="padding:16px 18px">
+        <div class="shop-categories" id="shop-categories"></div>
+        <div class="shop-grid" id="shop-grid">
+          <div style="text-align:center;padding:20px;color:var(--muted);grid-column:1/-1">Loading products…</div>
+        </div>
       </div>
     </div>
   </div>
@@ -610,6 +670,11 @@ let energyHistory = null;
 let allTxs    = [];
 let energyChart = null;
 let payPolling  = null;
+let shopCatalogue = [];
+let shopLoaded    = false;
+let activeShopCategory = 'all';
+let currentProductId   = null;
+let currentProductName = null;
 
 /* ══ GREETING ══ */
 function greetingTime() {
@@ -625,11 +690,12 @@ function switchTab(id) {
   document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + id)?.classList.add('active');
   const buttons = document.querySelectorAll('.tab');
-  const labels  = ['overview','pay','history','energy','account'];
+  const labels  = ['overview','pay','shop','history','energy','account'];
   const idx     = labels.indexOf(id);
   if (idx >= 0) buttons[idx]?.classList.add('active');
   if (id === 'history')  loadHistory();
   if (id === 'energy')   loadEnergy();
+  if (id === 'shop')     loadShop();
 }
 
 /* ══ FETCH HELPERS ══ */
@@ -902,6 +968,112 @@ function onAmountChange() {
   });
 }
 
+/* ══ SHOP ══ */
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+async function loadShop() {
+  if (shopLoaded) return;
+  try {
+    const r = await fetch(`${API}/products`);
+    if (!r.ok) throw new Error('Failed to load products');
+    shopCatalogue = await r.json();
+    shopLoaded = true;
+    renderShopCategories();
+    renderShopGrid();
+  } catch (e) {
+    console.warn('loadShop error:', e);
+    document.getElementById('shop-grid').innerHTML =
+      `<div style="text-align:center;padding:20px;color:var(--red);grid-column:1/-1">Could not load products. Please try again later.</div>`;
+  }
+}
+
+function renderShopCategories() {
+  const wrap = document.getElementById('shop-categories');
+  const pills = [{ id: 'all', name: 'All', icon: '🛒' }, ...shopCatalogue.map(c => ({ id: c.id, name: c.name, icon: c.icon }))];
+  wrap.innerHTML = pills.map(p => `
+    <button class="shop-cat-btn${activeShopCategory === String(p.id) ? ' active' : ''}" data-cat="${p.id}">
+      ${escapeHtml(p.icon || '')} ${escapeHtml(p.name)}
+    </button>
+  `).join('');
+  wrap.querySelectorAll('.shop-cat-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeShopCategory = btn.dataset.cat;
+      renderShopCategories();
+      renderShopGrid();
+    });
+  });
+}
+
+function renderShopGrid() {
+  const grid = document.getElementById('shop-grid');
+  const categories = activeShopCategory === 'all'
+    ? shopCatalogue
+    : shopCatalogue.filter(c => String(c.id) === activeShopCategory);
+
+  const cards = [];
+  categories.forEach(cat => {
+    (cat.products || []).forEach(p => {
+      const specTags = Object.entries(p.specs || {}).slice(0, 3)
+        .map(([k, v]) => `<span class="p-spec-tag">${escapeHtml(v)}</span>`).join('');
+      cards.push(`
+        <div class="product-card">
+          <div class="p-icon">${escapeHtml(cat.icon || '')}</div>
+          <div class="p-name">${escapeHtml(p.name)}</div>
+          <div class="p-desc">${escapeHtml(p.description)}</div>
+          <div class="p-specs">${specTags}</div>
+          <div class="p-price">KES ${Number(p.price).toLocaleString()}</div>
+          <button class="buy-btn" data-id="${p.id}" data-price="${p.price}" data-name="${escapeHtml(p.name)}">Buy Now</button>
+        </div>
+      `);
+    });
+  });
+
+  grid.innerHTML = cards.length
+    ? cards.join('')
+    : `<div style="text-align:center;padding:20px;color:var(--muted);grid-column:1/-1">No products in this category.</div>`;
+
+  grid.querySelectorAll('.buy-btn').forEach(btn => {
+    btn.addEventListener('click', () => buyProduct(Number(btn.dataset.id), Number(btn.dataset.price), btn.dataset.name));
+  });
+}
+
+/* Switching into "buy a product" mode pins the amount to the product's price
+   and tags the payment with productId so the backend treats it as an order,
+   not an energy top-up (which would otherwise wrongly credit the wallet). */
+function buyProduct(productId, price, name) {
+  currentProductId   = productId;
+  currentProductName = name;
+
+  document.getElementById('pay-amount').value    = price;
+  document.getElementById('pay-amount').readOnly = true;
+  document.getElementById('amount-presets-group').style.display = 'none';
+  document.getElementById('kwh-hint').style.display = 'none';
+  document.getElementById('pay-panel-title').textContent = `Order: ${name}`;
+  document.getElementById('product-context-name').textContent = name;
+  document.getElementById('product-context').style.display = 'flex';
+
+  switchTab('pay');
+  setPayStatus('info', 'Confirm your M-Pesa number below to complete this order.');
+}
+
+function clearPayContext() {
+  if (!currentProductId) return;
+  currentProductId   = null;
+  currentProductName = null;
+
+  document.getElementById('pay-amount').readOnly = false;
+  document.getElementById('pay-amount').value    = '';
+  document.getElementById('amount-presets-group').style.display = '';
+  document.getElementById('kwh-hint').style.display = '';
+  document.getElementById('pay-panel-title').textContent = 'Buy Energy via M-Pesa';
+  document.getElementById('product-context').style.display = 'none';
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  setPayStatus('info', '');
+  onAmountChange();
+}
+
 function setPayStatus(type, html) {
   const el = document.getElementById('pay-status');
   el.className = `pay-status ${type}`;
@@ -910,8 +1082,10 @@ function setPayStatus(type, html) {
 }
 
 async function submitPayment() {
-  const amount = parseFloat(document.getElementById('pay-amount').value);
-  const phone  = document.getElementById('pay-phone').value.trim().replace(/\s/g,'');
+  const amount    = parseFloat(document.getElementById('pay-amount').value);
+  const phone     = document.getElementById('pay-phone').value.trim().replace(/\s/g,'');
+  const productId = currentProductId;
+  const productName = currentProductName;
 
   if (!amount || amount < 10) { setPayStatus('error', 'Minimum top-up is KES 10.'); return; }
   if (!phone)                  { setPayStatus('error', 'Please enter your M-Pesa phone number.'); return; }
@@ -923,25 +1097,14 @@ async function submitPayment() {
   setPayStatus('info', 'Sending STK push to your phone…');
 
   try {
-    const r    = await authFetch(`${API}/pay`, { method: 'POST', body: JSON.stringify({ amount: Math.floor(amount), phoneNumber: phone }) });
+    const body = { amount: Math.floor(amount), phoneNumber: phone };
+    if (productId) body.productId = productId;
+    const r    = await authFetch(`${API}/pay`, { method: 'POST', body: JSON.stringify(body) });
     const data = await r.json();
 
     if (r.ok && data.success) {
       setPayStatus('info', `STK push sent. Check your phone and enter your M-Pesa PIN.<br><small style="color:var(--muted)">Request ID: ${data.checkoutRequestId || '—'}</small>`);
-      if (data.simulated) {
-        setTimeout(() => {
-          setPayStatus('success', `Payment of ${fmtKES(amount)} confirmed. Power restored.`);
-          btn.disabled  = false;
-          btnText.textContent = 'Pay with M-Pesa';
-          document.getElementById('pay-amount').value = '';
-          document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-          onAmountChange();
-          loadState();
-          allTxs = [];
-        }, 4500);
-      } else {
-        pollPayment(data.checkoutRequestId, amount);
-      }
+      pollPayment(data.checkoutRequestId, amount, productName, data.simulated);
     } else {
       setPayStatus('error', data.message || data.error || 'Payment initiation failed.');
       btn.disabled = false;
@@ -954,7 +1117,7 @@ async function submitPayment() {
   }
 }
 
-function pollPayment(checkoutId, amount) {
+function pollPayment(checkoutId, amount, productName, simulated) {
   let attempts = 0;
   clearInterval(payPolling);
   payPolling = setInterval(async () => {
@@ -967,16 +1130,23 @@ function pollPayment(checkoutId, amount) {
       return;
     }
     try {
-      const r = await authFetch(`${API}/auth/me`);
+      const r = await authFetch(`${API}/pay/status/${checkoutId}`);
       if (!r.ok) return;
-      const me = await r.json();
-      if (me.walletBalance > (Number(state.walletBalance) || 0)) {
+      const payment = await r.json();
+      if (payment.status === 'completed') {
         clearInterval(payPolling);
-        setPayStatus('success', `Payment of ${fmtKES(amount)} confirmed. Power restored.`);
-        state.walletBalance = me.walletBalance;
+        setPayStatus('success', productName
+          ? `Order confirmed: <strong>${escapeHtml(productName)}</strong>. We'll be in touch to arrange delivery.`
+          : `Payment of ${fmtKES(amount)} confirmed. Power restored.`);
         document.getElementById('pay-btn').disabled  = false;
         document.getElementById('pay-btn-text').textContent = 'Pay with M-Pesa';
+        clearPayContext();
         loadState(); allTxs = [];
+      } else if (payment.status === 'failed') {
+        clearInterval(payPolling);
+        setPayStatus('error', 'Payment failed or was cancelled. Please try again.');
+        document.getElementById('pay-btn').disabled  = false;
+        document.getElementById('pay-btn-text').textContent = 'Pay with M-Pesa';
       }
     } catch (e) { /* ignore */ }
   }, 3000);
@@ -995,9 +1165,14 @@ async function boot() {
   document.getElementById('app').style.display = 'block';
   document.getElementById('loading-overlay').classList.add('hidden');
 
-  /* Wire up tab buttons (overview/pay/history/energy/account) */
+  /* Wire up tab buttons (overview/pay/shop/history/energy/account).
+     Navigating via the tab bar (as opposed to "Buy Now") always exits any
+     in-progress product order context. */
   document.querySelectorAll('[data-tab]').forEach(el => {
-    el.addEventListener('click', () => switchTab(el.dataset.tab));
+    el.addEventListener('click', () => {
+      clearPayContext();
+      switchTab(el.dataset.tab);
+    });
   });
   /* Wire up quick-amount presets */
   document.querySelectorAll('[data-amount]').forEach(el => {
@@ -1006,6 +1181,11 @@ async function boot() {
   document.getElementById('pay-amount')?.addEventListener('input', onAmountChange);
   document.getElementById('pay-btn')?.addEventListener('click', submitPayment);
   document.getElementById('logout-btn')?.addEventListener('click', logout);
+  document.getElementById('cancel-product-link')?.addEventListener('click', e => {
+    e.preventDefault();
+    clearPayContext();
+    switchTab('shop');
+  });
 
   /* Refresh state every 30 s */
   setInterval(loadState, 30000);

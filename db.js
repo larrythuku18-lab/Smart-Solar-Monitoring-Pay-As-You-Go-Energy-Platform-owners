@@ -153,6 +153,31 @@ async function runMigrations() {
       next_retry_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    -- ── Product catalogue ─────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS product_categories (
+      id          SERIAL       PRIMARY KEY,
+      name        VARCHAR(128) NOT NULL,
+      description TEXT,
+      icon        VARCHAR(8),
+      sort_order  INTEGER      DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS products (
+      id          SERIAL        PRIMARY KEY,
+      category_id INTEGER       REFERENCES product_categories(id) ON DELETE CASCADE,
+      name        VARCHAR(255)  NOT NULL,
+      description TEXT,
+      price       NUMERIC(12,2) NOT NULL,
+      specs       JSONB         DEFAULT '{}',
+      in_stock    BOOLEAN       DEFAULT TRUE,
+      created_at  TIMESTAMPTZ   DEFAULT NOW()
+    );
+
+    -- Distinguish energy top-ups from physical product purchases on a payment
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_type VARCHAR(20) DEFAULT 'energy';
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_id   INTEGER REFERENCES products(id) ON DELETE SET NULL;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_name VARCHAR(255);
+
     -- ── Indexes ────────────────────────────────────────────────────────────
     CREATE INDEX IF NOT EXISTS idx_energy_device_ts  ON energy_readings(device_id, recorded_at DESC);
     CREATE INDEX IF NOT EXISTS idx_payments_user     ON payments(user_id);
@@ -243,6 +268,68 @@ async function seedDemoData() {
   }
 
   console.log('[DB] Demo data seeded  (deviceId: DEMO-001  pin: 1234)');
+}
+
+/* ── Product catalogue seed ─────────────────────────────────────────────── */
+async function seedProducts() {
+  const { rows } = await q('SELECT id FROM product_categories LIMIT 1');
+  if (rows.length > 0) return; // already seeded
+
+  const catalogue = [
+    {
+      name: 'Solar Panels', description: 'High-efficiency photovoltaic panels', icon: '☀️', sort_order: 1,
+      products: [
+        { name: '100W Monocrystalline Panel', description: 'Compact panel ideal for small systems and charging', price: 8500, specs: { wattage: '100W', type: 'Monocrystalline', efficiency: '21%', warranty: '10 years' } },
+        { name: '200W Monocrystalline Panel', description: 'Mid-range panel for home lighting and appliances', price: 15000, specs: { wattage: '200W', type: 'Monocrystalline', efficiency: '21%', warranty: '10 years' } },
+        { name: '300W Polycrystalline Panel', description: 'Budget-friendly panel for larger installations', price: 18000, specs: { wattage: '300W', type: 'Polycrystalline', efficiency: '18%', warranty: '5 years' } }
+      ]
+    },
+    {
+      name: 'Batteries', description: 'Deep-cycle storage batteries for solar systems', icon: '🔋', sort_order: 2,
+      products: [
+        { name: '100Ah Lithium Battery', description: 'Lightweight, long-life lithium-ion deep cycle battery', price: 22000, specs: { capacity: '100Ah', type: 'Lithium LiFePO4', cycles: '2000+', warranty: '3 years' } },
+        { name: '200Ah AGM Deep Cycle', description: 'Maintenance-free AGM battery for reliable storage', price: 28000, specs: { capacity: '200Ah', type: 'AGM', cycles: '500+', warranty: '2 years' } }
+      ]
+    },
+    {
+      name: 'Inverters', description: 'Convert DC solar power to AC for home appliances', icon: '⚡', sort_order: 3,
+      products: [
+        { name: '1000W Pure Sine Wave Inverter', description: 'Powers TVs, lights, fans and small appliances', price: 12000, specs: { power: '1000W', waveform: 'Pure Sine Wave', input: '12V/24V DC', warranty: '1 year' } },
+        { name: '2000W Pure Sine Wave Inverter', description: 'Handles fridges, washing machines and power tools', price: 19500, specs: { power: '2000W', waveform: 'Pure Sine Wave', input: '24V/48V DC', warranty: '1 year' } }
+      ]
+    },
+    {
+      name: 'Complete Kits', description: 'All-in-one solar kits ready for installation', icon: '🔌', sort_order: 4,
+      products: [
+        { name: 'Starter Kit 200W', description: 'Panel + 100Ah battery + 1000W inverter + controller. Powers basic home needs.', price: 35000, specs: { panel: '200W', battery: '100Ah', inverter: '1000W', warranty: '1 year bundle' } },
+        { name: 'Home Kit 400W', description: 'Dual 200W panels + 200Ah battery + 2000W inverter. Full home power solution.', price: 65000, specs: { panel: '2×200W', battery: '200Ah', inverter: '2000W', warranty: '2 year bundle' } }
+      ]
+    },
+    {
+      name: 'Accessories', description: 'Cables, controllers, and mounting hardware', icon: '🔧', sort_order: 5,
+      products: [
+        { name: 'MPPT Charge Controller 40A', description: '40A MPPT controller for efficient battery charging', price: 3200, specs: { current: '40A', type: 'MPPT', voltage: '12V/24V', warranty: '1 year' } },
+        { name: 'MC4 Connector Set (10 pairs)', description: 'Weatherproof solar cable connectors', price: 800, specs: { quantity: '10 pairs', rating: '30A / 1000V', material: 'UV-resistant' } },
+        { name: 'Adjustable Mounting Brackets', description: 'Galvanized steel brackets for roof or ground mounting', price: 1500, specs: { material: 'Galvanized steel', fits: 'Most panel sizes', tilt: '0–45°' } }
+      ]
+    }
+  ];
+
+  let productCount = 0;
+  for (const cat of catalogue) {
+    const { rows: [{ id: catId }] } = await q(
+      'INSERT INTO product_categories (name, description, icon, sort_order) VALUES ($1,$2,$3,$4) RETURNING id',
+      [cat.name, cat.description, cat.icon, cat.sort_order]
+    );
+    for (const p of cat.products) {
+      await q(
+        'INSERT INTO products (category_id, name, description, price, specs) VALUES ($1,$2,$3,$4,$5)',
+        [catId, p.name, p.description, p.price, JSON.stringify(p.specs)]
+      );
+      productCount++;
+    }
+  }
+  console.log(`[DB] Product catalogue seeded (${catalogue.length} categories, ${productCount} products)`);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -380,13 +467,13 @@ async function getEnergyHistory48h(deviceId) {
    PAYMENT QUERIES
 ══════════════════════════════════════════════════════════════════════════ */
 
-async function createPayment({ userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId }) {
+async function createPayment({ userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId, paymentType = 'energy', productId = null, productName = null }) {
   const { rows } = await q(
     `INSERT INTO payments
-       (user_id, device_id, amount, phone_number, status, merchant_request_id, checkout_request_id)
-     VALUES ($1,$2,$3,$4,'pending',$5,$6)
+       (user_id, device_id, amount, phone_number, status, merchant_request_id, checkout_request_id, payment_type, product_id, product_name)
+     VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9)
      RETURNING id`,
-    [userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId]
+    [userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId, paymentType, productId, productName]
   );
   return rows[0];
 }
@@ -407,13 +494,24 @@ async function completePayment(checkoutRequestId, receiptNumber, resultCode, res
     [receiptNumber, resultCode, resultDesc, checkoutRequestId]
   );
 
-  await updateWallet(payment.user_id, Number.parseFloat(payment.amount));
+  // Product purchases are fulfilled physically — only energy top-ups credit the wallet/unlock power
+  if (payment.payment_type !== 'product') {
+    await updateWallet(payment.user_id, Number.parseFloat(payment.amount));
+  }
 
   const { rows: updated } = await q(
     'SELECT * FROM payments WHERE checkout_request_id = $1',
     [checkoutRequestId]
   );
   return updated[0] ?? null;
+}
+
+async function getPaymentByCheckoutId(checkoutRequestId) {
+  const { rows } = await q(
+    'SELECT * FROM payments WHERE checkout_request_id = $1',
+    [checkoutRequestId]
+  );
+  return rows[0] ?? null;
 }
 
 async function failPayment(checkoutRequestId, resultCode, resultDesc) {
@@ -624,6 +722,34 @@ async function getAdminSummary() {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   PRODUCT CATALOGUE QUERIES
+══════════════════════════════════════════════════════════════════════════ */
+
+async function getProductCatalogueWithCategories() {
+  const { rows: cats } = await q(
+    'SELECT * FROM product_categories ORDER BY sort_order'
+  );
+  const { rows: prods } = await q(
+    'SELECT * FROM products WHERE in_stock = TRUE ORDER BY category_id, price'
+  );
+  return cats.map(c => ({
+    ...c,
+    products: prods.filter(p => p.category_id === c.id)
+  }));
+}
+
+async function getProductById(id) {
+  const { rows } = await q(
+    `SELECT p.*, c.name AS category_name, c.icon AS category_icon
+     FROM products p
+     JOIN product_categories c ON c.id = p.category_id
+     WHERE p.id = $1`,
+    [id]
+  );
+  return rows[0] ?? null;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    EXPORTS  (same surface as the old SQLite db.js)
 ══════════════════════════════════════════════════════════════════════════ */
 module.exports = {
@@ -651,6 +777,7 @@ module.exports = {
   /* payments */
   createPayment,
   completePayment,
+  getPaymentByCheckoutId,
   failPayment,
   getPaymentStats,
   getRecentPayments,
@@ -672,5 +799,9 @@ module.exports = {
   removePendingCommand,
   /* aggregates */
   getDashboardState,
-  getAdminSummary
+  getAdminSummary,
+  /* products */
+  seedProducts,
+  getProductCatalogueWithCategories,
+  getProductById
 };
