@@ -99,6 +99,27 @@ function getMpesaBaseUrl() {
     : 'https://sandbox.safaricom.co.ke';
 }
 
+/* Safaricom's sandbox in particular is known to return transient 5xx errors
+ * under load — retry those a couple of times before giving up. Deliberately
+ * does NOT retry on network-level errors (timeouts, connection resets),
+ * since those are ambiguous: the STK push may have already reached the
+ * customer's phone, and retrying could double-prompt them. Only a definitive
+ * 5xx response from Daraja itself is treated as safe to retry. */
+async function withMpesaRetry(fn, { retries = 3, delayMs = 700 } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const status = err.response?.status;
+      if (!status || status < 500 || attempt === retries) throw err;
+      await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 /* Cache the M-Pesa token — tokens are valid for 3600 s; refresh 60 s early */
 let _mpesaToken = null;
 let _mpesaTokenExpiry = 0;
@@ -109,10 +130,10 @@ async function getMpesaAccessToken() {
   const auth = Buffer.from(
     `${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`
   ).toString('base64');
-  const { data } = await axios.get(
+  const { data } = await withMpesaRetry(() => axios.get(
     `${getMpesaBaseUrl()}/oauth/v1/generate?grant_type=client_credentials`,
     { headers: { Authorization: `Basic ${auth}` } }
-  );
+  ));
   _mpesaToken       = data.access_token;
   _mpesaTokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
   return _mpesaToken;
@@ -158,11 +179,11 @@ async function initiateSTKPush(phoneNumber, amount, accountReference) {
     TransactionDesc:   'SolarPAYG Energy Payment'
   };
 
-  const { data } = await axios.post(
+  const { data } = await withMpesaRetry(() => axios.post(
     `${getMpesaBaseUrl()}/mpesa/stkpush/v1/processrequest`,
     payload,
     { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
-  );
+  ));
 
   return {
     simulated:        false,
@@ -694,7 +715,13 @@ app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
     });
   } catch (err) {
     console.error('Payment error:', err.message);
-    res.status(500).json({ error: 'Payment initiation failed', message: err.message });
+    const fromMpesa = err.response?.status >= 500;
+    res.status(502).json({
+      error: 'Payment initiation failed',
+      message: fromMpesa
+        ? 'M-Pesa is temporarily unavailable. Please try again in a moment.'
+        : 'Could not initiate payment. Please try again.'
+    });
   }
 });
 
