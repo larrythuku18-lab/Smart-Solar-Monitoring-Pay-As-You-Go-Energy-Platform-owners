@@ -73,6 +73,14 @@ const {
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
+/* Render (and most PaaS hosts) put the app behind exactly one reverse proxy
+ * hop, which sets X-Forwarded-For. Express's default 'trust proxy' is false,
+ * so express-rate-limit refuses to trust that header and throws
+ * ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on every rate-limited request — this
+ * tells Express to trust the first hop, fixing req.ip for both rate limiting
+ * and req.ip usage elsewhere (e.g. /api/telemetry device heartbeats). */
+app.set('trust proxy', 1);
+
 /* ══════════════════════════════════════════════════════════════════════════
    M-PESA HELPERS
 ══════════════════════════════════════════════════════════════════════════ */
