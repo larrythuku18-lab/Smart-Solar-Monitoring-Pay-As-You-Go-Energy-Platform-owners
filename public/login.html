@@ -739,7 +739,7 @@
       const res  = await fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${tok}` } });
       if (!res.ok) { localStorage.removeItem('authToken'); return; }
       const user = await res.json();
-      globalThis.location.href = (user.role === 'admin') ? '/admin.html' : '/customer.html';
+      globalThis.location.href = (user.role === 'admin') ? '/index.html' : '/customer.html';
     } catch (e) {
       console.warn('Auto-redirect check failed — showing login form.', e);
     }

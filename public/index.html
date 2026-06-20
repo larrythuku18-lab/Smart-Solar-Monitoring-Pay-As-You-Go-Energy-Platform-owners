@@ -85,6 +85,7 @@
     .badge-green { background: rgba(16,185,129,.12); color: var(--green); border: 1px solid rgba(16,185,129,.24); }
     .badge-blue  { background: rgba(59,130,246,.12);  color: var(--blue);  border: 1px solid rgba(59,130,246,.24); }
     .badge-red   { background: rgba(239,68,68,.12);   color: var(--red);   border: 1px solid rgba(239,68,68,.24);  }
+    .badge-teal  { background: rgba(20,184,166,.12);   color: var(--teal);  border: 1px solid rgba(20,184,166,.24); }
     /* Status-bar divider */
     .topbar-sep { width: 1px; height: 16px; background: rgba(255,255,255,.1); margin: 0 4px; }
 
@@ -183,15 +184,40 @@
     .nav-card-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
     .nav-card-arrow { font-size: 18px; color: var(--amber); margin-top: 4px; }
 
+    /* ── Transactions table ── */
+    .tx-table-wrap { overflow-x: auto; }
+    .tx-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .tx-table th { padding: 10px 16px; text-align: left; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); border-bottom: 1px solid var(--border); background: rgba(255,255,255,.02); }
+    .tx-table td { padding: 11px 16px; border-bottom: 1px solid rgba(255,255,255,.04); vertical-align: middle; }
+    .tx-table tr:last-child td { border-bottom: none; }
+    .tx-table tr:hover td { background: rgba(255,255,255,.02); }
+    .tx-receipt { font-family: monospace; font-size: 10px; color: var(--teal); }
+    .tx-amount { font-weight: 700; color: var(--green); }
+    .tx-device { font-size: 10px; color: var(--blue); }
+    .tx-date { font-size: 10px; color: var(--muted); }
+
+    /* ── Admin stats ── */
+    .admin-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; padding: 14px 18px; }
+    .stat-item { background: rgba(255,255,255,.03); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+    .stat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .stat-value { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px; }
+
+    /* ── Audit timeline ── */
+    .timeline-item { display: flex; gap: 12px; padding: 10px 18px; border-bottom: 1px solid rgba(255,255,255,.03); }
+    .timeline-item:last-child { border-bottom: none; }
+    .timeline-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+    .timeline-text { font-size: 11px; color: var(--sub); line-height: 1.5; }
+    .timeline-time { font-size: 9px; color: var(--muted); margin-top: 2px; }
+
     /* ── Responsive ── */
     @media (max-width: 1100px) {
-      .kpi-grid, .row2, .row3, .overview-body, .weather-cells, .nav-cards { grid-template-columns: 1fr 1fr; }
+      .kpi-grid, .row2, .row3, .overview-body, .weather-cells, .nav-cards, .admin-stats { grid-template-columns: 1fr 1fr; }
       .health-bar { grid-template-columns: 1fr 1fr; }
       .forecast-grid { grid-template-columns: repeat(3,1fr); }
     }
     @media (max-width: 640px) {
       .content { padding: 12px 12px 56px; gap: 12px; }
-      .kpi-grid, .overview-body, .nav-cards { grid-template-columns: 1fr 1fr; }
+      .kpi-grid, .overview-body, .nav-cards, .admin-stats { grid-template-columns: 1fr 1fr; }
       .row2, .row3, .health-bar { grid-template-columns: 1fr; }
       .weather-cells { grid-template-columns: 1fr 1fr; padding: 10px 12px; }
       .forecast-grid { grid-template-columns: repeat(2,1fr); }
@@ -201,9 +227,10 @@
       .kpi { padding: 12px 14px; }
       .panel-head { padding: 10px 14px; }
       .overview-body { padding: 10px 12px; }
+      .tx-table th, .tx-table td { padding: 8px 10px; }
     }
     @media (max-width: 380px) {
-      .kpi-grid, .overview-body, .weather-cells, .nav-cards { grid-template-columns: 1fr; }
+      .kpi-grid, .overview-body, .weather-cells, .nav-cards, .admin-stats { grid-template-columns: 1fr; }
       .topbar-right .badge:nth-child(n+4) { display: none; }
     }
   </style>
@@ -322,6 +349,20 @@
       <div style="padding:10px 18px;border-top:1px solid var(--border);color:var(--teal);font-size:10px" id="weather-message">Loading weather data…</div>
     </div>
 
+    <!-- Admin Summary Stats -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Admin Summary</span>
+        <span class="badge badge-teal" style="font-size:9px">Live Pull</span>
+      </div>
+      <div class="admin-stats" id="admin-stats">
+        <div class="stat-item"><div class="stat-label">Total Payments</div><div class="stat-value" id="stat-total-payments" style="color:var(--green)">—</div></div>
+        <div class="stat-item"><div class="stat-label">Total Revenue</div><div class="stat-value" id="stat-total-revenue" style="color:var(--amber)">—</div></div>
+        <div class="stat-item"><div class="stat-label">Pending Payments</div><div class="stat-value" id="stat-pending" style="color:var(--amber)">—</div></div>
+        <div class="stat-item"><div class="stat-label">Failed Payments</div><div class="stat-value" id="stat-failed" style="color:var(--red)">—</div></div>
+      </div>
+    </div>
+
     <!-- Forecast + Alerts -->
     <div class="row2">
       <div class="panel">
@@ -394,6 +435,47 @@
       </div>
     </div>
 
+    <!-- Full Transactions Table -->
+    <div class="panel" id="transactions">
+      <div class="panel-head">
+        <span class="panel-title">Recent Transactions — Full Log</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="tx-search" type="text" placeholder="Search by device or receipt…"
+            style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none;width:220px">
+          <span class="badge badge-blue" style="font-size:9px" id="tx-count">Loading…</span>
+        </div>
+      </div>
+      <div class="tx-table-wrap">
+        <table class="tx-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Device ID</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>M-Pesa Receipt</th>
+              <th>Phone</th>
+              <th>Date & Time</th>
+            </tr>
+          </thead>
+          <tbody id="tx-body">
+            <tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading transactions…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Audit Timeline -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Audit Timeline</span>
+        <span class="badge badge-teal" style="font-size:9px">Last 20 Events</span>
+      </div>
+      <div id="timeline-list" style="max-height:280px;overflow-y:auto">
+        <div style="padding:18px;color:var(--muted);font-size:11px">Loading events…</div>
+      </div>
+    </div>
+
     <!-- Quick navigation cards -->
     <div class="panel">
       <div class="panel-head">
@@ -404,12 +486,6 @@
           <div class="nav-card-icon">↗</div>
           <div class="nav-card-title">Analysis Board</div>
           <div class="nav-card-desc">Interactive charts — Energy, Financial, AI Insights, and Operations views with live data refresh.</div>
-          <div class="nav-card-arrow">→</div>
-        </a>
-        <a class="nav-card" href="/admin.html">
-          <div class="nav-card-icon">⚙</div>
-          <div class="nav-card-title">Admin Console</div>
-          <div class="nav-card-desc">Full transaction log, admin summary stats, audit timeline, and AI engine health overview.</div>
           <div class="nav-card-arrow">→</div>
         </a>
         <a class="nav-card" href="/login.html">
@@ -482,6 +558,135 @@
       else a.classList.remove('active');
     });
   });
+
+  /* ── Admin summary / full transaction log / audit timeline ──
+     (merged in from the old standalone Admin Console page) ── */
+  const API = '/api';
+  let allTransactions = [];
+
+  const _compact = new Intl.NumberFormat('en', { notation: 'compact', maximumSignificantDigits: 3 });
+  const _integer = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
+
+  function fmtCount(n) {
+    n = Number(n) || 0;
+    return n >= 10000 ? _compact.format(n) : _integer.format(n);
+  }
+  function fmtKES(v) {
+    const n = Number(v) || 0;
+    return `KES ${n >= 10000 ? _compact.format(n) : _integer.format(n)}`;
+  }
+  function fmtDate(d) {
+    if (!d) return '—';
+    return new Date(d).toLocaleString('en-KE', { dateStyle: 'short', timeStyle: 'short' });
+  }
+
+  function statusBadge(s) {
+    const map = {
+      completed: 'badge-green',
+      failed:    'badge-red',
+      pending:   'badge-amber',
+      simulated: 'badge-blue',
+    };
+    return `<span class="badge ${map[s] || 'badge-amber'}" style="font-size:9px">${s || 'pending'}</span>`;
+  }
+
+  function renderTransactions(list) {
+    const tbody = document.getElementById('tx-body');
+    if (!tbody) return;
+    const count = document.getElementById('tx-count');
+    if (list && list.length) {
+      tbody.innerHTML = list.map((p, i) => `
+      <tr>
+        <td style="color:var(--muted);font-size:10px">${i + 1}</td>
+        <td class="tx-device">${p.device_id || p.deviceId || '—'}</td>
+        <td class="tx-amount">${fmtKES(p.amount)}</td>
+        <td>${statusBadge(p.status)}</td>
+        <td class="tx-receipt">${p.mpesa_receipt || p.checkout_request_id || '—'}</td>
+        <td style="font-size:10px;color:var(--sub)">${p.phone_number || '—'}</td>
+        <td class="tx-date">${fmtDate(p.completed_at || p.created_at)}</td>
+      </tr>`).join('');
+      if (count) count.textContent = `${list.length} records`;
+    } else {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">No transactions found</td></tr>';
+      if (count) count.textContent = '0 records';
+    }
+  }
+
+  function filterTransactions() {
+    const q = (document.getElementById('tx-search')?.value || '').toLowerCase();
+    if (!q) { renderTransactions(allTransactions); return; }
+    renderTransactions(allTransactions.filter(p =>
+      (p.device_id || '').toLowerCase().includes(q) ||
+      (p.mpesa_receipt || '').toLowerCase().includes(q) ||
+      (p.checkout_request_id || '').toLowerCase().includes(q) ||
+      (p.phone_number || '').toLowerCase().includes(q)
+    ));
+  }
+
+  function renderTimeline(events) {
+    const el = document.getElementById('timeline-list');
+    if (!el) return;
+    if (!events || !events.length) { el.innerHTML = '<div style="padding:18px;color:var(--muted);font-size:11px">No events found</div>'; return; }
+    const typeColor = { payment_success: 'var(--green)', wallet_expired: 'var(--red)', relay_lock: 'var(--red)', relay_unlock: 'var(--green)' };
+    el.innerHTML = events.map(e => `
+      <div class="timeline-item">
+        <div class="timeline-dot" style="background:${typeColor[e.type] || 'var(--blue)'}"></div>
+        <div>
+          <div class="timeline-text">${(e.message || e.type || 'Event').replaceAll('_', ' ')}</div>
+          <div class="timeline-time">${fmtDate(e.created_at)} · Device: ${e.device_id || '—'}</div>
+        </div>
+      </div>`).join('');
+  }
+
+  function setText(id, v) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = v;
+  }
+
+  function orDash(v, fmt) { return v == null ? '—' : fmt(v); }
+
+  function renderAdminStats(summary) {
+    const p = summary?.paymentStats || summary || {};
+
+    const totalPayments = p.total_payments ?? p.count;
+    const completed     = p.completed ?? p.success;
+
+    setText('stat-total-payments', orDash(totalPayments,   fmtCount));
+    setText('stat-total-revenue',  orDash(p.total_revenue, fmtKES));
+    setText('stat-pending',        orDash(p.pending,       fmtCount));
+    setText('stat-failed',         orDash(p.failed,        fmtCount));
+
+    if (totalPayments == null) return;
+    setText('tx-ok',    orDash(completed, fmtCount));
+    setText('tx-pend',  orDash(p.pending, fmtCount));
+    setText('tx-block', orDash(p.failed,  fmtCount));
+  }
+
+  async function fetchAdminData() {
+    try {
+      const [chartRes, statsRes] = await Promise.all([
+        fetch(`${API}/audit/charts`).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch(`${API}/payments/stats`).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+
+      if (chartRes) {
+        allTransactions = chartRes.recentPayments || [];
+        renderTransactions(allTransactions);
+        renderTimeline(chartRes.timeline || []);
+        if (chartRes.summary) renderAdminStats(chartRes.summary);
+      }
+      if (statsRes) renderAdminStats(statsRes);
+
+    } catch (e) {
+      console.warn('Admin data fetch error:', e);
+    }
+  }
+
+  document.getElementById('tx-search')?.addEventListener('input', filterTransactions);
+
+  // Kick off admin fetch after a short delay (let index.js init first)
+  setTimeout(fetchAdminData, 1200);
+  setInterval(fetchAdminData, 90000);
 </script>
 </body>
 </html>

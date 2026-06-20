@@ -72,10 +72,11 @@ SolarPAYG solves two problems at once.
 ┌─────────────────────────────────────────────────────────────────┐
 │                         FRONTEND (Browser)                      │
 │                                                                 │
-│  index.html          admin.html         analytics.html          │
-│  Live Dashboard      Admin Console      Analytics Dashboard     │
+│  index.html          analytics.html     dashboard.html          │
+│  Live Dashboard      Analytics          Analysis Board          │
+│  (+ Admin Console)                                              │
 │                                                                 │
-│  dashboard.html      login.html                                 │
+│  login.html                                                     │
 │  Analysis Board      Login Page                                 │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ HTTP / REST
@@ -119,8 +120,12 @@ The main real-time monitoring screen for operators.
 - **6-hour AI forecast** — predicted generation and consumption with confidence bands
 - **Maintenance alerts** — anomaly detection results from the AI engine
 - **Relay control** — lock / unlock any device relay from the browser
+- **Admin summary & full transaction log** — searchable payment history with status/receipt/device filters
+- **Audit timeline** — unified feed of payments + alerts
 - **AI model status** — live health indicators for all four AI services
 - **Status bar** — fixed at the bottom showing live date/time, alert count, IoT connection, M-Pesa active, and fraud shield state
+
+(Previously split into a separate Admin Console page — merged here since the two pages had nearly identical panels.)
 
 ### 📈 Analytics Dashboard — `/analytics.html`
 Interactive charts for business reporting and trend analysis.
@@ -143,13 +148,6 @@ Deep-dive technical charts for engineers and data scientists.
 - Payment status doughnut, PAR-30 portfolio-at-risk trend, credit distribution histogram
 - 6-hour forecast with confidence bands, anomaly score bars, fraud risk scatter plot
 - Device health by region (stacked bar), panel efficiency vs age (scatter), agent leaderboard
-
-### 🛠️ Admin Console — `/admin.html`
-Fleet management and audit tools for administrators.
-- Full transaction log with search and filter
-- Unified audit timeline (payments + alerts in one view)
-- KPI grid, AI engine health metrics, M-Pesa transaction status
-- Per-device relay lock/unlock controls
 
 ### 🔐 Login — `/login.html`
 Supports device ID + PIN (for field agents / ESP32 devices) and email + password (for admin and customer web login).
@@ -438,7 +436,6 @@ solar-paygo-platform/
 │   ├── analytics.jsx       # Analytics React components + Chart.js charts
 │   ├── dashboard.html      # Analysis Board shell
 │   ├── dashboard.jsx       # Analysis Board React components + Chart.js charts
-│   ├── admin.html          # Admin Console
 │   ├── login.html          # Login page
 │   ├── nav.html            # Global navigation (injected into every page)
 │   ├── nav.css             # Navigation + bottom status bar styles
