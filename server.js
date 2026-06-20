@@ -467,6 +467,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 */
 app.post('/api/auth/register', authLimiter, async (req, res) => {
   const { name, email, password, phone, deviceId } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
   if (!email || !password) return res.status(400).json({ error: 'email and password are required' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 

@@ -362,7 +362,7 @@
       <form id="login-form" novalidate>
         <div class="form-group" id="name-group" style="display:none">
           <label class="form-label" for="reg-name">Full Name</label>
-          <input id="reg-name" class="form-input" type="text" autocomplete="name" placeholder="Jane Doe" />
+          <input id="reg-name" class="form-input" type="text" autocomplete="name" placeholder="Jane Doe" required />
         </div>
         <div class="form-group">
           <label class="form-label" id="id-label" for="identifier">Email Address</label>
@@ -675,6 +675,10 @@
     const password        = document.getElementById('password').value;
     const confirmPassword = document.getElementById('confirm-password').value;
 
+    if (!name) {
+      showAlert('Please enter your full name.', 'error');
+      return;
+    }
     if (!email || !password) {
       showAlert('Please enter an email and password.', 'error');
       return;
