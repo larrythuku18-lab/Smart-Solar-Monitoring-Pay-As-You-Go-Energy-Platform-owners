@@ -64,6 +64,7 @@ const {
   safeMaintenanceAlerts,
   safeFraudCheck,
   safeOptimization,
+  safeRecordEnergyReading,
   seedFromEnergyReadings,
   seedFromPayments
 } = require('./ai-models');
@@ -883,16 +884,24 @@ cron.schedule('*/5 * * * *', async () => {
 
 // Live telemetry simulation (every 30 s) — seeds energy_readings for demo / AI training
 setInterval(() => {
-  const hour     = new Date().getHours();
-  const seasonal = Math.sin(((hour - 6) * Math.PI) / 12) * 80 + 150;
-  insertEnergyReading({
+  const hour       = new Date().getHours();
+  const seasonal   = Math.sin(((hour - 6) * Math.PI) / 12) * 80 + 150;
+  const reading = {
     deviceId:     'DEMO-001',
     generation:   Math.max(0, Math.round(seasonal + Math.random() * 40 - 20)),
     consumption:  Math.round(120 + Math.random() * 30),
     batteryLevel: Math.round(55 + Math.random() * 35),
     voltage:      Math.round((47 + Math.random() * 4) * 10) / 10,
     current:      Math.round((8  + Math.random() * 6) * 10) / 10
-  }).catch(err => console.error('Energy insert error:', err.message));
+  };
+  insertEnergyReading(reading).catch(err => console.error('Energy insert error:', err.message));
+
+  // Feed the live forecaster/maintenance models too, so they keep retraining
+  // throughout the session instead of only warming up once at startup.
+  safeRecordEnergyReading(
+    reading.generation, reading.consumption,
+    reading.voltage, reading.current, reading.batteryLevel
+  );
 }, 30_000);
 
 /* ══════════════════════════════════════════════════════════════════════════

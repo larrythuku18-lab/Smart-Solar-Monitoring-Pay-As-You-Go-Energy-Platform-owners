@@ -383,6 +383,28 @@ function safeFraudCheck(userId, deviceId, amount, timestamp) {
   }
 }
 
+/**
+ * Feed a freshly-recorded energy reading into the live forecaster and
+ * maintenance monitor, so both models keep retraining/growing throughout
+ * a long-running session instead of only warming up once at startup.
+ */
+function safeRecordEnergyReading(generation, consumption, voltage, current, batteryLevel, timestamp) {
+  try {
+    const ts = timestamp ? new Date(timestamp).getTime() : Date.now();
+    forecaster.addDataPoint(generation ?? 0, consumption ?? 0, ts);
+    maintenanceMonitor.addDataPoint(
+      voltage      ?? 48,
+      current      ?? 10,
+      batteryLevel ?? 75,
+      generation   ?? 0,
+      consumption  ?? 0
+    );
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 function safeOptimization(generation, consumption, batteryLevel) {
   try {
     return {
@@ -468,6 +490,7 @@ module.exports = {
   safeMaintenanceAlerts,
   safeFraudCheck,
   safeOptimization,
+  safeRecordEnergyReading,
   seedFromEnergyReadings,
   seedFromPayments,
   FALLBACK_FORECAST,
