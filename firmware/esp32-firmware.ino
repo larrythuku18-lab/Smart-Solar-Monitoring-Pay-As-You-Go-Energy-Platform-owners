@@ -21,8 +21,8 @@
  */
 
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
-#include <SoftwareSerial.h>
 
 // ===== CONFIGURATION =====
 #define BACKEND_URL "http://your-backend.com/api/telemetry"  // Update this — must end in /api/telemetry
@@ -41,8 +41,9 @@
 #define BATTERY_PIN 32      // ADC1_4 - Battery level
 #define RELAY_PIN 4         // Digital - Power relay control
 
-// SoftwareSerial for GSM
-SoftwareSerial gsmSerial(16, 17);  // RX, TX
+// GSM module on ESP32's UART2 hardware serial (no extra library needed —
+// the classic Arduino SoftwareSerial library doesn't compile on ESP32)
+HardwareSerial gsmSerial(2);  // RX=16, TX=17 (set in initializeGSM)
 
 // ===== CALIBRATION CONSTANTS =====
 // Voltage sensor: 48V max -> 3.3V ADC (divider ratio = 48/3.3 ≈ 14.5)
@@ -160,7 +161,9 @@ int calculateGeneration(float voltage, float current) {
 
 int calculateEfficiency(int generation, int consumption) {
   if (generation == 0) return 0;
-  return (consumption / generation) * 100;
+  // Cast to float first — integer division here always truncated to 0
+  // whenever consumption < generation (the normal case).
+  return (int)(((float)consumption / generation) * 100);
 }
 
 // ===== PANEL CONFIGURATION =====
@@ -296,7 +299,25 @@ boolean connectWiFi() {
 
 boolean sendViaHTTP(String payload) {
   HTTPClient http;
-  http.begin(BACKEND_URL);
+  bool isHttps = String(BACKEND_URL).startsWith("https");
+  WiFiClientSecure secureClient;
+  bool began;
+
+  if (isHttps) {
+    // Render (and most hosted backends) only serve HTTPS. Skipping certificate
+    // validation here is a pragmatic tradeoff for a low-stakes IoT device —
+    // swap in setCACert() with a pinned root cert if you need stricter TLS.
+    secureClient.setInsecure();
+    began = http.begin(secureClient, BACKEND_URL);
+  } else {
+    began = http.begin(BACKEND_URL);
+  }
+
+  if (!began) {
+    Serial.println("❌ HTTPClient could not connect to BACKEND_URL");
+    return false;
+  }
+
   http.addHeader("Content-Type", "application/json");
   if (strlen(DEVICE_API_KEY) > 0) {
     http.addHeader("X-Device-Key", DEVICE_API_KEY);
@@ -331,7 +352,7 @@ void applyRelayStateFromResponse(String response) {
 
 // ===== NETWORK: GSM (SIM800L) - For Rural Areas =====
 void initializeGSM() {
-  gsmSerial.begin(9600);
+  gsmSerial.begin(9600, SERIAL_8N1, 16, 17);  // baud, config, RX, TX
   delay(1000);
   
   Serial.println("Initializing GSM module...");
