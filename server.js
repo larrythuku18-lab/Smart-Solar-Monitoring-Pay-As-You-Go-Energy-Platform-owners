@@ -438,7 +438,8 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       const token = signToken({ id: user.id, deviceId: user.device_id, role: user.role });
 
       /* Fire-and-forget login notification — never blocks or fails the response */
-      sendLoginAlert(user.email, { name: user.name, time: new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' }) });
+      sendLoginAlert(user.email, { name: user.name, time: new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' }) })
+        .catch(err => console.error('sendLoginAlert error:', err.message));
 
       return res.json({
         token,
@@ -523,8 +524,10 @@ app.get('/api/products', async (req, res) => {
 });
 
 app.get('/api/products/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid product id' });
   try {
-    const product = await getProductById(Number(req.params.id));
+    const product = await getProductById(id);
     if (!product) return res.status(404).json({ error: 'Product not found' });
     res.json(product);
   } catch (err) {
@@ -595,7 +598,9 @@ app.get('/api/customer/summary', authMiddleware, async (req, res) => {
 
 app.post('/api/fraud-check', authMiddleware, [
   body('amount').isFloat({ gt: 0 }).withMessage('amount must be a positive number'),
-  body('userId').isString().notEmpty().withMessage('userId is required'),
+  // userId is a SERIAL (numeric) in the DB — accept either a number or string,
+  // since safeFraudCheck/getFraudDetector coerce it with String() either way.
+  body('userId').notEmpty().withMessage('userId is required'),
   body('deviceId').isString().notEmpty().withMessage('deviceId is required'),
   body('timestamp').isISO8601().withMessage('timestamp must be a valid ISO date string')
 ], async (req, res) => {
@@ -636,8 +641,11 @@ app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
        not an energy top-up — so it must not credit the wallet on completion. */
     let paymentType = 'energy';
     let productName = null;
+    let numericProductId = null;
     if (productId) {
-      const product = await getProductById(Number(productId));
+      numericProductId = Number(productId);
+      if (!Number.isInteger(numericProductId)) return res.status(400).json({ error: 'Invalid product id' });
+      const product = await getProductById(numericProductId);
       if (!product) return res.status(404).json({ error: 'Product not found' });
       paymentType = 'product';
       productName = product.name;
@@ -655,7 +663,7 @@ app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
       merchantRequestId: stkResult.merchantRequestId,
       checkoutRequestId: stkResult.checkoutRequestId,
       paymentType,
-      productId:         productId ? Number(productId) : null,
+      productId:         numericProductId,
       productName
     });
 

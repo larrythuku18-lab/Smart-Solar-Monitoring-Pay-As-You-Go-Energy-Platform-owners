@@ -28,10 +28,10 @@ function getTransporter() {
 
 /* Fire-and-forget — never let a mail failure affect the login response */
 async function sendLoginAlert(toEmail, { name, time }) {
-  const t = getTransporter();
-  if (!t || !toEmail) return;
-
   try {
+    const t = getTransporter();
+    if (!t || !toEmail) return;
+
     await t.sendMail({
       from:    `"SolarPAYG" <${process.env.EMAIL_USER}>`,
       to:      toEmail,
