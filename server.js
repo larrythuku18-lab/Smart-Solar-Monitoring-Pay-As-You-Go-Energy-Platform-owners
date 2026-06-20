@@ -28,6 +28,7 @@ const {
   getUserById,
   getDevice,
   getDeviceByUserId,
+  upsertDeviceHeartbeat,
   createPayment,
   completePayment,
   getPaymentByCheckoutId,
@@ -759,6 +760,47 @@ app.get('/api/payments/stats', async (req, res) => {
     res.json(await getPaymentStats());
   } catch (err) {
     res.status(500).json({ error: 'Failed to load stats', message: err.message });
+  }
+});
+
+/* ── Telemetry ingest — called directly by ESP32 firmware ─────────────────
+   No JWT here (a device can't easily hold a user session), but if
+   DEVICE_API_KEY is set, the device must send a matching X-Device-Key
+   header. The response carries the backend's desired relay state, since
+   pushing commands TO the device only works if it's reachable on the same
+   network — most real deployments (behind a router, or on GSM) are not,
+   so the device polls its state via this response instead. ── */
+app.post('/api/telemetry', apiLimiter, async (req, res) => {
+  try {
+    const expectedKey = process.env.DEVICE_API_KEY;
+    if (expectedKey && req.headers['x-device-key'] !== expectedKey) {
+      return res.status(401).json({ error: 'Invalid or missing device key' });
+    }
+
+    const { deviceId, voltage, current, generation, battery, consumption } = req.body;
+    if (!deviceId) return res.status(400).json({ error: 'deviceId is required' });
+
+    await upsertDeviceHeartbeat({ deviceId, ip: req.ip });
+
+    const reading = {
+      deviceId,
+      generation:   Number(generation)  || 0,
+      consumption:  Number(consumption) || 0,
+      batteryLevel: Number(battery)     || 0,
+      voltage:      Number(voltage)     || 0,
+      current:      Number(current)     || 0
+    };
+    await insertEnergyReading(reading);
+    safeRecordEnergyReading(
+      reading.generation, reading.consumption,
+      reading.voltage, reading.current, reading.batteryLevel
+    );
+
+    const device = await getDevice(deviceId);
+    res.json({ success: true, relayState: device?.relay_state || 'on' });
+  } catch (err) {
+    console.error('Telemetry ingest error:', err.message);
+    res.status(500).json({ error: 'Failed to record telemetry', message: err.message });
   }
 });
 

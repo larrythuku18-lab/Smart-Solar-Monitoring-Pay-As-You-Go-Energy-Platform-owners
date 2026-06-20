@@ -25,10 +25,15 @@
 #include <SoftwareSerial.h>
 
 // ===== CONFIGURATION =====
-#define BACKEND_URL "http://your-backend.com/api/telemetry"  // Update this
+#define BACKEND_URL "http://your-backend.com/api/telemetry"  // Update this — must end in /api/telemetry
+#define DEVICE_API_KEY ""  // Optional — must match DEVICE_API_KEY env var on the backend, leave blank to disable
 #define DEVICE_ID "SOLAR_DEVICE_001"
 #define PANEL_TYPE "Monocrystalline_400W"  // Panel configuration
 #define UPDATE_INTERVAL 5000  // Send data every 5 seconds
+
+// Local safety cutoff: power is forced off below this battery % regardless
+// of what the backend says, to protect the battery from over-discharge.
+#define CRITICAL_BATTERY_PCT 10
 
 // Sensor Pin Definitions
 #define VOLTAGE_PIN 35      // ADC1_7 - Voltage sensor
@@ -53,6 +58,7 @@ SoftwareSerial gsmSerial(16, 17);  // RX, TX
 unsigned long lastSendTime = 0;
 int failureCount = 0;
 const int MAX_RETRIES = 3;
+String backendRelayState = "on";  // Last relay state the backend told us to apply
 
 // Panel configuration database
 struct PanelConfig {
@@ -221,13 +227,20 @@ void collectAndSendTelemetry() {
     Serial.println("No network connection available!");
   }
   
-  // Relay control based on battery level
-  if (battery < 10) {
-    digitalWrite(RELAY_PIN, LOW);  // Cut power
+  // Relay control: the backend's "off" (wallet empty / order, not energy) always
+  // wins. Otherwise honor "on" from the backend, but never above the local
+  // battery safety cutoff — that protects the battery even if the backend
+  // is unreachable or slow to respond.
+  bool batterySafe = battery >= CRITICAL_BATTERY_PCT;
+  bool shouldPowerOn = (backendRelayState == "on") && batterySafe;
+
+  digitalWrite(RELAY_PIN, shouldPowerOn ? HIGH : LOW);
+  if (!batterySafe) {
     Serial.println("🔴 Power cut: Battery critical!");
-  } else if (battery > 25) {
-    digitalWrite(RELAY_PIN, HIGH);  // Restore power
-    Serial.println("🟢 Power restored");
+  } else if (backendRelayState != "on") {
+    Serial.println("🔴 Power cut: backend reports no balance");
+  } else {
+    Serial.println("🟢 Power on");
   }
   
   if (!success) {
@@ -285,10 +298,15 @@ boolean sendViaHTTP(String payload) {
   HTTPClient http;
   http.begin(BACKEND_URL);
   http.addHeader("Content-Type", "application/json");
-  
+  if (strlen(DEVICE_API_KEY) > 0) {
+    http.addHeader("X-Device-Key", DEVICE_API_KEY);
+  }
+
   int httpResponseCode = http.POST(payload);
-  
+
   if (httpResponseCode == 200) {
+    String response = http.getString();
+    applyRelayStateFromResponse(response);
     Serial.println("✅ HTTP sent successfully");
     http.end();
     return true;
@@ -297,6 +315,18 @@ boolean sendViaHTTP(String payload) {
     http.end();
     return false;
   }
+}
+
+// Pulls "relayState":"on"/"off" out of the telemetry response body.
+// No JSON library — just a substring search, consistent with the rest
+// of this firmware's hand-built JSON handling.
+void applyRelayStateFromResponse(String response) {
+  if (response.indexOf("\"relayState\":\"off\"") >= 0) {
+    backendRelayState = "off";
+  } else if (response.indexOf("\"relayState\":\"on\"") >= 0) {
+    backendRelayState = "on";
+  }
+  // If neither is found (e.g. malformed response), keep the last known state.
 }
 
 // ===== NETWORK: GSM (SIM800L) - For Rural Areas =====
@@ -312,6 +342,10 @@ void initializeGSM() {
   Serial.println("GSM initialized");
 }
 
+// NOTE: unlike sendViaHTTP(), this does not read back the response body
+// (would need AT+HTTPREAD), so backendRelayState is NOT updated over GSM —
+// the device falls back to whatever the local battery cutoff dictates.
+// Wire this up if GSM is your primary connectivity (rural deployments).
 boolean sendViaGSM(String payload) {
   // Using HTTP GET with GSM (simpler for unreliable networks)
   String url = BACKEND_URL;

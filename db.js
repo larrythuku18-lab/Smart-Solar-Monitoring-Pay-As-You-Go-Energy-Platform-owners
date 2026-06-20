@@ -392,6 +392,23 @@ async function getDevice(deviceId) {
   return rows[0] ?? null;
 }
 
+/**
+ * Auto-register a device the first time it reports telemetry, or refresh
+ * its last-known IP/status on every subsequent report. This is what lets
+ * a real ESP32 show up without a separate manual provisioning step.
+ */
+async function upsertDeviceHeartbeat({ deviceId, ip, name }) {
+  await q(
+    `INSERT INTO devices (device_id, device_ip, name, status, is_active, relay_state)
+     VALUES ($1,$2,$3,'active',TRUE,'on')
+     ON CONFLICT (device_id) DO UPDATE
+       SET device_ip = EXCLUDED.device_ip,
+           status    = 'active',
+           is_active = TRUE`,
+    [deviceId, ip || null, name || deviceId]
+  );
+}
+
 async function getDeviceByUserId(userId) {
   const { rows } = await q(
     'SELECT * FROM devices WHERE user_id = $1 ORDER BY created_at LIMIT 1',
@@ -768,6 +785,7 @@ module.exports = {
   getDevice,
   getDeviceByUserId,
   setRelayState,
+  upsertDeviceHeartbeat,
   /* energy */
   insertEnergyReading,
   getLatestEnergy,
