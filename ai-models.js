@@ -1,45 +1,32 @@
 /**
- * ai-models.js — TensorFlow.js AI engine
+ * ai-models.js — statistical/rule-based AI engine
  *
- * Four models:
+ * Four models, one instance PER DEVICE (forecaster/maintenance/optimizer)
+ * or PER USER (fraud detector) — never shared globally, so one household's
+ * readings/payments can't bleed into another's predictions or alerts:
  *   1. EnergyForecaster      — linear regression on generation / consumption trend
  *   2. MaintenanceMonitor    — rule-based anomaly detection on voltage / current / efficiency
- *   3. FraudDetector         — graph-analytics on payment velocity and amount patterns
+ *   3. FraudDetector         — payment velocity / amount-spike heuristics, per user
  *   4. UsageOptimizer        — demand-shifting recommendations driven by the forecaster
  *
  * Persistence strategy
  * --------------------
  * The raw training data lives in PostgreSQL (energy_readings, payments).
  * On every server startup, server.js calls:
- *   seedFromEnergyReadings(rows)   — warms forecaster + maintenance models
- *   seedFromPayments(rows)         — warms fraud model
+ *   seedFromEnergyReadings(rows)   — warms forecaster + maintenance models for every device
+ *   seedFromPayments(rows)         — warms fraud models for every user
  * so the models resume from where they left off across restarts.
- * No TF.js model weights are written to disk — all state is derived from the DB.
+ * No model weights are written to disk — all state is derived from the DB.
  */
-
-/* ── Shared in-memory training buffers ───────────────────────────────────── */
-const historyData = {
-  generation:  [],
-  consumption: [],
-  battery:     [],
-  voltage:     [],
-  current:     [],
-  efficiency:  [],
-  timestamps:  []
-};
-
-const paymentHistory = {
-  transactions: [],
-  userPatterns: {}
-};
 
 const MAX_HISTORY = 288; // 24 h × 12 readings/h
 
 /* ══════════════════════════════════════════════════════════════════════════
-   1. ENERGY FORECASTER  (linear regression)
+   1. ENERGY FORECASTER  (linear regression) — one instance per device
 ══════════════════════════════════════════════════════════════════════════ */
 class EnergyForecaster {
   constructor() {
+    this.history = { generation: [], consumption: [], timestamps: [] };
     this.modelWeights = {
       generation:  { slope: 0.1,  intercept: 150 },
       consumption: { slope: 0.05, intercept: 120 }
@@ -48,26 +35,26 @@ class EnergyForecaster {
   }
 
   addDataPoint(generation, consumption, timestamp) {
-    historyData.generation.push(generation);
-    historyData.consumption.push(consumption);
-    historyData.timestamps.push(timestamp);
+    this.history.generation.push(generation);
+    this.history.consumption.push(consumption);
+    this.history.timestamps.push(timestamp);
 
-    if (historyData.generation.length > MAX_HISTORY) {
-      historyData.generation.shift();
-      historyData.consumption.shift();
-      historyData.timestamps.shift();
+    if (this.history.generation.length > MAX_HISTORY) {
+      this.history.generation.shift();
+      this.history.consumption.shift();
+      this.history.timestamps.shift();
     }
 
-    if (historyData.generation.length >= 10) this.ready = true;
+    if (this.history.generation.length >= 10) this.ready = true;
 
     // Re-train every 20 new samples
-    if (historyData.generation.length % 20 === 0) this.trainModel();
+    if (this.history.generation.length % 20 === 0) this.trainModel();
   }
 
   trainModel() {
-    if (historyData.generation.length < 10) return;
-    const gen  = historyData.generation;
-    const cons = historyData.consumption;
+    if (this.history.generation.length < 10) return;
+    const gen  = this.history.generation;
+    const cons = this.history.consumption;
     this.modelWeights.generation.slope      = this._slope(gen);
     this.modelWeights.consumption.slope     = this._slope(cons);
     this.modelWeights.generation.intercept  = this._mean(gen);
@@ -114,7 +101,7 @@ class EnergyForecaster {
         predictedConsumption:  Math.round(cons),
         surplus:               Math.round(gen - cons),
         confidence: Math.min(0.95,
-          0.6 + (historyData.generation.length / MAX_HISTORY) * 0.35
+          0.6 + (this.history.generation.length / MAX_HISTORY) * 0.35
         )
       };
     });
@@ -133,27 +120,28 @@ class EnergyForecaster {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   2. MAINTENANCE MONITOR  (rule-based anomaly detection)
+   2. MAINTENANCE MONITOR  (rule-based anomaly detection) — one per device
 ══════════════════════════════════════════════════════════════════════════ */
 class MaintenanceMonitor {
   constructor() {
+    this.history = { voltage: [], current: [], battery: [], efficiency: [] };
     this.anomalyFlags = [];
   }
 
   addDataPoint(voltage, current, batteryLevel, generation, consumption) {
-    historyData.voltage.push(voltage);
-    historyData.current.push(current);
-    historyData.battery.push(batteryLevel);
+    this.history.voltage.push(voltage);
+    this.history.current.push(current);
+    this.history.battery.push(batteryLevel);
 
-    if (historyData.voltage.length > MAX_HISTORY) {
-      historyData.voltage.shift();
-      historyData.current.shift();
-      historyData.battery.shift();
+    if (this.history.voltage.length > MAX_HISTORY) {
+      this.history.voltage.shift();
+      this.history.current.shift();
+      this.history.battery.shift();
     }
 
     const eff = generation > 0 ? consumption / generation : 0;
-    historyData.efficiency.push(eff);
-    if (historyData.efficiency.length > MAX_HISTORY) historyData.efficiency.shift();
+    this.history.efficiency.push(eff);
+    if (this.history.efficiency.length > MAX_HISTORY) this.history.efficiency.shift();
 
     this.anomalyFlags = this._detectAnomalies(voltage, current, eff);
     return this.anomalyFlags;
@@ -182,7 +170,7 @@ class MaintenanceMonitor {
       });
     }
 
-    if (efficiency < 0.75 && historyData.efficiency.length > 20) {
+    if (efficiency < 0.75 && this.history.efficiency.length > 20) {
       alerts.push({
         type:           'efficiency_drop',
         severity:       'medium',
@@ -199,27 +187,26 @@ class MaintenanceMonitor {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   3. FRAUD DETECTOR  (payment-velocity graph analytics)
+   3. FRAUD DETECTOR  (payment-velocity heuristics) — one instance per user
 ══════════════════════════════════════════════════════════════════════════ */
 class FraudDetector {
   constructor() {
+    this.transactions       = [];
+    this.userPatterns       = {};
     this.suspiciousPatterns = [];
-    this.userDeviceLinks    = {};
   }
 
   recordPayment(userId, deviceId, amount, timestamp) {
     const transaction = { userId, deviceId, amount, timestamp, flagged: false };
-    paymentHistory.transactions.push(transaction);
-    if (paymentHistory.transactions.length > 1000) paymentHistory.transactions.shift();
+    this.transactions.push(transaction);
+    if (this.transactions.length > 1000) this.transactions.shift();
 
-    const key = `${userId}-${deviceId}`;
-    if (!paymentHistory.userPatterns[key]) {
-      paymentHistory.userPatterns[key] = {
-        transactions: 0, totalAmount: 0, timestamps: [], devices: new Set([deviceId])
-      };
+    const key = String(userId);
+    if (!this.userPatterns[key]) {
+      this.userPatterns[key] = { transactions: 0, totalAmount: 0, timestamps: [] };
     }
 
-    const pattern = paymentHistory.userPatterns[key];
+    const pattern = this.userPatterns[key];
     pattern.transactions++;
     pattern.totalAmount += amount;
     pattern.timestamps.push(timestamp);
@@ -233,8 +220,7 @@ class FraudDetector {
   }
 
   _detectFraud(userId, deviceId, amount, timestamp) {
-    const key     = `${userId}-${deviceId}`;
-    const pattern = paymentHistory.userPatterns[key];
+    const pattern = this.userPatterns[String(userId)];
     if (!pattern) return null;
 
     // Velocity check: ≥3 payments within 5 minutes
@@ -272,7 +258,7 @@ class FraudDetector {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   4. USAGE OPTIMIZER  (demand-shift recommendations)
+   4. USAGE OPTIMIZER  (demand-shift recommendations) — one per device
 ══════════════════════════════════════════════════════════════════════════ */
 class UsageOptimizer {
   constructor(forecaster) {
@@ -321,11 +307,30 @@ class UsageOptimizer {
   }
 }
 
-/* ── Singleton instances ─────────────────────────────────────────────────── */
-const forecaster        = new EnergyForecaster();
-const maintenanceMonitor = new MaintenanceMonitor();
-const fraudDetector     = new FraudDetector();
-const optimizer         = new UsageOptimizer(forecaster);
+/* ── Per-device / per-user registries ─────────────────────────────────────
+   Lazily create one model bundle per deviceId / userId the first time it's
+   seen, instead of one shared singleton for the whole fleet. ── */
+const deviceModels    = new Map(); // deviceId -> { forecaster, maintenanceMonitor, optimizer }
+const fraudDetectors  = new Map(); // userId   -> FraudDetector
+
+function getDeviceModels(deviceId) {
+  const id = deviceId || 'UNKNOWN';
+  if (!deviceModels.has(id)) {
+    const forecaster = new EnergyForecaster();
+    deviceModels.set(id, {
+      forecaster,
+      maintenanceMonitor: new MaintenanceMonitor(),
+      optimizer:          new UsageOptimizer(forecaster)
+    });
+  }
+  return deviceModels.get(id);
+}
+
+function getFraudDetector(userId) {
+  const id = String(userId ?? 'UNKNOWN');
+  if (!fraudDetectors.has(id)) fraudDetectors.set(id, new FraudDetector());
+  return fraudDetectors.get(id);
+}
 
 /* ── Fallback responses (returned when models aren't ready) ──────────────── */
 const FALLBACK_FORECAST = Array.from({ length: 6 }, (_, i) => ({
@@ -338,19 +343,21 @@ const FALLBACK_OPTIMIZATION = [{
 }];
 
 /* ══════════════════════════════════════════════════════════════════════════
-   SAFE WRAPPERS  (never throw to callers)
+   SAFE WRAPPERS  (never throw to callers) — all keyed by deviceId/userId
 ══════════════════════════════════════════════════════════════════════════ */
-function safeForecast(horizonHours = 6) {
+function safeForecast(deviceId, horizonHours = 6) {
   try {
-    if (!forecaster.ready && historyData.generation.length < 3) forecaster.trainModel();
+    const { forecaster } = getDeviceModels(deviceId);
+    if (!forecaster.ready && forecaster.history.generation.length < 3) forecaster.trainModel();
     return { success: true, data: forecaster.forecast(horizonHours) };
   } catch (err) {
     return { success: false, error: err.message, data: FALLBACK_FORECAST };
   }
 }
 
-function safeMaintenanceAlerts(voltage, current, batteryLevel, generation, consumption) {
+function safeMaintenanceAlerts(deviceId, voltage, current, batteryLevel, generation, consumption) {
   try {
+    const { maintenanceMonitor } = getDeviceModels(deviceId);
     // Use the public addDataPoint() so the efficiency history buffer grows
     // and the efficiency_drop check can fire after 20 data points.
     // Calling _detectAnomalies() directly bypassed the buffer entirely.
@@ -369,11 +376,12 @@ function safeMaintenanceAlerts(voltage, current, batteryLevel, generation, consu
 
 function safeFraudCheck(userId, deviceId, amount, timestamp) {
   try {
-    const ts     = timestamp ? new Date(timestamp).getTime() : Date.now();
-    const result = fraudDetector.recordPayment(userId, deviceId, amount, ts);
+    const ts       = timestamp ? new Date(timestamp).getTime() : Date.now();
+    const detector = getFraudDetector(userId);
+    const result   = detector.recordPayment(userId, deviceId, amount, ts);
     return {
       success: true,
-      data: { flagged: !!result, fraud: result, flags: fraudDetector.getFlags() }
+      data: { flagged: !!result, fraud: result, flags: detector.getFlags() }
     };
   } catch (err) {
     return {
@@ -385,12 +393,14 @@ function safeFraudCheck(userId, deviceId, amount, timestamp) {
 
 /**
  * Feed a freshly-recorded energy reading into the live forecaster and
- * maintenance monitor, so both models keep retraining/growing throughout
- * a long-running session instead of only warming up once at startup.
+ * maintenance monitor for this specific device, so both models keep
+ * retraining/growing throughout a long-running session instead of only
+ * warming up once at startup.
  */
-function safeRecordEnergyReading(generation, consumption, voltage, current, batteryLevel, timestamp) {
+function safeRecordEnergyReading(deviceId, generation, consumption, voltage, current, batteryLevel, timestamp) {
   try {
     const ts = timestamp ? new Date(timestamp).getTime() : Date.now();
+    const { forecaster, maintenanceMonitor } = getDeviceModels(deviceId);
     forecaster.addDataPoint(generation ?? 0, consumption ?? 0, ts);
     maintenanceMonitor.addDataPoint(
       voltage      ?? 48,
@@ -405,8 +415,9 @@ function safeRecordEnergyReading(generation, consumption, voltage, current, batt
   }
 }
 
-function safeOptimization(generation, consumption, batteryLevel) {
+function safeOptimization(deviceId, generation, consumption, batteryLevel) {
   try {
+    const { optimizer } = getDeviceModels(deviceId);
     return {
       success: true,
       data: optimizer.getOptimizationRecommendations(generation, consumption, batteryLevel)
@@ -423,11 +434,11 @@ function safeOptimization(generation, consumption, batteryLevel) {
 ══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Warm forecaster + maintenance monitor with energy_readings rows.
- * Accepts rows from either the old SQLite shape or the new PG shape —
- * both use the same column names.
+ * Warm forecaster + maintenance monitor for every device represented in the
+ * given rows — each row carries its own device_id, so a single fleet-wide
+ * query can seed every device's models in one pass.
  *
- * @param {Array} readings  Rows from energy_readings, oldest first.
+ * @param {Array} readings  Rows from energy_readings, oldest first, any/all devices.
  */
 function seedFromEnergyReadings(readings) {
   if (!Array.isArray(readings) || readings.length === 0) return;
@@ -436,6 +447,7 @@ function seedFromEnergyReadings(readings) {
       const ts  = r.recorded_at ? new Date(r.recorded_at).getTime() : Date.now();
       const gen = Number(r.generation_watts)  || 0;
       const con = Number(r.consumption_watts) || 0;
+      const { forecaster, maintenanceMonitor } = getDeviceModels(r.device_id);
 
       forecaster.addDataPoint(gen, con, ts);
       maintenanceMonitor.addDataPoint(
@@ -446,14 +458,14 @@ function seedFromEnergyReadings(readings) {
         con
       );
     }
-    console.log(`🤖 AI models seeded with ${readings.length} energy readings`);
+    console.log(`🤖 AI models seeded with ${readings.length} energy readings across ${deviceModels.size} device(s)`);
   } catch (err) {
     console.warn('AI energy seed warning:', err.message);
   }
 }
 
 /**
- * Warm the fraud detector with completed payment rows.
+ * Warm each user's fraud detector with their completed payment rows.
  * Loads historical velocity / amount patterns so suspicious behaviour
  * is detected even for long-standing customers on first request.
  *
@@ -467,25 +479,21 @@ function seedFromPayments(payments) {
     for (const p of payments) {
       if (p.status !== 'completed') continue;
       const ts = p.created_at ? new Date(p.created_at).getTime() : Date.now();
-      fraudDetector.recordPayment(
+      getFraudDetector(p.user_id).recordPayment(
         String(p.user_id),
-        p.device_id  || 'UNKNOWN',
+        p.device_id || 'UNKNOWN',
         Number.parseFloat(p.amount) || 0,
         ts
       );
       count++;
     }
-    if (count > 0) console.log(`🤖 Fraud model seeded with ${count} historical payments`);
+    if (count > 0) console.log(`🤖 Fraud models seeded with ${count} historical payments across ${fraudDetectors.size} user(s)`);
   } catch (err) {
     console.warn('AI payment seed warning:', err.message);
   }
 }
 
 module.exports = {
-  forecaster,
-  maintenanceMonitor,
-  fraudDetector,
-  optimizer,
   safeForecast,
   safeMaintenanceAlerts,
   safeFraudCheck,

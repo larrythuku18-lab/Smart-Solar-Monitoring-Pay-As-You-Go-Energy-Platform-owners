@@ -480,6 +480,17 @@ async function getEnergyHistory48h(deviceId) {
   return rows;
 }
 
+/* Used to warm the AI models for every device at startup, not just one —
+ * each row still carries its own device_id so callers can route it correctly. */
+async function getEnergyHistory48hAllDevices() {
+  const { rows } = await q(
+    `SELECT * FROM energy_readings
+     WHERE  recorded_at > NOW() - INTERVAL '48 hours'
+     ORDER  BY recorded_at ASC`
+  );
+  return rows;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    PAYMENT QUERIES
 ══════════════════════════════════════════════════════════════════════════ */
@@ -700,11 +711,11 @@ async function removePendingCommand(id) {
    DASHBOARD / ADMIN AGGREGATES
 ══════════════════════════════════════════════════════════════════════════ */
 
-async function getDashboardState() {
+async function getDashboardState(deviceId = 'DEMO-001') {
   const [device, user, latest, stats] = await Promise.all([
-    getDevice('DEMO-001'),
-    getUserByDeviceId('DEMO-001'),
-    getLatestEnergy('DEMO-001'),
+    getDevice(deviceId),
+    getUserByDeviceId(deviceId),
+    getLatestEnergy(deviceId),
     getPaymentStats()
   ]);
 
@@ -717,7 +728,7 @@ async function getDashboardState() {
     powerEnabled:  device?.relay_state === 'on',
     walletBalance: user?.wallet_balance       ?? 0,
     dueAmount:     (user?.wallet_balance ?? 0) <= 0 ? 100 : 0, // fix: was ?? 1 which hid null balances
-    deviceId:      'DEMO-001',
+    deviceId,
     paymentStats:  stats
   };
 }
@@ -792,6 +803,7 @@ module.exports = {
   getEnergyHistory,
   getEnergyHistoryAsc,
   getEnergyHistory48h,
+  getEnergyHistory48hAllDevices,
   /* payments */
   createPayment,
   completePayment,

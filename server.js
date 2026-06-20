@@ -36,7 +36,7 @@ const {
   getPaymentStats,
   getEnergyHistory,
   getEnergyHistoryAsc,
-  getEnergyHistory48h,
+  getEnergyHistory48hAllDevices,
   getRecentPayments,
   getAuditTimeline,
   getAlertSeverityCounts,
@@ -313,8 +313,9 @@ app.get('/api/weather', (req, res) => {
 });
 
 app.get('/api/forecast', async (req, res) => {
+  const deviceId = req.query.deviceId || 'DEMO-001';
   try {
-    const result = safeForecast(6);
+    const result = safeForecast(deviceId, 6);
     if (!result.success) {
       return res.status(503).json({
         error: 'AI model not ready', fallback: result.data,
@@ -322,21 +323,22 @@ app.get('/api/forecast', async (req, res) => {
       });
     }
     // Persist prediction async — don't block the response
-    savePrediction('DEMO-001', 'forecast', result.data, result.data[0]?.confidence)
+    savePrediction(deviceId, 'forecast', result.data, result.data[0]?.confidence)
       .catch(err => console.error('savePrediction error:', err.message));
     res.json({ forecast: { predictions: result.data } });
   } catch (err) {
     res.status(503).json({
-      error: 'AI model not ready', fallback: safeForecast(6).data, message: err.message
+      error: 'AI model not ready', fallback: safeForecast(deviceId, 6).data, message: err.message
     });
   }
 });
 
 app.get('/api/maintenance-alerts', async (req, res) => {
   try {
-    const state  = await getDashboardState();
-    const result = safeMaintenanceAlerts(
-      state.voltage, state.current, state.batteryLevel, state.generation, state.consumption
+    const deviceId = req.query.deviceId || 'DEMO-001';
+    const state    = await getDashboardState(deviceId);
+    const result   = safeMaintenanceAlerts(
+      deviceId, state.voltage, state.current, state.batteryLevel, state.generation, state.consumption
     );
     if (!result.success) {
       return res.status(503).json({
@@ -360,8 +362,9 @@ app.get('/api/maintenance-alerts', async (req, res) => {
 
 app.get('/api/optimization', async (req, res) => {
   try {
-    const state  = await getDashboardState();
-    const result = safeOptimization(state.generation, state.consumption, state.batteryLevel);
+    const deviceId = req.query.deviceId || 'DEMO-001';
+    const state    = await getDashboardState(deviceId);
+    const result   = safeOptimization(deviceId, state.generation, state.consumption, state.batteryLevel);
     if (!result.success) {
       return res.status(503).json({
         error: 'AI model not ready', fallback: result.data,
@@ -376,12 +379,13 @@ app.get('/api/optimization', async (req, res) => {
 
 app.get('/api/ai-insights', async (req, res) => {
   try {
-    const state       = await getDashboardState();
-    const forecast    = safeForecast(6);
+    const deviceId    = req.query.deviceId || 'DEMO-001';
+    const state       = await getDashboardState(deviceId);
+    const forecast    = safeForecast(deviceId, 6);
     const maintenance = safeMaintenanceAlerts(
-      state.voltage, state.current, state.batteryLevel, state.generation, state.consumption
+      deviceId, state.voltage, state.current, state.batteryLevel, state.generation, state.consumption
     );
-    const optimization = safeOptimization(state.generation, state.consumption, state.batteryLevel);
+    const optimization = safeOptimization(deviceId, state.generation, state.consumption, state.batteryLevel);
 
     res.json({
       health: 'operational',
@@ -792,7 +796,7 @@ app.post('/api/telemetry', apiLimiter, async (req, res) => {
     };
     await insertEnergyReading(reading);
     safeRecordEnergyReading(
-      reading.generation, reading.consumption,
+      deviceId, reading.generation, reading.consumption,
       reading.voltage, reading.current, reading.batteryLevel
     );
 
@@ -836,7 +840,7 @@ app.get('/api/audit/timeline', async (req, res) => {
 app.get('/api/audit/charts', async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
-    const forecast = safeForecast(6);
+    const forecast = safeForecast(deviceId, 6);
     const [energy, payments, paymentTrend, recentPayments, alerts, alertSeverity, timeline, summary] =
       await Promise.all([
         getEnergyHistoryAsc(deviceId, 48),
@@ -941,7 +945,7 @@ setInterval(() => {
   // Feed the live forecaster/maintenance models too, so they keep retraining
   // throughout the session instead of only warming up once at startup.
   safeRecordEnergyReading(
-    reading.generation, reading.consumption,
+    reading.deviceId, reading.generation, reading.consumption,
     reading.voltage, reading.current, reading.batteryLevel
   );
 }, 30_000);
@@ -977,10 +981,11 @@ async function startup() {
   await seedDemoData();
   await seedProducts();
 
-  // Warm AI models from persistent data so they resume after restarts
+  // Warm AI models from persistent data so they resume after restarts —
+  // across every device, not just the demo one, so each gets its own model.
   try {
     const [energyReadings, recentPayments] = await Promise.all([
-      getEnergyHistory48h('DEMO-001'),
+      getEnergyHistory48hAllDevices(),
       getRecentPayments(500)
     ]);
     seedFromEnergyReadings(energyReadings);
