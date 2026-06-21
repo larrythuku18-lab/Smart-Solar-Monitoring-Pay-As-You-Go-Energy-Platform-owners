@@ -10,6 +10,7 @@
     "logs": "pm2 logs solarpayg",
     "monitor": "pm2 monit",
     "dev": "nodemon server.js",
+    "generate-icons": "node scripts/generate-icons.js",
     "test": "node --test __tests__/basic.test.js 2>/dev/null || echo \"Run npm start to verify manually\""
   },
   "keywords": [
@@ -39,7 +40,8 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.2",
-    "playwright": "^1.60.0"
+    "playwright": "^1.60.0",
+    "sharp": "^0.35.2"
   },
   "engines": {
     "node": ">=22.5.0"
