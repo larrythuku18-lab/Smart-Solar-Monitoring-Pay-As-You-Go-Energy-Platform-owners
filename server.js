@@ -1,5 +1,5 @@
 /**
- * server.js — SolarPAYG Express API
+ * server.js — Lagriff Express API
  *
  * Storage layer: PostgreSQL via ./db.js (all helpers are async).
  * AI layer:      TensorFlow.js models in ./ai-models.js
@@ -176,7 +176,7 @@ async function initiateSTKPush(phoneNumber, amount, accountReference) {
     PhoneNumber:       formattedPhone,
     CallBackURL:       process.env.MPESA_CALLBACK_URL,
     AccountReference:  accountReference,
-    TransactionDesc:   'SolarPAYG Energy Payment'
+    TransactionDesc:   'Lagriff Energy Payment'
   };
 
   const { data } = await withMpesaRetry(() => axios.post(
@@ -1039,7 +1039,7 @@ async function startup() {
   }
 
   app.listen(PORT, () => {
-    console.log(`[START] SolarPAYG server running on http://localhost:${PORT}`);
+    console.log(`[START] Lagriff server running on http://localhost:${PORT}`);
     console.log(`  Dashboard:  http://localhost:${PORT}/index.html`);
     console.log(`  Analytics:  http://localhost:${PORT}/analytics.html`);
     console.log(`  M-Pesa mode: ${mpesaConfigured() ? 'live (sandbox/production)' : 'simulation'}`);

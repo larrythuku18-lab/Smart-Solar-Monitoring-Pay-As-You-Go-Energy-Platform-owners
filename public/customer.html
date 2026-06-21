@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SolarPAYG — My Account</title>
+  <title>Lagriff — My Account</title>
   <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
@@ -649,7 +649,7 @@
 
 <!-- Status bar -->
 <div class="statusbar">
-  <div class="sb-left" id="sb-time">SolarPAYG Customer</div>
+  <div class="sb-left" id="sb-time">Lagriff Customer</div>
   <div class="sb-right">
     <span class="chip chip-green">M-Pesa Active</span>
     <span class="chip chip-amber" id="sb-balance-chip">Balance: —</span>
@@ -832,7 +832,7 @@ function renderAll() {
   document.getElementById('acc-voltage').textContent = volt ? `${volt.toFixed(1)} V` : '—';
 
   /* Status bar */
-  document.getElementById('sb-time').textContent       = `${new Date().toLocaleTimeString('en-KE',{hour:'2-digit',minute:'2-digit'})} · SolarPAYG`;
+  document.getElementById('sb-time').textContent       = `${new Date().toLocaleTimeString('en-KE',{hour:'2-digit',minute:'2-digit'})} · Lagriff`;
   document.getElementById('sb-balance-chip').textContent = `Balance: ${fmtKES(bal)}`;
   document.getElementById('sb-power-chip').textContent   = powered ? 'Power On' : 'Power Locked';
   document.getElementById('sb-power-chip').className     = powered ? 'chip chip-green' : 'chip chip-red';
@@ -1196,7 +1196,7 @@ async function boot() {
   setInterval(loadState, 30000);
   /* Clock tick */
   setInterval(() => {
-    document.getElementById('sb-time').textContent = `${new Date().toLocaleTimeString('en-KE',{hour:'2-digit',minute:'2-digit'})} · SolarPAYG`;
+    document.getElementById('sb-time').textContent = `${new Date().toLocaleTimeString('en-KE',{hour:'2-digit',minute:'2-digit'})} · Lagriff`;
   }, 30000);
 }
 

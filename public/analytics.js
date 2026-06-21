@@ -1,5 +1,5 @@
 /* ============================================================
-   SolarPAYG — Analytics Dashboard
+   Lagriff — Analytics Dashboard
    React + Chart.js (via CDN globals)
    ============================================================ */
 
@@ -1229,7 +1229,7 @@ const AnalyticsDashboard = () => {
       color: '#475569',
       fontWeight: 500
     }
-  }, "Smart Solar PAYG"), /*#__PURE__*/React.createElement("h1", {
+  }, "Lagriff"), /*#__PURE__*/React.createElement("h1", {
     style: {
       marginTop: 4,
       fontSize: 28,
