@@ -20,7 +20,7 @@
       --amber: #f59e0b; --green: #10b981; --blue: #3b82f6; --red: #ef4444;
       --teal: #14b8a6; --purple: #8b5cf6; --text: #f1f5f9; --muted: #64748b; --sub: #94a3b8;
     }
-    html, body { height: 100%; overflow-x: hidden; }
+    html, body { overflow-x: hidden; }
     body {
       font-family: 'Space Grotesk', sans-serif;
       background: radial-gradient(ellipse at top, rgba(16,185,129,0.08) 0%, transparent 55%),
@@ -71,7 +71,7 @@
     }
     .welcome-left { min-width: 0; }
     .welcome-greeting { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-    .welcome-name { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: var(--text); margin-top: 2px; }
+    .welcome-name { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: var(--text); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .welcome-device { font-size: 11px; color: var(--sub); margin-top: 3px; }
     .power-pill {
       display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px;
