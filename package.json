@@ -11,7 +11,7 @@
     "monitor": "pm2 monit",
     "dev": "nodemon server.js",
     "generate-icons": "node scripts/generate-icons.js",
-    "test": "node --test __tests__/basic.test.js 2>/dev/null || echo \"Run npm start to verify manually\""
+    "test": "node --test __tests__/*.test.js"
   },
   "keywords": [
     "solar",

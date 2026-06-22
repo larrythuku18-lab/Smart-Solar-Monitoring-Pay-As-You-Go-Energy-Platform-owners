@@ -507,31 +507,26 @@ async function createPayment({ userId, deviceId, amount, phoneNumber, merchantRe
 }
 
 async function completePayment(checkoutRequestId, receiptNumber, resultCode, resultDesc) {
+  /* Only a 'pending' payment may be completed. Without this guard, a duplicate
+     or replayed callback for an already-completed payment would credit the
+     wallet a second time for the same M-Pesa transaction. */
   const { rows } = await q(
-    'SELECT * FROM payments WHERE checkout_request_id = $1',
-    [checkoutRequestId]
-  );
-  const payment = rows[0];
-  if (!payment) return null;
-
-  await q(
     `UPDATE payments
      SET status = 'completed', mpesa_receipt_number = $1, mpesa_ref = $1,
          result_code = $2, result_desc = $3, processed_at = NOW()
-     WHERE checkout_request_id = $4`,
+     WHERE checkout_request_id = $4 AND status = 'pending'
+     RETURNING *`,
     [receiptNumber, resultCode, resultDesc, checkoutRequestId]
   );
+  const payment = rows[0];
+  if (!payment) return null;
 
   // Product purchases are fulfilled physically — only energy top-ups credit the wallet/unlock power
   if (payment.payment_type !== 'product') {
     await updateWallet(payment.user_id, Number.parseFloat(payment.amount));
   }
 
-  const { rows: updated } = await q(
-    'SELECT * FROM payments WHERE checkout_request_id = $1',
-    [checkoutRequestId]
-  );
-  return updated[0] ?? null;
+  return payment;
 }
 
 async function getPaymentByCheckoutId(checkoutRequestId) {
@@ -545,7 +540,7 @@ async function getPaymentByCheckoutId(checkoutRequestId) {
 async function failPayment(checkoutRequestId, resultCode, resultDesc) {
   await q(
     `UPDATE payments SET status = 'failed', result_code = $1, result_desc = $2
-     WHERE checkout_request_id = $3`,
+     WHERE checkout_request_id = $3 AND status = 'pending'`,
     [resultCode, resultDesc, checkoutRequestId]
   );
 }

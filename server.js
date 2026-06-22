@@ -165,6 +165,14 @@ async function initiateSTKPush(phoneNumber, amount, accountReference) {
   const { password, timestamp } = generateMpesaPassword();
   const formattedPhone = phoneNumber.replace(/^\+/, '').replace(/^0/, '254');
 
+  /* Append our own shared secret to the callback URL we send to Safaricom.
+     We control this URL entirely, so this lets /api/mpesa/callback verify
+     the request actually originated from a payment we initiated, instead
+     of trusting any POST body that arrives unauthenticated. */
+  const callbackUrl = process.env.MPESA_CALLBACK_SECRET
+    ? `${process.env.MPESA_CALLBACK_URL}?secret=${process.env.MPESA_CALLBACK_SECRET}`
+    : process.env.MPESA_CALLBACK_URL;
+
   const payload = {
     BusinessShortCode: process.env.MPESA_SHORTCODE,
     Password:          password,
@@ -174,7 +182,7 @@ async function initiateSTKPush(phoneNumber, amount, accountReference) {
     PartyA:            formattedPhone,
     PartyB:            process.env.MPESA_SHORTCODE,
     PhoneNumber:       formattedPhone,
-    CallBackURL:       process.env.MPESA_CALLBACK_URL,
+    CallBackURL:       callbackUrl,
     AccountReference:  accountReference,
     TransactionDesc:   'Lagriff Energy Payment'
   };
@@ -625,6 +633,14 @@ app.post('/api/fraud-check', authMiddleware, [
   body('deviceId').isString().notEmpty().withMessage('deviceId is required'),
   body('timestamp').isISO8601().withMessage('timestamp must be a valid ISO date string')
 ], async (req, res) => {
+  /* Admin-only: this can lock ANY device's relay (auto_lock_relay) based on
+     fully client-supplied userId/deviceId. Without this check, any logged-in
+     customer could lock another customer's power off by spamming this
+     endpoint with someone else's deviceId. */
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
@@ -746,6 +762,15 @@ app.get('/api/pay/status/:checkoutRequestId', authMiddleware, async (req, res) =
 });
 
 app.post('/api/mpesa/callback', async (req, res) => {
+  /* Reject callbacks that don't carry our shared secret (see initiateSTKPush) —
+     without this, anyone who learns a checkoutRequestId (e.g. their own, from
+     a payment they started but never paid for) could POST a forged "success"
+     callback and get their wallet credited / device unlocked for free. */
+  if (process.env.MPESA_CALLBACK_SECRET && req.query.secret !== process.env.MPESA_CALLBACK_SECRET) {
+    console.warn('[M-Pesa] Rejected callback with missing/invalid secret from', req.ip);
+    return res.status(401).json({ ResultCode: 1, ResultDesc: 'Rejected' });
+  }
+
   // Always acknowledge M-Pesa immediately, process async
   res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
 
@@ -872,7 +897,10 @@ app.get('/api/energy/history', async (req, res) => {
   }
 });
 
-app.get('/api/audit/timeline', async (req, res) => {
+app.get('/api/audit/timeline', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
   try {
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 30, 100);
     res.json({ events: await getAuditTimeline(limit) });
@@ -881,7 +909,12 @@ app.get('/api/audit/timeline', async (req, res) => {
   }
 });
 
-app.get('/api/audit/charts', async (req, res) => {
+/* Admin-only — recentPayments below includes customer phone numbers and M-Pesa
+   receipt data, so this must never be reachable without authentication. */
+app.get('/api/audit/charts', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
     const forecast = safeForecast(deviceId, 6);
@@ -902,8 +935,11 @@ app.get('/api/audit/charts', async (req, res) => {
   }
 });
 
-/* ── Analytics summary ──────────────────────────────────────────────────── */
-app.get('/api/analytics/summary', async (req, res) => {
+/* ── Analytics summary (admin-only — includes getAdminSummary() revenue data) ── */
+app.get('/api/analytics/summary', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
     const readings = await getEnergyHistoryAsc(deviceId, 200);
@@ -1044,6 +1080,11 @@ async function startup() {
     console.log(`  Analytics:  http://localhost:${PORT}/analytics.html`);
     console.log(`  M-Pesa mode: ${mpesaConfigured() ? 'live (sandbox/production)' : 'simulation'}`);
     console.log(`  Demo login:  deviceId=DEMO-001  pin=1234`);
+    if (mpesaConfigured() && !process.env.MPESA_CALLBACK_SECRET) {
+      console.warn('[SECURITY] MPESA_CALLBACK_SECRET is not set while M-Pesa is live — '
+        + '/api/mpesa/callback will accept unauthenticated requests. Set MPESA_CALLBACK_SECRET '
+        + 'in .env before accepting real payments.');
+    }
   });
 }
 

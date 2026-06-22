@@ -25,9 +25,12 @@
 #include <HTTPClient.h>
 
 // ===== CONFIGURATION =====
-#define BACKEND_URL "http://your-backend.com/api/telemetry"  // Update this — must end in /api/telemetry
-#define DEVICE_API_KEY ""  // Optional — must match DEVICE_API_KEY env var on the backend, leave blank to disable
-#define DEVICE_ID "SOLAR_DEVICE_001"
+#define BACKEND_URL "https://smart-solar-monitoring-pay-as-you-go.onrender.com/api/telemetry"
+// Must match DEVICE_API_KEY in the backend's .env — without it, anyone can POST
+// fake telemetry for any deviceId. One shared key for the whole fleet (the backend
+// doesn't support per-device keys yet) — flash the same value to every device.
+#define DEVICE_API_KEY "8039c15a9ada7594daf52e43984a52acb1da70816d2788f5"
+#define DEVICE_ID "SOLAR_DEVICE_001"  // Give each physical device a unique ID before flashing
 #define PANEL_TYPE "Monocrystalline_400W"  // Panel configuration
 #define UPDATE_INTERVAL 5000  // Send data every 5 seconds
 
