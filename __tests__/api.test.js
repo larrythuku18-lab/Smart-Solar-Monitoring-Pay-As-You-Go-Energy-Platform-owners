@@ -168,3 +168,25 @@ describe('payment endpoints are scoped to the authenticated user', () => {
     assert.equal(r.status, 404);
   });
 });
+
+describe('device telemetry security', () => {
+  test('rejects telemetry with no X-Device-Key when DEVICE_API_KEY is configured', async () => {
+    if (!process.env.DEVICE_API_KEY) return; // not configured locally — nothing to test
+    const r = await fetch(`${BASE}/api/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'SOLAR_DEVICE_001', voltage: 48, current: 3, generation: 144, battery: 80 })
+    });
+    assert.equal(r.status, 401);
+  });
+
+  test('accepts telemetry carrying the correct X-Device-Key', async () => {
+    if (!process.env.DEVICE_API_KEY) return;
+    const r = await fetch(`${BASE}/api/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Device-Key': process.env.DEVICE_API_KEY },
+      body: JSON.stringify({ deviceId: 'SOLAR_DEVICE_001', voltage: 48, current: 3, generation: 144, battery: 80 })
+    });
+    assert.equal(r.status, 200);
+  });
+});
