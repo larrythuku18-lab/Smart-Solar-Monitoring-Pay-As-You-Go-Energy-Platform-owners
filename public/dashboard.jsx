@@ -733,7 +733,7 @@ const SolarDashboard = () => {
     { id: 'operations', label: 'Operations',  emoji: '🏢' }
   ];
 
-  const mkRef = (key) => (c) => { if (c) chartRefs.current[key] = c; };
+  const mkRef = (key) => (c) => { if (c) chartRefs.current[key] = c.chartInstance || c; };
 
   const paymentLegend = paymentStatusData.current.labels.map((label, i) => {
     const count = paymentStatusData.current.counts[i];
