@@ -33,17 +33,17 @@ async function sendLoginAlert(toEmail, { name, time }) {
     if (!t || !toEmail) return;
 
     await t.sendMail({
-      from:    `"Lagriff" <${process.env.EMAIL_USER}>`,
+      from:    `"SolGrid" <${process.env.EMAIL_USER}>`,
       to:      toEmail,
-      subject: 'New sign-in to your Lagriff account',
+      subject: 'New sign-in to your SolGrid account',
       text:
 `Hi ${name || 'there'},
 
-We noticed a new sign-in to your Lagriff account on ${time}.
+We noticed a new sign-in to your SolGrid account on ${time}.
 
 If this was you, no action is needed. If you don't recognize this activity, please change your password immediately.
 
-— Lagriff`
+— SolGrid`
     });
   } catch (err) {
     console.warn('[Mailer] Failed to send login notification:', err.message);

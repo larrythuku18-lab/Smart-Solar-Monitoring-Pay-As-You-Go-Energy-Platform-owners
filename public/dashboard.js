@@ -821,7 +821,7 @@ const SolarDashboard = () => {
     className: "flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between"
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("p", {
     className: "text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400"
-  }, "Lagriff"), /*#__PURE__*/React.createElement("h1", {
+  }, "SolGrid"), /*#__PURE__*/React.createElement("h1", {
     className: "mt-1 text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50"
   }, "Analysis Board")), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-3 shadow-sm"

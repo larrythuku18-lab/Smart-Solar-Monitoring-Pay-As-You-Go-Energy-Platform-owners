@@ -1,5 +1,5 @@
 /* ============================================================
-   Lagriff — Analytics Dashboard
+   SolGrid — Analytics Dashboard
    React + Chart.js (via CDN globals)
    ============================================================ */
 
@@ -1229,7 +1229,7 @@ const AnalyticsDashboard = () => {
       color: '#475569',
       fontWeight: 500
     }
-  }, "Lagriff"), /*#__PURE__*/React.createElement("h1", {
+  }, "SolGrid"), /*#__PURE__*/React.createElement("h1", {
     style: {
       marginTop: 4,
       fontSize: 28,
