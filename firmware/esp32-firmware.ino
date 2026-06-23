@@ -26,9 +26,15 @@
 
 // ===== CONFIGURATION =====
 #define BACKEND_URL "https://smart-solar-monitoring-pay-as-you-go.onrender.com/api/telemetry"
-// Must match DEVICE_API_KEY in the backend's .env — without it, anyone can POST
-// fake telemetry for any deviceId. One shared key for the whole fleet (the backend
-// doesn't support per-device keys yet) — flash the same value to every device.
+// Without this, anyone can POST fake telemetry for any deviceId.
+// Preferred: provision this specific DEVICE_ID via POST /api/admin/devices
+// (admin-only) and flash the key it returns here — that ties this exact unit
+// to its own key, so a leaked key only affects one device and can be
+// rotated via POST /api/admin/devices/:deviceId/rotate-key without
+// re-flashing the rest of the fleet.
+// Fallback below is the shared DEVICE_API_KEY env var, used for any device
+// that hasn't been individually provisioned yet — fine to start with, but
+// migrate real deployed units to their own key when you can.
 #define DEVICE_API_KEY "8039c15a9ada7594daf52e43984a52acb1da70816d2788f5"
 #define DEVICE_ID "SOLAR_DEVICE_001"  // Give each physical device a unique ID before flashing
 #define PANEL_TYPE "Monocrystalline_400W"  // Panel configuration

@@ -190,3 +190,92 @@ describe('device telemetry security', () => {
     assert.equal(r.status, 200);
   });
 });
+
+describe('per-device telemetry keys', () => {
+  const testDeviceId = `TEST-DEV-${Date.now()}`;
+
+  test('provisioning a device is admin-only', async () => {
+    const customerToken = await loginCustomer();
+    const r = await fetch(`${BASE}/api/admin/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${customerToken}` },
+      body: JSON.stringify({ deviceId: testDeviceId })
+    });
+    assert.equal(r.status, 403);
+  });
+
+  test('an admin can provision a device and gets back its key', async () => {
+    const adminToken = await loginAdmin();
+    const r = await fetch(`${BASE}/api/admin/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ deviceId: testDeviceId, name: 'Test device' })
+    });
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.device.device_id, testDeviceId);
+    assert.ok(body.device.api_key, 'provisioning must return the key so it can be flashed');
+  });
+
+  test('once provisioned, only that device\'s own key is accepted — not the shared fleet key', async () => {
+    const adminToken = await loginAdmin();
+    const provisionRes = await fetch(`${BASE}/api/admin/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ deviceId: testDeviceId })
+    });
+    const { device } = await provisionRes.json();
+
+    const withOwnKey = await fetch(`${BASE}/api/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Device-Key': device.api_key },
+      body: JSON.stringify({ deviceId: testDeviceId, voltage: 48, current: 2, generation: 96, battery: 70 })
+    });
+    assert.equal(withOwnKey.status, 200);
+
+    if (process.env.DEVICE_API_KEY) {
+      const withSharedKey = await fetch(`${BASE}/api/telemetry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Device-Key': process.env.DEVICE_API_KEY },
+        body: JSON.stringify({ deviceId: testDeviceId, voltage: 48, current: 2, generation: 96, battery: 70 })
+      });
+      assert.equal(withSharedKey.status, 401, "a provisioned device's own key must win over the shared fallback");
+    }
+  });
+
+  test('rotating a key invalidates the old one', async () => {
+    const adminToken = await loginAdmin();
+    const provisionRes = await fetch(`${BASE}/api/admin/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ deviceId: testDeviceId })
+    });
+    const { device: original } = await provisionRes.json();
+
+    const rotateRes = await fetch(`${BASE}/api/admin/devices/${testDeviceId}/rotate-key`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    const { device: rotated } = await rotateRes.json();
+    assert.notEqual(rotated.api_key, original.api_key);
+
+    const withOldKey = await fetch(`${BASE}/api/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Device-Key': original.api_key },
+      body: JSON.stringify({ deviceId: testDeviceId, voltage: 48, current: 2, generation: 96, battery: 70 })
+    });
+    assert.equal(withOldKey.status, 401);
+  });
+
+  test('GET /api/admin/devices is admin-only and includes keys', async () => {
+    const customerToken = await loginCustomer();
+    const denied = await fetch(`${BASE}/api/admin/devices`, { headers: { Authorization: `Bearer ${customerToken}` } });
+    assert.equal(denied.status, 403);
+
+    const adminToken = await loginAdmin();
+    const allowed = await fetch(`${BASE}/api/admin/devices`, { headers: { Authorization: `Bearer ${adminToken}` } });
+    assert.equal(allowed.status, 200);
+    const body = await allowed.json();
+    assert.ok(Array.isArray(body.devices));
+  });
+});

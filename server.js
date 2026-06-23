@@ -1,5 +1,5 @@
 /**
- * server.js — Lagriff Express API
+ * server.js — SolGrid Express API
  *
  * Storage layer: PostgreSQL via ./db.js (all helpers are async).
  * AI layer:      TensorFlow.js models in ./ai-models.js
@@ -28,7 +28,9 @@ const {
   getUserById,
   getDevice,
   getDeviceByUserId,
+  getAllDevices,
   upsertDeviceHeartbeat,
+  provisionDevice,
   createPayment,
   completePayment,
   getPaymentByCheckoutId,
@@ -184,7 +186,7 @@ async function initiateSTKPush(phoneNumber, amount, accountReference) {
     PhoneNumber:       formattedPhone,
     CallBackURL:       callbackUrl,
     AccountReference:  accountReference,
-    TransactionDesc:   'Lagriff Energy Payment'
+    TransactionDesc:   'SolGrid Energy Payment'
   };
 
   const { data } = await withMpesaRetry(() => axios.post(
@@ -836,22 +838,76 @@ app.get('/api/payments/stats', async (req, res) => {
   }
 });
 
+/* ── Device management (admin-only) ────────────────────────────────────────
+   Lets an admin pre-provision a physical device with its own unique
+   telemetry key before it's ever powered on, view every device's key
+   (needed to flash/re-flash firmware), and rotate a compromised device's
+   key without affecting the rest of the fleet. ── */
+app.get('/api/admin/devices', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  try {
+    res.json({ devices: await getAllDevices() });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load devices', message: err.message });
+  }
+});
+
+app.post('/api/admin/devices', authMiddleware, [
+  body('deviceId').isString().trim().notEmpty().withMessage('deviceId is required')
+], async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  try {
+    const device = await provisionDevice(req.body.deviceId, req.body.name);
+    res.json({ device });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to provision device', message: err.message });
+  }
+});
+
+/* Same handler as creation — provisionDevice rotates the key on conflict,
+   so re-provisioning an existing deviceId is exactly how you revoke/rotate it. */
+app.post('/api/admin/devices/:deviceId/rotate-key', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  try {
+    const device = await provisionDevice(req.params.deviceId);
+    res.json({ device });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to rotate device key', message: err.message });
+  }
+});
+
 /* ── Telemetry ingest — called directly by ESP32 firmware ─────────────────
-   No JWT here (a device can't easily hold a user session), but if
-   DEVICE_API_KEY is set, the device must send a matching X-Device-Key
-   header. The response carries the backend's desired relay state, since
-   pushing commands TO the device only works if it's reachable on the same
-   network — most real deployments (behind a router, or on GSM) are not,
-   so the device polls its state via this response instead. ── */
+   No JWT here (a device can't easily hold a user session). Auth is by
+   X-Device-Key header, checked against (in order):
+     1. The device's own api_key, if an admin has provisioned one
+        (POST /api/admin/devices) — only that exact device's key works.
+     2. The shared DEVICE_API_KEY env var, as a fallback for devices that
+        haven't been individually provisioned yet.
+     3. If neither is configured, telemetry is accepted unauthenticated
+        (fine for local demos, not for real hardware — see .env.example).
+   The response carries the backend's desired relay state, since pushing
+   commands TO the device only works if it's reachable on the same network —
+   most real deployments (behind a router, or on GSM) are not, so the device
+   polls its state via this response instead. ── */
 app.post('/api/telemetry', apiLimiter, async (req, res) => {
   try {
-    const expectedKey = process.env.DEVICE_API_KEY;
+    const { deviceId, voltage, current, generation, battery, consumption } = req.body;
+    if (!deviceId) return res.status(400).json({ error: 'deviceId is required' });
+
+    const existingDevice = await getDevice(deviceId);
+    const expectedKey = existingDevice?.api_key || process.env.DEVICE_API_KEY;
     if (expectedKey && req.headers['x-device-key'] !== expectedKey) {
       return res.status(401).json({ error: 'Invalid or missing device key' });
     }
-
-    const { deviceId, voltage, current, generation, battery, consumption } = req.body;
-    if (!deviceId) return res.status(400).json({ error: 'deviceId is required' });
 
     await upsertDeviceHeartbeat({ deviceId, ip: req.ip });
 
@@ -1075,7 +1131,7 @@ async function startup() {
   }
 
   app.listen(PORT, () => {
-    console.log(`[START] Lagriff server running on http://localhost:${PORT}`);
+    console.log(`[START] SolGrid server running on http://localhost:${PORT}`);
     console.log(`  Dashboard:  http://localhost:${PORT}/index.html`);
     console.log(`  Analytics:  http://localhost:${PORT}/analytics.html`);
     console.log(`  M-Pesa mode: ${mpesaConfigured() ? 'live (sandbox/production)' : 'simulation'}`);

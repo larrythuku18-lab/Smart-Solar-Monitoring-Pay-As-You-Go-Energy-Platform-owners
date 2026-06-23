@@ -12,6 +12,7 @@
 require('dotenv').config();
 const { Pool, types } = require('pg');
 const bcrypt = require('bcryptjs');
+const crypto = require('node:crypto');
 
 /* ── Type parsers ────────────────────────────────────────────────────────────
    pg returns NUMERIC columns as strings by default. Override so arithmetic
@@ -84,6 +85,10 @@ async function runMigrations() {
       is_active   BOOLEAN     DEFAULT TRUE,
       created_at  TIMESTAMPTZ DEFAULT NOW()
     );
+    -- Per-device telemetry auth key — issued by an admin when a device is
+    -- provisioned. NULL means "not yet provisioned"; /api/telemetry falls
+    -- back to the shared DEVICE_API_KEY env var for those.
+    ALTER TABLE devices ADD COLUMN IF NOT EXISTS api_key VARCHAR(64);
 
     -- ── Energy readings (IoT telemetry from ESP32) ─────────────────────────
     CREATE TABLE IF NOT EXISTS energy_readings (
@@ -424,6 +429,30 @@ async function setRelayState(deviceId, state) {
   if (device?.user_id) {
     await q('UPDATE users SET relay_unlocked = $1 WHERE id = $2', [state, device.user_id]);
   }
+}
+
+async function getAllDevices() {
+  const { rows } = await q('SELECT * FROM devices ORDER BY created_at DESC');
+  return rows;
+}
+
+/**
+ * Issue (or re-issue) a unique telemetry API key for a device. Creates the
+ * device row if it doesn't exist yet (admin pre-provisioning a unit before
+ * it's ever powered on), or rotates the key if it's already provisioned.
+ */
+async function provisionDevice(deviceId, name) {
+  const apiKey = crypto.randomBytes(24).toString('hex');
+  const { rows } = await q(
+    `INSERT INTO devices (device_id, name, api_key, status, is_active, relay_state)
+     VALUES ($1, $2, $3, 'active', TRUE, 'on')
+     ON CONFLICT (device_id) DO UPDATE
+       SET api_key = EXCLUDED.api_key,
+           name    = COALESCE(EXCLUDED.name, devices.name)
+     RETURNING *`,
+    [deviceId, name || deviceId, apiKey]
+  );
+  return rows[0];
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -790,8 +819,10 @@ module.exports = {
   /* devices */
   getDevice,
   getDeviceByUserId,
+  getAllDevices,
   setRelayState,
   upsertDeviceHeartbeat,
+  provisionDevice,
   /* energy */
   insertEnergyReading,
   getLatestEnergy,

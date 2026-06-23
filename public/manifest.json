@@ -1,7 +1,7 @@
 {
-  "name": "Lagriff",
-  "short_name": "Lagriff",
-  "description": "Lagriff — Pay-As-You-Go Solar",
+  "name": "SolGrid",
+  "short_name": "SolGrid",
+  "description": "SolGrid — Pay-As-You-Go Solar",
   "start_url": "/login.html",
   "display": "standalone",
   "background_color": "#15403B",
