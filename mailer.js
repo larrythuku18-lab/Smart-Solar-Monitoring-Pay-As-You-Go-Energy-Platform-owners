@@ -1,14 +1,29 @@
 /**
- * mailer.js — Gmail SMTP email notifications via nodemailer
+ * mailer.js — email notifications
  *
- * Configure with EMAIL_USER + EMAIL_PASS (a Gmail App Password) in .env.
- * If unset, sending is silently skipped — the app works fine without it.
+ * Login alerts:         Gmail SMTP via nodemailer. Configure with EMAIL_USER +
+ *                        EMAIL_PASS (a Gmail App Password) in .env.
+ * Signup confirmation:   Resend. Configure with RESEND_API_KEY + RESEND_FROM_EMAIL.
+ * Both are independently optional — if either is unset, that notification is
+ * silently skipped and the app works fine without it.
  */
 
 const nodemailer = require('nodemailer');
+const { Resend }  = require('resend');
 
 function mailerConfigured() {
   return !!(process.env.EMAIL_USER && process.env.EMAIL_PASS);
+}
+
+function resendConfigured() {
+  return !!process.env.RESEND_API_KEY;
+}
+
+let resendClient = null;
+function getResendClient() {
+  if (!resendConfigured()) return null;
+  if (!resendClient) resendClient = new Resend(process.env.RESEND_API_KEY);
+  return resendClient;
 }
 
 let transporter = null;
@@ -50,4 +65,34 @@ If this was you, no action is needed. If you don't recognize this activity, plea
   }
 }
 
-module.exports = { sendLoginAlert, mailerConfigured };
+/* Fire-and-forget — never let a mail failure affect the registration response.
+   Returns true/false so callers can log success without awaiting delivery. */
+async function sendSignupConfirmation(toEmail, { name }) {
+  try {
+    const client = getResendClient();
+    if (!client || !toEmail) return false;
+
+    const { error } = await client.emails.send({
+      from:    process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
+      to:      toEmail,
+      subject: 'Welcome to SolGrid — your account is ready',
+      text:
+`Hi ${name || 'there'},
+
+Your SolGrid account has been created successfully. You can now log in and top up your wallet to keep your power on.
+
+— SolGrid`
+    });
+
+    if (error) {
+      console.warn('[Mailer] Resend rejected signup confirmation:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Mailer] Failed to send signup confirmation:', err.message);
+    return false;
+  }
+}
+
+module.exports = { sendLoginAlert, mailerConfigured, sendSignupConfirmation, resendConfigured };

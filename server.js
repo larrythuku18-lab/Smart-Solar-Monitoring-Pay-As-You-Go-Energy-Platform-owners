@@ -19,7 +19,7 @@ const helmet      = require('helmet');
 const rateLimit   = require('express-rate-limit');
 const compression = require('compression');
 const { body, validationResult } = require('express-validator');
-const { sendLoginAlert } = require('./mailer');
+const { sendLoginAlert, sendSignupConfirmation } = require('./mailer');
 
 const {
   runMigrations,
@@ -520,6 +520,11 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const user = await createUser({ deviceId: newDeviceId, name, email, passwordHash, phone, role: 'customer' });
 
     const token = signToken({ id: user.id, deviceId: user.device_id, role: user.role });
+
+    /* Fire-and-forget signup confirmation — never blocks or fails the response */
+    sendSignupConfirmation(user.email, { name: user.name })
+      .catch(err => console.error('sendSignupConfirmation error:', err.message));
+
     res.status(201).json({
       token,
       user: { id: user.id, deviceId: user.device_id, role: user.role, walletBalance: user.wallet_balance }
