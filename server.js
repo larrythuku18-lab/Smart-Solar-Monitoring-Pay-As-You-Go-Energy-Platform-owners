@@ -469,8 +469,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       const token = signToken({ id: user.id, deviceId: user.device_id, role: user.role });
 
       /* Fire-and-forget login notification — never blocks or fails the response */
-      sendLoginAlert(user.email, { name: user.name, time: new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' }) })
-        .catch(err => console.error('sendLoginAlert error:', err.message));
+      sendLoginAlert(user.email, {
+        name:     user.name,
+        deviceId: user.device_id,
+        role:     user.role,
+        time:     new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' })
+      }).catch(err => console.error('sendLoginAlert error:', err.message));
 
       return res.json({
         token,

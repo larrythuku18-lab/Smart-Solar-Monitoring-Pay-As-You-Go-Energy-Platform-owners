@@ -41,8 +41,11 @@ function getTransporter() {
   return transporter;
 }
 
-/* Fire-and-forget — never let a mail failure affect the login response */
-async function sendLoginAlert(toEmail, { name, time }) {
+/* Fire-and-forget — never let a mail failure affect the login response.
+   Includes the account's email/deviceId/role explicitly — a display name
+   alone (e.g. several test accounts all named "Demo Customer") isn't enough
+   to tell which account actually signed in. */
+async function sendLoginAlert(toEmail, { name, deviceId, role, time }) {
   try {
     const t = getTransporter();
     if (!t || !toEmail) return;
@@ -50,11 +53,16 @@ async function sendLoginAlert(toEmail, { name, time }) {
     await t.sendMail({
       from:    `"SolGrid" <${process.env.EMAIL_USER}>`,
       to:      toEmail,
-      subject: 'New sign-in to your SolGrid account',
+      subject: `New sign-in to your SolGrid account (${toEmail})`,
       text:
 `Hi ${name || 'there'},
 
-We noticed a new sign-in to your SolGrid account on ${time}.
+We noticed a new sign-in to your SolGrid account.
+
+  Account:   ${toEmail}
+  Device ID: ${deviceId || 'n/a'}
+  Role:      ${role || 'n/a'}
+  Time:      ${time}
 
 If this was you, no action is needed. If you don't recognize this activity, please change your password immediately.
 
