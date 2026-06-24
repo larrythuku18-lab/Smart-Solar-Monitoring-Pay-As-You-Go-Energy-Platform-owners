@@ -9,21 +9,14 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=solarpayg
-      - DB_USER=solarpayg
-      - DB_PASSWORD=solarpayg_password
-      - REDIS_URL=redis://redis:6379
-      - MQTT_BROKER_URL=mqtt://mosquitto:1883
+      # db.js reads a single DATABASE_URL connection string, not separate
+      # DB_HOST/DB_PORT/etc — set it explicitly so the app can actually
+      # reach the postgres service by its Docker network hostname.
+      - DATABASE_URL=postgresql://solarpayg:solarpayg_password@postgres:5432/solarpayg
       - JWT_SECRET=${JWT_SECRET:-change-me-in-production-min-32-chars}
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_started
-      mosquitto:
-        condition: service_started
     volumes:
       - ./logs:/app/logs
     restart: unless-stopped
@@ -51,31 +44,6 @@ services:
     networks:
       - solarpayg
 
-  # Redis for caching and sessions
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-    networks:
-      - solarpayg
-
-  # MQTT Broker
-  mosquitto:
-    image: eclipse-mosquitto:2
-    ports:
-      - "1883:1883"
-      - "9001:9001"
-    volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
-      - mosquitto_data:/mosquitto/data
-      - mosquitto_logs:/mosquitto/log
-    restart: unless-stopped
-    networks:
-      - solarpayg
-
   # pgAdmin for database management (optional)
   pgadmin:
     image: dpage/pgadmin4
@@ -92,9 +60,6 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
-  mosquitto_data:
-  mosquitto_logs:
 
 networks:
   solarpayg:

@@ -789,13 +789,19 @@ const SolarDashboard = () => {
       className: `rounded-full px-3 py-1 text-xs font-semibold ${cls}`
     }, label);
   };
+
+  /* h is a plain CSS height ('280px'), applied via inline style rather than a
+     Tailwind class — Tailwind CDN compiles classes asynchronously, so a class
+     like h-[280px] has no effect yet when Chart.js first measures this
+     container, locking in the wrong (unconstrained) width on mobile until a
+     later resize event corrects it. Inline styles apply immediately. */
   const ChartCard = ({
     title,
     badge,
     badgeColor,
     subtitle,
     footer,
-    h = 'h-[280px]',
+    h = '280px',
     children
   }) => /*#__PURE__*/React.createElement("div", {
     className: card
@@ -809,7 +815,10 @@ const SolarDashboard = () => {
     label: badge,
     color: badgeColor
   })), /*#__PURE__*/React.createElement("div", {
-    className: `relative ${h}`
+    className: "relative",
+    style: {
+      height: h
+    }
   }, children), footer && /*#__PURE__*/React.createElement("p", {
     className: "mt-3 text-center text-sm text-slate-500 dark:text-slate-400"
   }, footer));
@@ -993,12 +1002,14 @@ const SolarDashboard = () => {
     badge: "Snapshot",
     badgeColor: "amber",
     subtitle: "Portfolio split: paid, low-credit, and defaulted.",
-    h: "h-[320px]",
+    h: "320px",
     footer: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
       className: "font-semibold text-rose-600 dark:text-rose-400"
     }, attentionCount), " customers need immediate attention")
   }, /*#__PURE__*/React.createElement("div", {
-    className: "h-[200px]"
+    style: {
+      height: '200px'
+    }
   }, /*#__PURE__*/React.createElement(Doughnut, {
     ref: mkRef('paymentStatus'),
     data: paymentStatusData.current,
