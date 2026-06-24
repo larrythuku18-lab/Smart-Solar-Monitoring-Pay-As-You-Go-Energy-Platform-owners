@@ -24,18 +24,6 @@ jobs:
         ports:
           - 5432:5432
 
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-
-      mosquitto:
-        image: eclipse-mosquitto:2
-        ports:
-          - 1883:1883
-        volumes:
-          - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -43,7 +31,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '22'
         cache: 'npm'
 
     - name: Install dependencies
@@ -56,13 +44,9 @@ jobs:
       run: npm test
       env:
         NODE_ENV: test
-        DB_HOST: localhost
-        DB_PORT: 5432
-        DB_NAME: solarpayg_test
-        DB_USER: postgres
-        DB_PASSWORD: postgres
-        REDIS_URL: redis://localhost:6379
-        MQTT_BROKER_URL: mqtt://localhost:1883
+        # db.js reads a single DATABASE_URL connection string, not separate
+        # DB_HOST/DB_PORT/etc — those were silently ignored before.
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/solarpayg_test
         JWT_SECRET: test-jwt-secret-key-for-ci-only
 
     - name: Upload coverage reports
@@ -82,7 +66,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '22'
         cache: 'npm'
 
     - name: Install dependencies
@@ -149,7 +133,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '22'
         cache: 'npm'
 
     - name: Install dependencies

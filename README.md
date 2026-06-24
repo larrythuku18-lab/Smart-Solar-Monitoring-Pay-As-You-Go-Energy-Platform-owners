@@ -400,8 +400,6 @@ Services:
 |---|---|---|
 | `app` | 3000 | Express API + all dashboards |
 | `postgres` | 5432 | Persistent database |
-| `redis` | 6379 | Optional caching layer |
-| `mosquitto` | 1883 | MQTT broker for IoT devices |
 
 Access the dashboard at `http://localhost:3000` after containers start.
 
