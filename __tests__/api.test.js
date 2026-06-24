@@ -10,6 +10,21 @@ const path = require('node:path');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
+// Tests log in many times (loginAdmin/loginCustomer are called repeatedly
+// across the suite). If a developer's real .env has live mail credentials
+// configured for manual testing, every one of those logins would otherwise
+// fire a real Gmail SMTP send — slow, spams the inbox, and can hang the test
+// run if Gmail rate-limits the rapid-fire sends. Tests should never hit a
+// real external service regardless of what's configured for dev use.
+//
+// Set (not delete) — the spawned server.js child calls its own
+// require('dotenv').config(), which only fills in keys that are *absent*.
+// An empty string already counts as "set", so dotenv leaves it alone,
+// keeping mailerConfigured()/resendConfigured() false in the child too.
+process.env.EMAIL_USER = '';
+process.env.EMAIL_PASS = '';
+process.env.RESEND_API_KEY = '';
+
 const PORT = process.env.TEST_PORT || 3911;
 const BASE = `http://localhost:${PORT}`;
 
@@ -22,14 +37,28 @@ before(async () => {
     stdio: 'pipe'
   });
 
+  // Surfaced in the timeout error below if the child never becomes healthy —
+  // without this, a boot failure (crash, missing file, etc.) just hangs
+  // silently until the timeout, with no clue why.
+  let childOutput = '';
+  server.stdout.on('data', d => { childOutput += d; });
+  server.stderr.on('data', d => { childOutput += d; });
+
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Server did not become healthy in time')), 20_000);
+    let settled = false;
+    const timeout = setTimeout(() => {
+      settled = true;
+      reject(new Error(`Server did not become healthy in time. Child output:\n${childOutput}`));
+    }, 20_000);
     const tryHealth = async () => {
+      if (settled) return; // stop polling once we've timed out — otherwise this
+                            // setTimeout chain runs forever and the test process
+                            // never exits, even after the timeout above rejects.
       try {
         const r = await fetch(`${BASE}/health`);
-        if (r.ok) { clearTimeout(timeout); return resolve(); }
+        if (r.ok) { settled = true; clearTimeout(timeout); return resolve(); }
       } catch { /* not up yet */ }
-      setTimeout(tryHealth, 400);
+      if (!settled) setTimeout(tryHealth, 400);
     };
     tryHealth();
   });
@@ -40,10 +69,12 @@ after(() => {
 });
 
 async function loginAdmin() {
+  // Mirrors db.js's seedDemoData() fallback — ADMIN_EMAIL may be overridden
+  // locally (e.g. to a real address so login alerts don't bounce).
   const r = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@solarpayg.com', password: 'Admin@12345' })
+    body: JSON.stringify({ email: process.env.ADMIN_EMAIL || 'admin@solarpayg.com', password: 'Admin@12345' })
   });
   const body = await r.json();
   assert.equal(r.status, 200, `admin login failed: ${JSON.stringify(body)}`);

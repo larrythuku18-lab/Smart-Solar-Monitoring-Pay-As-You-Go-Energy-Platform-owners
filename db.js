@@ -237,7 +237,7 @@ async function seedDemoData() {
   // and the device-ID/PIN login share the same account.
   await upsertDemoUser({
     deviceId: 'DEMO-001', pin: '1234',
-    email: 'customer@example.com',
+    email: process.env.CUSTOMER_EMAIL || 'customer@example.com',
     passwordHash: customerHash, role: 'customer', name: 'Demo Customer',
     phone: '+254722222222', walletBalance: 75, relayUnlocked: true
   });
