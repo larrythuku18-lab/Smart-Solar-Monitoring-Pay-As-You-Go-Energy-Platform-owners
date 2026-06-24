@@ -1,4 +1,4 @@
-# ☀️ SolarPAYG — Smart Solar Monitoring & Pay-As-You-Go Energy Platform
+# ☀️ SolGrid — Smart Solar Monitoring & Pay-As-You-Go Energy Platform
 
 > A production-ready platform that connects solar panels, IoT devices, AI models, and M-Pesa payments into a single unified system. Deploy to a community, monitor every watt in real time, and let customers top up their power credit directly from their phone.
 
@@ -24,7 +24,7 @@
 
 ## What It Does
 
-SolarPAYG solves two problems at once.
+SolGrid solves two problems at once.
 
 **For customers** — Pay only for the electricity you use. Top up via M-Pesa from any phone and your power switches on automatically within seconds. Run out of credit and the relay cuts off cleanly. No paper bills, no monthly contracts.
 
@@ -369,9 +369,7 @@ VALUES ('ESP32-002', 1, 'Site B Panel', '192.168.1.102', 'Nakuru, Kenya');
 
 ### Firmware
 
-The Arduino sketch is at `firmware/esp32-firmware.ino`. It reports voltage, current, and battery level to the server and listens for relay on/off commands.
-
-Full wiring diagram and flash instructions: [`Solar/ESP32_SETUP.md`](Solar/ESP32_SETUP.md)
+The Arduino sketch is at `firmware/esp32-firmware.ino`. It reports voltage, current, and battery level to the server and listens for relay on/off commands. Pin configuration and hardware requirements are documented in the file's header comment — set `BACKEND_URL`, `DEVICE_API_KEY`, `DEVICE_ID`, and your WiFi credentials before flashing.
 
 ---
 
@@ -438,15 +436,10 @@ solar-paygo-platform/
 │   ├── dashboard.jsx       # Analysis Board React components + Chart.js charts
 │   ├── login.html          # Login page
 │   ├── nav.html            # Global navigation (injected into every page)
-│   ├── nav.css             # Navigation + bottom status bar styles
-│   └── solar/              # Additional solar UI assets
+│   └── nav.css             # Navigation + bottom status bar styles
 │
 ├── firmware/
 │   └── esp32-firmware.ino  # Arduino sketch for ESP32 solar controller
-│
-├── Solar/                  # Extended docs and secondary implementation files
-│   ├── ESP32_SETUP.md      # Full wiring and flash guide
-│   └── DEPLOYMENT.md       # Detailed deployment options
 │
 ├── schema.sql              # Reference PostgreSQL schema (extended version)
 ├── docker-compose.yml      # Full stack: Node + PostgreSQL + Redis + MQTT
