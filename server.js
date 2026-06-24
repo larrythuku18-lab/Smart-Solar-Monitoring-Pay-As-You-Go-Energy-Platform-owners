@@ -495,6 +495,17 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
 
     const token = signToken({ id: user.id, deviceId: user.device_id, role: user.role || 'customer' });
+
+    /* Fire-and-forget login notification — same as the email+password path.
+       sendLoginAlert no-ops if the account has no email on file, which is
+       common for device-only customers, so this is safe either way. */
+    sendLoginAlert(user.email, {
+      name:     user.name,
+      deviceId: user.device_id,
+      role:     user.role || 'customer',
+      time:     new Date().toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' })
+    }).catch(err => console.error('sendLoginAlert error:', err.message));
+
     return res.json({
       token,
       user: { id: user.id, deviceId: user.device_id, role: user.role || 'customer', walletBalance: user.wallet_balance }
