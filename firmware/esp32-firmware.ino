@@ -69,6 +69,11 @@ unsigned long lastSendTime = 0;
 int failureCount = 0;
 const int MAX_RETRIES = 3;
 String backendRelayState = "on";  // Last relay state the backend told us to apply
+bool gsmReady = false;  // Set true once initializeGSM() completes — used instead of
+                        // gsmSerial.available(), which only reflects unread serial
+                        // bytes right now, not whether the module is actually usable.
+unsigned long lastWifiRetry = 0;
+const unsigned long WIFI_RETRY_INTERVAL = 30000;  // try a reconnect at most every 30 s
 
 // Panel configuration database
 struct PanelConfig {
@@ -228,12 +233,21 @@ void collectAndSendTelemetry() {
   // Build JSON payload
   String payload = buildTelemetryJSON(voltage, current, generation, battery, consumption, efficiency);
   
+  // WiFi can drop after setup() (router reboot, signal loss) and the ESP32
+  // does not reconnect on its own — retry periodically rather than going
+  // dark until someone physically power-cycles the device.
+  if (WiFi.status() != WL_CONNECTED && millis() - lastWifiRetry >= WIFI_RETRY_INTERVAL) {
+    lastWifiRetry = millis();
+    Serial.println("WiFi disconnected — attempting reconnect...");
+    WiFi.reconnect();
+  }
+
   // Send to backend
   boolean success = false;
-  
+
   if (WiFi.status() == WL_CONNECTED) {
     success = sendViaHTTP(payload);
-  } else if (gsmSerial.available()) {
+  } else if (gsmReady) {
     success = sendViaGSM(payload);
   } else {
     Serial.println("No network connection available!");
@@ -368,7 +382,8 @@ void initializeGSM() {
   sendGSMCommand("AT", 2000);
   sendGSMCommand("AT+CMGF=1", 2000);  // Text mode
   sendGSMCommand("AT+CGATT=1", 2000); // Attach to GPRS
-  
+
+  gsmReady = true;
   Serial.println("GSM initialized");
 }
 

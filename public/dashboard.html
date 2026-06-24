@@ -20,6 +20,12 @@
           crossorigin integrity="sha384-5Gweje8Bx6JOh1wfCMm6fxBbi1Z8bv7/hwM+hMTYQvipfl9wdHZ7m4X14YfGsLpC"></script>
   <link rel="stylesheet" href="/nav.css">
   <style>
+    /* Tailwind CDN compiles classes asynchronously, so grid/width classes can
+       arrive after Chart.js has already measured a container — briefly
+       locking a canvas a few pixels wider than the viewport on first paint.
+       It self-corrects on resize, but this guards against any visible
+       horizontal scroll in that window regardless of root cause. */
+    html, body { overflow-x: hidden; }
     body {
       background-image: radial-gradient(circle at top center, rgba(96, 165, 250, 0.14), transparent 32%), linear-gradient(135deg, #020617 0%, #0f172a 48%, #0b1120 100%);
       color: #f8fafc;

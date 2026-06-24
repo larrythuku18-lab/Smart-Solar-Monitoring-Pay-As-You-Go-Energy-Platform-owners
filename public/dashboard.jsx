@@ -796,7 +796,12 @@ const SolarDashboard = () => {
     return <span className={`rounded-full px-3 py-1 text-xs font-semibold ${cls}`}>{label}</span>;
   };
 
-  const ChartCard = ({ title, badge, badgeColor, subtitle, footer, h = 'h-[280px]', children }) => (
+  /* h is a plain CSS height ('280px'), applied via inline style rather than a
+     Tailwind class — Tailwind CDN compiles classes asynchronously, so a class
+     like h-[280px] has no effect yet when Chart.js first measures this
+     container, locking in the wrong (unconstrained) width on mobile until a
+     later resize event corrects it. Inline styles apply immediately. */
+  const ChartCard = ({ title, badge, badgeColor, subtitle, footer, h = '280px', children }) => (
     <div className={card}>
       <div className="flex items-start justify-between gap-4 mb-4">
         <div>
@@ -805,7 +810,7 @@ const SolarDashboard = () => {
         </div>
         <Badge label={badge} color={badgeColor} />
       </div>
-      <div className={`relative ${h}`}>{children}</div>
+      <div className="relative" style={{ height: h }}>{children}</div>
       {footer && <p className="mt-3 text-center text-sm text-slate-500 dark:text-slate-400">{footer}</p>}
     </div>
   );
@@ -908,9 +913,9 @@ const SolarDashboard = () => {
             </ChartCard>
 
             <ChartCard title="Customer Payment Status" badge="Snapshot" badgeColor="amber"
-              subtitle="Portfolio split: paid, low-credit, and defaulted." h="h-[320px]"
+              subtitle="Portfolio split: paid, low-credit, and defaulted." h="320px"
               footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{attentionCount}</span> customers need immediate attention</>}>
-              <div className="h-[200px]">
+              <div style={{ height: '200px' }}>
                 <Doughnut ref={mkRef('paymentStatus')} data={paymentStatusData.current}
                   options={{ ...baseOptions, plugins: { ...baseOptions.plugins, legend: { display: false } },
                     scales: { x: { display: false }, y: { display: false } } }} />
