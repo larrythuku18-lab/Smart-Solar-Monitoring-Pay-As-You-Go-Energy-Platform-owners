@@ -69,12 +69,15 @@ after(() => {
 });
 
 async function loginAdmin() {
-  // Mirrors db.js's seedDemoData() fallback — ADMIN_EMAIL may be overridden
-  // locally (e.g. to a real address so login alerts don't bounce).
+  // Mirrors db.js's seedDemoData() fallback — ADMIN_EMAIL/ADMIN_PASSWORD may be
+  // overridden locally (e.g. to a real address so login alerts don't bounce).
   const r = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: process.env.ADMIN_EMAIL || 'admin@solarpayg.com', password: 'Admin@12345' })
+    body: JSON.stringify({
+      email:    process.env.ADMIN_EMAIL    || 'admin@solarpayg.com',
+      password: process.env.ADMIN_PASSWORD || 'Admin@12345'
+    })
   });
   const body = await r.json();
   assert.equal(r.status, 200, `admin login failed: ${JSON.stringify(body)}`);
