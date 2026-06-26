@@ -101,8 +101,14 @@
     /* ── Balance privacy blur (Safaricom-style — hidden by default, tap eye to reveal) ── */
     .balance-blur { filter: blur(6px); user-select: none; transition: filter .15s; }
     .balance-toggle-btn {
-      background: none; border: none; cursor: pointer; padding: 0;
-      font-size: 10px; line-height: 1; opacity: .55; flex-shrink: 0;
+      background: none; border: none; cursor: pointer;
+      font-size: 11px; line-height: 1; opacity: .55; flex-shrink: 0;
+      /* Visible glyph stays small, but padding + negative margin gives a
+         ~32px tap target — the glyph alone measured 10x10px on a phone
+         viewport, well under the ~44px minimum reliable touch size. */
+      padding: 11px; margin: -11px -11px -11px -3px;
+      display: inline-flex; align-items: center; justify-content: center;
+      touch-action: manipulation;
     }
     .balance-toggle-btn:hover { opacity: .9; }
 
