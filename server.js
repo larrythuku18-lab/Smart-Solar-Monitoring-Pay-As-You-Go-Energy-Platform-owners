@@ -1173,7 +1173,7 @@ async function startup() {
 }
 
 startup().catch(async err => {
-  console.error('[FATAL] startup error:', err.message);
+  console.error('[FATAL] startup error:', err?.stack || err);
   if (sentryConfigured()) {
     Sentry.captureException(err);
     await Sentry.flush(2000).catch(() => {});
