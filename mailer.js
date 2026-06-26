@@ -1,19 +1,22 @@
 /**
- * mailer.js — email notifications
+ * mailer.js — email notifications, both via Resend.
  *
- * Login alerts:         Gmail SMTP via nodemailer. Configure with EMAIL_USER +
- *                        EMAIL_PASS (a Gmail App Password) in .env.
- * Signup confirmation:   Resend. Configure with RESEND_API_KEY + RESEND_FROM_EMAIL.
- * Both are independently optional — if either is unset, that notification is
- * silently skipped and the app works fine without it.
+ * Login alerts and signup confirmations both go through Resend. Configure
+ * with RESEND_API_KEY + RESEND_FROM_EMAIL. Optional — if RESEND_API_KEY is
+ * unset, both are silently skipped and the app works fine without them.
+ *
+ * Previously, login alerts went through Gmail SMTP (nodemailer) — switched
+ * because personal-Gmail-relayed mail has no sender reputation, so Gmail's
+ * own spam filter routinely buried these in the recipient's spam folder.
+ *
+ * Caveat: Resend's sandbox sender (the default onboarding@resend.dev, used
+ * until you verify a custom domain under Domains in the Resend dashboard)
+ * only delivers to the email address your OWN Resend account is registered
+ * under — not arbitrary recipients. Until a domain is verified, login alerts
+ * for any account other than that one address will silently fail to send.
  */
 
-const nodemailer = require('nodemailer');
-const { Resend }  = require('resend');
-
-function mailerConfigured() {
-  return !!(process.env.EMAIL_USER && process.env.EMAIL_PASS);
-}
+const { Resend } = require('resend');
 
 function resendConfigured() {
   return !!process.env.RESEND_API_KEY;
@@ -26,32 +29,17 @@ function getResendClient() {
   return resendClient;
 }
 
-let transporter = null;
-function getTransporter() {
-  if (!mailerConfigured()) return null;
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-  }
-  return transporter;
-}
-
 /* Fire-and-forget — never let a mail failure affect the login response.
    Includes the account's email/deviceId/role explicitly — a display name
    alone (e.g. several test accounts all named "Demo Customer") isn't enough
    to tell which account actually signed in. */
 async function sendLoginAlert(toEmail, { name, deviceId, role, time }) {
   try {
-    const t = getTransporter();
-    if (!t || !toEmail) return;
+    const client = getResendClient();
+    if (!client || !toEmail) return;
 
-    await t.sendMail({
-      from:    `"SolGrid" <${process.env.EMAIL_USER}>`,
+    const { error } = await client.emails.send({
+      from:    process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
       to:      toEmail,
       subject: `New sign-in to your SolGrid account (${toEmail})`,
       text:
@@ -68,6 +56,10 @@ If this was you, no action is needed. If you don't recognize this activity, plea
 
 — SolGrid`
     });
+
+    if (error) {
+      console.warn('[Mailer] Resend rejected login alert:', error.message);
+    }
   } catch (err) {
     console.warn('[Mailer] Failed to send login notification:', err.message);
   }
@@ -103,4 +95,4 @@ Your SolGrid account has been created successfully. You can now log in and top u
   }
 }
 
-module.exports = { sendLoginAlert, mailerConfigured, sendSignupConfirmation, resendConfigured };
+module.exports = { sendLoginAlert, sendSignupConfirmation, resendConfigured };
