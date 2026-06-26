@@ -11,7 +11,7 @@
 
 require('dotenv').config();
 const { Pool, types } = require('pg');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const crypto = require('node:crypto');
 
 /* ── Type parsers ────────────────────────────────────────────────────────────

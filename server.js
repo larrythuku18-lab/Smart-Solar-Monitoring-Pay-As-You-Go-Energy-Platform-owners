@@ -22,7 +22,7 @@ const path     = require('node:path');
 const crypto   = require('node:crypto');
 const axios       = require('axios');
 const cron        = require('node-cron');
-const bcrypt      = require('bcryptjs');
+const bcrypt      = require('bcrypt');
 const helmet      = require('helmet');
 const rateLimit   = require('express-rate-limit');
 const compression = require('compression');
@@ -1173,7 +1173,7 @@ async function startup() {
 }
 
 startup().catch(async err => {
-  console.error('[FATAL] startup error:', err.message);
+  console.error('[FATAL] startup error:', err?.stack || err);
   if (sentryConfigured()) {
     Sentry.captureException(err);
     await Sentry.flush(2000).catch(() => {});
