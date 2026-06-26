@@ -5,10 +5,6 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "stop": "pm2 stop solarpayg",
-    "reload": "pm2 reload solarpayg",
-    "logs": "pm2 logs solarpayg",
-    "monitor": "pm2 monit",
     "dev": "nodemon server.js",
     "generate-icons": "node scripts/generate-icons.js",
     "test": "node --test __tests__/*.test.js"
@@ -24,6 +20,7 @@
   "license": "MIT",
   "dependencies": {
     "@babel/standalone": "^7.29.7",
+    "@sentry/node": "^10.61.0",
     "axios": "^1.6.2",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",

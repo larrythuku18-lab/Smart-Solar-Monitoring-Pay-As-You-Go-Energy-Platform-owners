@@ -8,6 +8,14 @@
 
 require('dotenv').config();
 
+/* Error monitoring (optional — leave SENTRY_DSN blank to disable).
+   Initialized before other requires per Sentry's setup guidance. */
+const Sentry = require('@sentry/node');
+function sentryConfigured() { return !!process.env.SENTRY_DSN; }
+if (sentryConfigured()) {
+  Sentry.init({ dsn: process.env.SENTRY_DSN, environment: process.env.NODE_ENV || 'development' });
+}
+
 const express  = require('express');
 const cors     = require('cors');
 const path     = require('node:path');
@@ -1164,14 +1172,46 @@ async function startup() {
   });
 }
 
-startup().catch(err => {
+startup().catch(async err => {
   console.error('[FATAL] startup error:', err.message);
+  if (sentryConfigured()) {
+    Sentry.captureException(err);
+    await Sentry.flush(2000).catch(() => {});
+  }
+  process.exit(1);
+});
+
+/* Crash visibility — without these, an error thrown outside the request
+   lifecycle (e.g. inside the telemetry setInterval) prints Node's default
+   trace and the process dies with no indication of *why* in Render's log
+   stream. Logging with a clear marker and the stack makes the cause findable;
+   exiting (rather than limping on with corrupted state) lets Render's
+   process supervisor restart cleanly, same as it does for any other crash.
+   Sentry.flush() before exit — process.exit() would otherwise cut off the
+   in-flight HTTP request Sentry makes to report the error. */
+process.on('uncaughtException', async (err) => {
+  console.error('[FATAL] uncaughtException:', err.stack || err.message);
+  if (sentryConfigured()) {
+    Sentry.captureException(err);
+    await Sentry.flush(2000).catch(() => {});
+  }
+  process.exit(1);
+});
+
+process.on('unhandledRejection', async (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  console.error('[FATAL] unhandledRejection:', err.stack);
+  if (sentryConfigured()) {
+    Sentry.captureException(err);
+    await Sentry.flush(2000).catch(() => {});
+  }
   process.exit(1);
 });
 
 /* Global error handler — never leak stack traces to clients */
 app.use((err, req, res, _next) => {
   console.error('Unhandled error:', err);
+  if (sentryConfigured()) Sentry.captureException(err);
   const status = err.status || 500;
   res.status(status).json({
     error: status === 500 ? 'Internal server error' : err.message

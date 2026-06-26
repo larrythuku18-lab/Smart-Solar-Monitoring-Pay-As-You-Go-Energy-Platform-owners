@@ -629,6 +629,13 @@
     btn.disabled  = true;
     btnText.innerHTML = '<span class="spinner"></span> Signing in…';
 
+    /* Our free-tier host spins the backend down after inactivity — the first
+       request after a while can take 30-60s to wake it. Most logins resolve
+       in well under that, so only show this once the wait is unusual. */
+    const wakeTimer = setTimeout(() => {
+      btnText.innerHTML = '<span class="spinner"></span> Waking up server… this can take up to a minute';
+    }, 4000);
+
     try {
       /* Build payload: device ID + numeric PIN  vs  email + password */
       const isDeviceId = /^[A-Z0-9-]{3,20}$/i.test(identifier) && /^\d{3,6}$/.test(password);
@@ -641,6 +648,7 @@
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(payload)
       });
+      clearTimeout(wakeTimer);
       const data = await res.json().catch(() => ({}));
       const tok  = data.token || data.accessToken;
 
@@ -665,6 +673,7 @@
       }, 700);
 
     } catch (err) {
+      clearTimeout(wakeTimer);
       console.error('Login error:', err);
       showAlert('Network error. Please check your connection.', 'error');
       btn.disabled  = false;
@@ -702,12 +711,17 @@
     btn.disabled  = true;
     btnText.innerHTML = '<span class="spinner"></span> Creating account…';
 
+    const wakeTimer = setTimeout(() => {
+      btnText.innerHTML = '<span class="spinner"></span> Waking up server… this can take up to a minute';
+    }, 4000);
+
     try {
       const res  = await fetch(`${API}/auth/register`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ name, email, password, phone })
       });
+      clearTimeout(wakeTimer);
       const data = await res.json().catch(() => ({}));
       const tok  = data.token || data.accessToken;
 
@@ -729,6 +743,7 @@
       }, 700);
 
     } catch (err) {
+      clearTimeout(wakeTimer);
       console.error('Sign up error:', err);
       showAlert('Network error. Please check your connection.', 'error');
       btn.disabled  = false;

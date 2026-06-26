@@ -94,9 +94,17 @@
     .kpi.amber::before  { background: var(--amber); }
     .kpi.blue::before   { background: var(--blue); }
     .kpi.teal::before   { background: var(--teal); }
-    .kpi-label { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+    .kpi-label { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; display: flex; align-items: center; gap: 5px; }
     .kpi-val   { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 17px; line-height: 1; }
     .kpi-sub   { font-size: 9px; color: var(--muted); margin-top: 6px; }
+
+    /* ── Balance privacy blur (Safaricom-style — hidden by default, tap eye to reveal) ── */
+    .balance-blur { filter: blur(6px); user-select: none; transition: filter .15s; }
+    .balance-toggle-btn {
+      background: none; border: none; cursor: pointer; padding: 0;
+      font-size: 10px; line-height: 1; opacity: .55; flex-shrink: 0;
+    }
+    .balance-toggle-btn:hover { opacity: .9; }
 
     /* ── Credit bar ── */
     .credit-bar-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 18px; margin-bottom: 16px; }
@@ -340,7 +348,9 @@
   <!-- KPI strip -->
   <div class="kpi-grid">
     <div class="kpi green">
-      <div class="kpi-label">Wallet Balance</div>
+      <div class="kpi-label">Wallet Balance
+        <button id="balance-toggle" class="balance-toggle-btn" type="button" aria-label="Show or hide balance">👁</button>
+      </div>
       <div class="kpi-val" id="kpi-balance" style="color:var(--green)">—</div>
       <div class="kpi-sub" id="kpi-days">— days est.</div>
     </div>
@@ -662,6 +672,19 @@
 const _compact = new Intl.NumberFormat('en', { notation: 'compact', maximumSignificantDigits: 3 });
 const _integer  = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
 const fmtKES    = v => { const n = Number(v)||0; return `KES ${n >= 10000 ? _compact.format(n) : _integer.format(n)}`; };
+
+/* ══ BALANCE PRIVACY (Safaricom-style blur) ══
+   Hidden by default, tap the eye to reveal. Re-applied after every render
+   since credit-meta-balance is recreated (via innerHTML) on each refresh. */
+const BALANCE_HIDDEN_KEY = 'balanceHidden';
+let balanceHidden = localStorage.getItem(BALANCE_HIDDEN_KEY) !== 'false';
+function applyBalanceVisibility() {
+  ['kpi-balance', 'acc-balance', 'sb-balance-chip', 'credit-meta-balance'].forEach(id => {
+    document.getElementById(id)?.classList.toggle('balance-blur', balanceHidden);
+  });
+  const btn = document.getElementById('balance-toggle');
+  if (btn) btn.textContent = balanceHidden ? '👁' : '🙈';
+}
 const fmtPower  = w => { w = Number(w)||0; return w >= 1000 ? `${(w/1000).toFixed(1)} kW` : `${Math.round(w)} W`; };
 const fmtDate   = d => d ? new Date(d).toLocaleString('en-KE',{dateStyle:'short',timeStyle:'short'}) : '—';
 
@@ -804,10 +827,10 @@ function renderAll() {
   document.getElementById('credit-fill').style.background = barColor;
   document.getElementById('credit-pct').textContent       = pct + '%';
   document.getElementById('credit-pct').style.color       = barColor;
-  document.getElementById('credit-meta').textContent      =
+  document.getElementById('credit-meta').innerHTML      =
     bal <= 0 ? 'No credit — top up to restore power'
     : lowCredit ? `Low credit — top up soon to avoid interruption`
-    : `Credit healthy · ${fmtKES(bal)} remaining`;
+    : `Credit healthy · <span id="credit-meta-balance">${fmtKES(bal)}</span> remaining`;
 
   /* Live metrics */
   const bc = bat > 50 ? 'var(--green)' : bat > 20 ? 'var(--amber)' : 'var(--red)';
@@ -840,6 +863,8 @@ function renderAll() {
   /* Pre-fill phone */
   const phoneEl = document.getElementById('pay-phone');
   if (!phoneEl.value && userInfo.phone) phoneEl.value = userInfo.phone;
+
+  applyBalanceVisibility();
 }
 
 /* ══ LOAD RECENT TXS — allTxs is populated by loadState(), nothing extra needed ══ */
@@ -1186,6 +1211,14 @@ async function boot() {
   document.getElementById('pay-amount')?.addEventListener('input', onAmountChange);
   document.getElementById('pay-btn')?.addEventListener('click', submitPayment);
   document.getElementById('logout-btn')?.addEventListener('click', logout);
+
+  /* Balance privacy toggle — applyBalanceVisibility() itself runs on every
+     renderAll(), so this just needs to flip the stored preference. */
+  document.getElementById('balance-toggle')?.addEventListener('click', () => {
+    balanceHidden = !balanceHidden;
+    localStorage.setItem(BALANCE_HIDDEN_KEY, String(balanceHidden));
+    applyBalanceVisibility();
+  });
   document.getElementById('cancel-product-link')?.addEventListener('click', e => {
     e.preventDefault();
     clearPayContext();

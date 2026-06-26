@@ -54,49 +54,51 @@ jobs:
       with:
         file: ./coverage/lcov.info
 
-  build-and-deploy:
+  # Render is connected directly to this repo's GitHub integration and
+  # auto-deploys on every push to main — there is no separate deploy step to
+  # run from here. This job instead smoke-tests the self-hosted Docker Compose
+  # path (README "Option B"): does the image build, and does a container
+  # booted against a real Postgres actually come up and answer /health.
+  docker-build-smoke-test:
     needs: test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
 
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: solarpayg_docker_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-        cache: 'npm'
-
-    - name: Install dependencies
-      run: npm install
-
-    - name: Build application
-      run: npm run build 2>/dev/null || echo "No build script defined"
 
     - name: Build Docker image
       run: |
         docker build -t solarpayg-platform:${{ github.sha }} .
         docker tag solarpayg-platform:${{ github.sha }} solarpayg-platform:latest
 
-    - name: Run Docker container tests
+    - name: Run container against real Postgres and check /health
       run: |
         docker run --rm -d --name test-container \
+          --network host \
           -e NODE_ENV=test \
-          -e DB_HOST=test-db \
-          -p 3000:3000 \
+          -e DATABASE_URL=postgresql://postgres:postgres@localhost:5432/solarpayg_docker_test \
+          -e JWT_SECRET=test-jwt-secret-key-for-ci-only \
+          -e PORT=3000 \
           solarpayg-platform:latest
         sleep 10
-        curl -f http://localhost:3000/health || exit 1
+        curl -f http://localhost:3000/health || { docker logs test-container; exit 1; }
         docker stop test-container
-
-    - name: Deploy to staging
-      if: github.ref == 'refs/heads/main'
-      run: |
-        echo "Deploying to staging environment..."
-        # Add your deployment commands here
-        # Example: kubectl apply -f k8s/staging/ or az webapp up
 
   security-scan:
     runs-on: ubuntu-latest
@@ -126,6 +128,20 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
 
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: solarpayg_perf_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -140,6 +156,10 @@ jobs:
       run: npm install
 
     - name: Run performance tests
+      env:
+        NODE_ENV: test
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/solarpayg_perf_test
+        JWT_SECRET: test-jwt-secret-key-for-ci-only
       run: |
         # Simple performance test - measure startup time
         START_TIME=$(date +%s%N)
@@ -147,9 +167,9 @@ jobs:
         SERVER_PID=$!
         sleep 5
 
-        # Test basic endpoints
+        # Test basic endpoint — /api/auth/status doesn't exist on this API,
+        # so just check the health endpoint server.js actually exposes.
         curl -f http://localhost:3000/health
-        curl -f http://localhost:3000/api/auth/status 2>/dev/null || true
 
         END_TIME=$(date +%s%N)
         STARTUP_TIME=$(( (END_TIME - START_TIME) / 1000000 )) # Convert to milliseconds
