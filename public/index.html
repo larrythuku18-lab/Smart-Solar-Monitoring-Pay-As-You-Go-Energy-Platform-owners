@@ -628,19 +628,35 @@
     ));
   }
 
+  /* getAuditTimeline() (db.js) UNIONs payments + maintenance_alerts under
+     generic column names — category/ts/severity/detail/ref_id — since the
+     two source tables don't share a schema. This used to read e.type/
+     e.message/e.created_at/e.device_id, none of which exist on the actual
+     response, so every row silently fell back to "Event" / "—". */
   function renderTimeline(events) {
     const el = document.getElementById('timeline-list');
     if (!el) return;
     if (!events || !events.length) { el.innerHTML = '<div style="padding:18px;color:var(--muted);font-size:11px">No events found</div>'; return; }
-    const typeColor = { payment_success: 'var(--green)', wallet_expired: 'var(--red)', relay_lock: 'var(--red)', relay_unlock: 'var(--green)' };
-    el.innerHTML = events.map(e => `
+    const severityColor = {
+      completed: 'var(--green)', success: 'var(--green)',
+      failed:    'var(--red)',   high:    'var(--red)',
+      pending:   'var(--amber)', medium:  'var(--amber)',
+      low: 'var(--blue)'
+    };
+    el.innerHTML = events.map(e => {
+      const isPayment = e.category === 'payment';
+      const text = isPayment
+        ? `Payment ${e.severity || 'pending'} · ${fmtKES(e.detail)}`
+        : (e.detail || 'Alert').replaceAll('_', ' ');
+      return `
       <div class="timeline-item">
-        <div class="timeline-dot" style="background:${typeColor[e.type] || 'var(--blue)'}"></div>
+        <div class="timeline-dot" style="background:${severityColor[e.severity] || 'var(--blue)'}"></div>
         <div>
-          <div class="timeline-text">${(e.message || e.type || 'Event').replaceAll('_', ' ')}</div>
-          <div class="timeline-time">${fmtDate(e.created_at)} · Device: ${e.device_id || '—'}</div>
+          <div class="timeline-text">${text}</div>
+          <div class="timeline-time">${fmtDate(e.ts)} · Device: ${e.ref_id || '—'}</div>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
 
   function setText(id, v) {
