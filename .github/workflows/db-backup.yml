@@ -1,0 +1,54 @@
+# Nightly PostgreSQL backup — inert until you set the secret below.
+#
+# Render's free Postgres plan doesn't include automated backups, and a
+# manual incident this project already had (a temporarily broken
+# DATABASE_URL) is exactly the kind of thing that could just as easily
+# have been "the database is gone" instead of "the connection string is
+# wrong" — there'd be no way back without this.
+#
+# To enable:
+#   1. Render dashboard -> your database -> copy the EXTERNAL Database URL
+#      (not Internal — this job runs on GitHub's servers, not Render's
+#      private network, so it can only reach the external one).
+#   2. GitHub repo -> Settings -> Secrets and variables -> Actions ->
+#      New repository secret -> name it BACKUP_DATABASE_URL, paste the URL.
+#   3. That's it — runs nightly automatically. Or trigger it manually from
+#      the Actions tab any time (workflow_dispatch, below).
+#
+# To restore a backup:
+#   Download the artifact from a workflow run, then:
+#   pg_restore --clean --no-owner -d "<EXTERNAL_DATABASE_URL>" backup-YYYY-MM-DD.dump
+#
+# Until the secret is set, this job logs a clear skip message and exits
+# successfully — safe to merge without it actually doing anything yet.
+name: Database Backup
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 03:00 UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install postgresql-client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Dump database
+        env:
+          DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning::BACKUP_DATABASE_URL secret not set — skipping. See .github/workflows/db-backup.yml for setup steps."
+            exit 0
+          fi
+          pg_dump "$DATABASE_URL" -F c -f "backup-$(date +%Y-%m-%d).dump"
+
+      - name: Upload backup artifact
+        if: ${{ secrets.BACKUP_DATABASE_URL != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: backup-*.dump
+          retention-days: 30
