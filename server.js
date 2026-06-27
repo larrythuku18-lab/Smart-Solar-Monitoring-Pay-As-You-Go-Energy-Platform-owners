@@ -925,6 +925,40 @@ app.post('/api/admin/devices/:deviceId/rotate-key', authMiddleware, async (req, 
   }
 });
 
+/* ── Admin account creation (admin-only) ───────────────────────────────────
+   There's no public signup path to the admin role — POST /api/auth/register
+   always creates role: 'customer', and that's deliberate: accepting a
+   client-supplied role there would let anyone self-promote to admin.
+   Creating a new admin requires an existing admin's session, the same
+   bootstrapping pattern as device provisioning above. */
+app.post('/api/admin/admins', authMiddleware, [
+  body('name').isString().trim().notEmpty().withMessage('name is required'),
+  body('email').isEmail().withMessage('a valid email is required'),
+  body('password').isLength({ min: 8 }).withMessage('password must be at least 8 characters')
+], async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  try {
+    const { name, email, password, phone } = req.body;
+    const existing = await getUserByEmail(email);
+    if (existing) return res.status(409).json({ error: 'Email already registered' });
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const deviceId      = `ADMIN-${Date.now()}`;
+    const admin = await createUser({ deviceId, name, email, passwordHash, phone, role: 'admin' });
+
+    res.status(201).json({
+      admin: { id: admin.id, deviceId: admin.device_id, name: admin.name, email: admin.email, role: admin.role }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create admin account', message: err.message });
+  }
+});
+
 /* ── Telemetry ingest — called directly by ESP32 firmware ─────────────────
    No JWT here (a device can't easily hold a user session). Auth is by
    X-Device-Key header, checked against (in order):
