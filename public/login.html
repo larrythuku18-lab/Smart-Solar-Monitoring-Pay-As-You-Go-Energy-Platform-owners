@@ -796,7 +796,19 @@
       }
     });
   });
-  renderDemoBox('admin');
+  /* ADMIN_EMAIL/CUSTOMER_EMAIL can be overridden per environment (local vs
+     production) — fetch the actual configured values so the displayed demo
+     credentials never go stale/wrong, instead of hardcoding the defaults. */
+  async function loadDemoCredentials() {
+    try {
+      const res  = await fetch(`${API}/demo-credentials`);
+      const data = await res.json();
+      if (data.adminEmail)    CREDS.admin[0].val    = data.adminEmail;
+      if (data.customerEmail) CREDS.customer[0].val = data.customerEmail;
+    } catch (e) { /* keep hardcoded defaults if this fails */ }
+    renderDemoBox(activeRole);
+  }
+  loadDemoCredentials();
 </script>
 </body>
 </html>

@@ -334,6 +334,18 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', mpesa: mpesaConfigured() ? 'live' : 'simulation' });
 });
 
+/* Lets the static login page show the actual configured demo emails instead
+   of hardcoded defaults — ADMIN_EMAIL/CUSTOMER_EMAIL can be overridden per
+   environment (see seedDemoData), and login.html has no way to read env vars
+   on its own since it's served as a static file. Passwords/PIN are always
+   the fixed defaults regardless, so only emails need to be reported here. */
+app.get('/api/demo-credentials', (req, res) => {
+  res.json({
+    adminEmail:    process.env.ADMIN_EMAIL    || 'admin@solarpayg.com',
+    customerEmail: process.env.CUSTOMER_EMAIL || 'customer@example.com'
+  });
+});
+
 app.get('/api/state', async (req, res) => {
   try {
     const [state, stats] = await Promise.all([getDashboardState(), getPaymentStats()]);
