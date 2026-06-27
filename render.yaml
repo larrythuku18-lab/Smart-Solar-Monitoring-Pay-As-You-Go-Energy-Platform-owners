@@ -1,8 +1,17 @@
+# NOTE: as of 2026-06, the live Render service does not appear to be managed
+# as an active Blueprint sync target — its actual region (Singapore) and
+# database name (SolarTracker-db) don't match what's declared below, which
+# only makes sense if it was created manually through Render's dashboard
+# rather than from this file. Updated the values below to match what's
+# actually running, but treat this file as documentation of intent unless
+# you've confirmed in Render's dashboard that Blueprint sync is active for
+# this service — env vars not listed here are managed by hand in the
+# dashboard's Environment tab and won't be restored from this file.
 services:
   - type: web
     name: Smart-Solar-Monitoring-Pay-As-You-Go-Energy-Platform
     env: node
-    region: oregon
+    region: singapore
     plan: free
     buildCommand: npm install --omit=dev
     startCommand: node server.js
@@ -18,21 +27,20 @@ services:
         value: 24h
       - key: DATABASE_URL
         fromDatabase:
-          name: solarpayg-db
+          name: SolarTracker-db
           property: connectionString
       - key: MPESA_ENVIRONMENT
         value: sandbox
-      # Set these manually in the Render dashboard:
-      # MPESA_CONSUMER_KEY
-      # MPESA_CONSUMER_SECRET
-      # MPESA_SHORTCODE
-      # MPESA_PASSKEY
-      # MPESA_CALLBACK_URL
+      # Set these manually in the Render dashboard (not tracked here):
+      # MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET, MPESA_SHORTCODE, MPESA_PASSKEY,
+      #   MPESA_CALLBACK_URL, MPESA_CALLBACK_SECRET
+      # DEVICE_API_KEY
       # ALLOWED_ORIGINS
-      # EMAIL_USER   (Gmail address used to send login notification emails)
-      # EMAIL_PASS   (Gmail App Password — https://myaccount.google.com/apppasswords)
+      # ADMIN_EMAIL, ADMIN_PASSWORD, CUSTOMER_EMAIL  (demo account overrides)
+      # RESEND_API_KEY, RESEND_FROM_EMAIL  (login alerts + signup confirmation)
+      # SENTRY_DSN  (error monitoring)
 
 databases:
-  - name: solarpayg-db
-    databaseName: solarpayg
+  - name: SolarTracker-db
+    databaseName: solartracker_db
     plan: free
