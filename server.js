@@ -27,7 +27,7 @@ const helmet      = require('helmet');
 const rateLimit   = require('express-rate-limit');
 const compression = require('compression');
 const { body, validationResult } = require('express-validator');
-const { sendLoginAlert, sendSignupConfirmation } = require('./mailer');
+const { sendLoginAlert, sendSignupConfirmation, resendConfigured } = require('./mailer');
 
 const {
   runMigrations,
@@ -1174,12 +1174,30 @@ async function startup() {
     console.log(`[START] SolGrid server running on http://localhost:${PORT}`);
     console.log(`  Dashboard:  http://localhost:${PORT}/index.html`);
     console.log(`  Analytics:  http://localhost:${PORT}/analytics.html`);
-    console.log(`  M-Pesa mode: ${mpesaConfigured() ? 'live (sandbox/production)' : 'simulation'}`);
     console.log(`  Demo login:  deviceId=DEMO-001  pin=1234`);
+
+    /* One-glance config audit — every optional integration this app has,
+       so a missing/misconfigured var shows up in the boot log immediately
+       instead of being discovered later via a confusing support report
+       (this exact gap caused real incidents: a removed MPESA key silently
+       fell back to simulation mode, and a missing DEVICE_API_KEY silently
+       opened up unauthenticated telemetry, neither logged anywhere obvious). */
+    console.log('  ── Configuration status ──');
+    console.log(`  M-Pesa:            ${mpesaConfigured() ? 'live (sandbox/production)' : 'simulation — MPESA_CONSUMER_KEY/SECRET not set'}`);
+    console.log(`  Device telemetry:  ${process.env.DEVICE_API_KEY ? 'key required' : 'OPEN — DEVICE_API_KEY not set, any deviceId accepted unauthenticated'}`);
+    console.log(`  Email (Resend):    ${resendConfigured() ? 'configured' : 'disabled — RESEND_API_KEY not set, login alerts/signup emails skipped'}`);
+    console.log(`  Error monitoring:  ${sentryConfigured() ? 'Sentry active' : 'disabled — SENTRY_DSN not set'}`);
+    console.log(`  Admin email:       ${process.env.ADMIN_EMAIL || 'admin@solarpayg.com (default)'}`);
+    console.log(`  Customer email:    ${process.env.CUSTOMER_EMAIL || 'customer@example.com (default)'}`);
+
     if (mpesaConfigured() && !process.env.MPESA_CALLBACK_SECRET) {
       console.warn('[SECURITY] MPESA_CALLBACK_SECRET is not set while M-Pesa is live — '
         + '/api/mpesa/callback will accept unauthenticated requests. Set MPESA_CALLBACK_SECRET '
         + 'in .env before accepting real payments.');
+    }
+    if (!process.env.DEVICE_API_KEY) {
+      console.warn('[SECURITY] DEVICE_API_KEY is not set — /api/telemetry accepts unauthenticated '
+        + 'readings for any deviceId. Fine for demos, not for real hardware in the field.');
     }
   });
 }
