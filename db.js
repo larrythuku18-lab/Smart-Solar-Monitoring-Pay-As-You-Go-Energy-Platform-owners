@@ -89,6 +89,10 @@ async function runMigrations() {
     -- provisioned. NULL means "not yet provisioned"; /api/telemetry falls
     -- back to the shared DEVICE_API_KEY env var for those.
     ALTER TABLE devices ADD COLUMN IF NOT EXISTS api_key VARCHAR(64);
+    -- Last time this device successfully posted telemetry — drives the
+    -- online/offline status shown on the admin dashboard (see isDeviceOnline
+    -- below). NULL means it has never reported in.
+    ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ;
 
     -- ── Energy readings (IoT telemetry from ESP32) ─────────────────────────
     CREATE TABLE IF NOT EXISTS energy_readings (
@@ -404,14 +408,28 @@ async function getDevice(deviceId) {
  */
 async function upsertDeviceHeartbeat({ deviceId, ip, name }) {
   await q(
-    `INSERT INTO devices (device_id, device_ip, name, status, is_active, relay_state)
-     VALUES ($1,$2,$3,'active',TRUE,'on')
+    `INSERT INTO devices (device_id, device_ip, name, status, is_active, relay_state, last_seen)
+     VALUES ($1,$2,$3,'active',TRUE,'on',NOW())
      ON CONFLICT (device_id) DO UPDATE
        SET device_ip = EXCLUDED.device_ip,
            status    = 'active',
-           is_active = TRUE`,
+           is_active = TRUE,
+           last_seen = NOW()`,
     [deviceId, ip || null, name || deviceId]
   );
+}
+
+/* How long (ms) a device can go without reporting telemetry before the
+   admin dashboard marks it offline. Configurable since firmware report
+   intervals vary; defaults to 60s (the ESP32 firmware reports every 5s,
+   so this tolerates several missed sends before flapping to offline). */
+function deviceOfflineTimeoutMs() {
+  return parseInt(process.env.DEVICE_OFFLINE_TIMEOUT_MS || '60000', 10);
+}
+
+function isDeviceOnline(lastSeen) {
+  if (!lastSeen) return false;
+  return Date.now() - new Date(lastSeen).getTime() < deviceOfflineTimeoutMs();
 }
 
 async function getDeviceByUserId(userId) {
@@ -433,7 +451,7 @@ async function setRelayState(deviceId, state) {
 
 async function getAllDevices() {
   const { rows } = await q('SELECT * FROM devices ORDER BY created_at DESC');
-  return rows;
+  return rows.map(d => ({ ...d, online: isDeviceOnline(d.last_seen) }));
 }
 
 /**
@@ -761,13 +779,21 @@ async function getAdminSummary() {
   const [uRes, dRes, oRes, stats] = await Promise.all([
     q('SELECT COUNT(*)::int AS n FROM users'),
     q('SELECT COUNT(*)::int AS n FROM devices'),
-    q("SELECT COUNT(*)::int AS n FROM devices WHERE is_active = FALSE"),
+    // Offline = never reported in, or hasn't reported within the configured
+    // timeout — derived from last_seen, not the admin-set is_active flag
+    // (is_active only reflects manual enable/disable, not liveness).
+    q(
+      `SELECT COUNT(*)::int AS n FROM devices
+       WHERE last_seen IS NULL OR last_seen < NOW() - ($1 || ' milliseconds')::interval`,
+      [deviceOfflineTimeoutMs()]
+    ),
     getPaymentStats()
   ]);
   return {
     users:        uRes.rows[0].n,
     devices:      dRes.rows[0].n,
     offline:      oRes.rows[0].n,
+    online:       dRes.rows[0].n - oRes.rows[0].n,
     revenue:      stats.total_revenue,
     paymentStats: stats
   };

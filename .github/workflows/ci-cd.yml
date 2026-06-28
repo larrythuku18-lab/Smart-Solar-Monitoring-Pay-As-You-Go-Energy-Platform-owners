@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ master ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ master ]
 
 jobs:
   test:
@@ -35,7 +35,7 @@ jobs:
         cache: 'npm'
 
     - name: Install dependencies
-      run: npm install
+      run: npm ci
 
     - name: Run linting
       run: npm run lint 2>/dev/null || echo "No lint script defined"
@@ -55,14 +55,14 @@ jobs:
         file: ./coverage/lcov.info
 
   # Render is connected directly to this repo's GitHub integration and
-  # auto-deploys on every push to main — there is no separate deploy step to
+  # auto-deploys on every push to master — there is no separate deploy step to
   # run from here. This job instead smoke-tests the self-hosted Docker Compose
   # path (README "Option B"): does the image build, and does a container
   # booted against a real Postgres actually come up and answer /health.
   docker-build-smoke-test:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/master'
 
     services:
       postgres:
@@ -111,7 +111,7 @@ jobs:
     - name: Run security scan
       uses: github/super-linter/slim@v5
       env:
-        DEFAULT_BRANCH: main
+        DEFAULT_BRANCH: master
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         VALIDATE_ALL_CODEBASE: false
         VALIDATE_JAVASCRIPT_ES: true
@@ -126,7 +126,7 @@ jobs:
   performance-test:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/master'
 
     services:
       postgres:
@@ -153,7 +153,7 @@ jobs:
         cache: 'npm'
 
     - name: Install dependencies
-      run: npm install
+      run: npm ci
 
     - name: Run performance tests
       env:

@@ -11,18 +11,16 @@ const path = require('node:path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 // Tests log in many times (loginAdmin/loginCustomer are called repeatedly
-// across the suite). If a developer's real .env has live mail credentials
+// across the suite). If a developer's real .env has a live Resend key
 // configured for manual testing, every one of those logins would otherwise
-// fire a real Gmail SMTP send — slow, spams the inbox, and can hang the test
-// run if Gmail rate-limits the rapid-fire sends. Tests should never hit a
-// real external service regardless of what's configured for dev use.
+// fire a real email send — slow, spams the inbox, and can hang the test run
+// if Resend rate-limits the rapid-fire sends. Tests should never hit a real
+// external service regardless of what's configured for dev use.
 //
 // Set (not delete) — the spawned server.js child calls its own
 // require('dotenv').config(), which only fills in keys that are *absent*.
 // An empty string already counts as "set", so dotenv leaves it alone,
-// keeping mailerConfigured()/resendConfigured() false in the child too.
-process.env.EMAIL_USER = '';
-process.env.EMAIL_PASS = '';
+// keeping resendConfigured() false in the child too.
 process.env.RESEND_API_KEY = '';
 
 const PORT = process.env.TEST_PORT || 3911;

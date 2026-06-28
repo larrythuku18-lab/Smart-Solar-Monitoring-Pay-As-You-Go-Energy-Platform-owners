@@ -376,8 +376,13 @@ function renderDashboardMetrics() {
 
   if (elements.kpiRevenue) elements.kpiRevenue.textContent = fmtKES(12400);
 
+  // window.__deviceFleetStats is set by the admin-only inline script in
+  // index.html (GET /api/admin/devices, derived from last_seen) once it
+  // loads — real counts replace these placeholders when it's available.
   if (elements.kpiOffline) {
-    const offlineCount = state.maintenanceAlerts.filter(a => a.severity === 'high').length;
+    const offlineCount = window.__deviceFleetStats
+      ? window.__deviceFleetStats.offline
+      : state.maintenanceAlerts.filter(a => a.severity === 'high').length;
     elements.kpiOffline.textContent = fmtCount(offlineCount);
   }
 
@@ -387,7 +392,7 @@ function renderDashboardMetrics() {
   const ovUsers    = document.getElementById('overview-connected-users');
   const ovRefresh  = document.getElementById('overview-next-refresh');
 
-  if (ovDevices) ovDevices.textContent = fmtCount(1247);
+  if (ovDevices) ovDevices.textContent = fmtCount(window.__deviceFleetStats ? window.__deviceFleetStats.online : 1247);
   if (ovEnergy)  ovEnergy.textContent  = fmtEnergy((adjustedGen * 8) / 1000);
   if (ovUsers)   ovUsers.textContent   = fmtCount(247);
   if (ovRefresh) ovRefresh.textContent = '60 s';
