@@ -32,8 +32,18 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install postgresql-client
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      # Ubuntu's default postgresql-client can be older than Render's Postgres
+      # server version, and pg_dump refuses to dump from a newer server
+      # ("aborting because of server version mismatch"). The PGDG repo always
+      # has the latest client, which stays compatible regardless of what
+      # version Render is running now or upgrades to later.
+      - name: Install postgresql-client (latest, via PGDG)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
 
       - name: Dump database
         env:
