@@ -286,7 +286,7 @@ async function seedProducts() {
 
   const catalogue = [
     {
-      name: 'Solar Panels', description: 'High-efficiency photovoltaic panels', icon: '☀️', sort_order: 1,
+      name: 'Solar Panels', description: 'High-efficiency photovoltaic panels', icon: null, sort_order: 1,
       products: [
         { name: '100W Monocrystalline Panel', description: 'Compact panel ideal for small systems and charging', price: 8500, specs: { wattage: '100W', type: 'Monocrystalline', efficiency: '21%', warranty: '10 years' } },
         { name: '200W Monocrystalline Panel', description: 'Mid-range panel for home lighting and appliances', price: 15000, specs: { wattage: '200W', type: 'Monocrystalline', efficiency: '21%', warranty: '10 years' } },
@@ -294,28 +294,28 @@ async function seedProducts() {
       ]
     },
     {
-      name: 'Batteries', description: 'Deep-cycle storage batteries for solar systems', icon: '🔋', sort_order: 2,
+      name: 'Batteries', description: 'Deep-cycle storage batteries for solar systems', icon: null, sort_order: 2,
       products: [
         { name: '100Ah Lithium Battery', description: 'Lightweight, long-life lithium-ion deep cycle battery', price: 22000, specs: { capacity: '100Ah', type: 'Lithium LiFePO4', cycles: '2000+', warranty: '3 years' } },
         { name: '200Ah AGM Deep Cycle', description: 'Maintenance-free AGM battery for reliable storage', price: 28000, specs: { capacity: '200Ah', type: 'AGM', cycles: '500+', warranty: '2 years' } }
       ]
     },
     {
-      name: 'Inverters', description: 'Convert DC solar power to AC for home appliances', icon: '⚡', sort_order: 3,
+      name: 'Inverters', description: 'Convert DC solar power to AC for home appliances', icon: null, sort_order: 3,
       products: [
         { name: '1000W Pure Sine Wave Inverter', description: 'Powers TVs, lights, fans and small appliances', price: 12000, specs: { power: '1000W', waveform: 'Pure Sine Wave', input: '12V/24V DC', warranty: '1 year' } },
         { name: '2000W Pure Sine Wave Inverter', description: 'Handles fridges, washing machines and power tools', price: 19500, specs: { power: '2000W', waveform: 'Pure Sine Wave', input: '24V/48V DC', warranty: '1 year' } }
       ]
     },
     {
-      name: 'Complete Kits', description: 'All-in-one solar kits ready for installation', icon: '🔌', sort_order: 4,
+      name: 'Complete Kits', description: 'All-in-one solar kits ready for installation', icon: null, sort_order: 4,
       products: [
         { name: 'Starter Kit 200W', description: 'Panel + 100Ah battery + 1000W inverter + controller. Powers basic home needs.', price: 35000, specs: { panel: '200W', battery: '100Ah', inverter: '1000W', warranty: '1 year bundle' } },
         { name: 'Home Kit 400W', description: 'Dual 200W panels + 200Ah battery + 2000W inverter. Full home power solution.', price: 65000, specs: { panel: '2×200W', battery: '200Ah', inverter: '2000W', warranty: '2 year bundle' } }
       ]
     },
     {
-      name: 'Accessories', description: 'Cables, controllers, and mounting hardware', icon: '🔧', sort_order: 5,
+      name: 'Accessories', description: 'Cables, controllers, and mounting hardware', icon: null, sort_order: 5,
       products: [
         { name: 'MPPT Charge Controller 40A', description: '40A MPPT controller for efficient battery charging', price: 3200, specs: { current: '40A', type: 'MPPT', voltage: '12V/24V', warranty: '1 year' } },
         { name: 'MC4 Connector Set (10 pairs)', description: 'Weatherproof solar cable connectors', price: 800, specs: { quantity: '10 pairs', rating: '30A / 1000V', material: 'UV-resistant' } },
