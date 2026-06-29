@@ -46,17 +46,19 @@ jobs:
           sudo apt-get install -y -qq postgresql-client-17
 
       - name: Dump database
+        id: dump
         env:
           DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
         run: |
           if [ -z "$DATABASE_URL" ]; then
             echo "::warning::BACKUP_DATABASE_URL secret not set — skipping. See .github/workflows/db-backup.yml for setup steps."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Render's free Postgres plan has dropped/reset the SSL handshake from
-          # this job before ("SSL error: unexpected eof while reading" in Render's
-          # own DB logs) — a transient hiccup from a short-lived CI runner making a
-          # fresh connection, not a config problem. Retry a few times before giving up.
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+          # A short-lived CI runner making a brand-new connection to a free-tier
+          # Postgres is exactly the kind of thing that can hit a transient
+          # connection/handshake hiccup. Retry a few times before giving up.
           for attempt in 1 2 3 4 5; do
             if pg_dump "$DATABASE_URL" -F c -f "backup-$(date +%Y-%m-%d).dump"; then
               exit 0
@@ -68,7 +70,11 @@ jobs:
           exit 1
 
       - name: Upload backup artifact
-        if: ${{ secrets.BACKUP_DATABASE_URL != '' }}
+        # The secrets context isn't available in step `if:` conditions
+        # (GitHub rejects the whole workflow file with "Unrecognized
+        # named-value: 'secrets'" if you try) — read whether it was
+        # configured from the previous step's output instead.
+        if: steps.dump.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: db-backup-${{ github.run_id }}
