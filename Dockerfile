@@ -59,7 +59,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://localhost:3000/health || exit 1
 
 # Use dumb-init to handle signals properly
-ENTRYPOINT ["/sbin/dumb-init", "--"]
+# (Alpine's dumb-init package installs to /usr/bin, not /sbin)
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 
 # Start the application
 CMD ["npm", "start"]

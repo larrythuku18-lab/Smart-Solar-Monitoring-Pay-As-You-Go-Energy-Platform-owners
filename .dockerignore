@@ -1,0 +1,57 @@
+# Without this, COPY . . in the Dockerfile bakes everything in the build
+# context — including .env (live DB password, JWT secret, M-Pesa secrets,
+# Resend API key) and the full .git history — directly into the image.
+# Anyone who pulls the image gets those secrets, permanently, even if the
+# files are deleted in a later commit.
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+
+# Node (node_modules is copied explicitly from the builder stage)
+node_modules/
+npm-debug.log
+
+# Logs
+*.log
+server.log
+logs/
+
+# Build outputs / test artifacts
+dist/
+build/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets
+secrets.json
+config/secrets.js
+*.pem
+*.key
+*.cert
+
+# Docs / CI — not needed inside the running container
+README.md
+.github/

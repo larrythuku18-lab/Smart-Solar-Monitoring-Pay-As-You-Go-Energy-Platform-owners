@@ -85,6 +85,10 @@ const last30dLabels = () =>
 const last12mLabels = () =>
   Array.from({ length: 12 }, (_, i) => {
     const d = new Date();
+    /* Set the day to 1 before shifting months — otherwise a "today" of the
+       29th-31st overflows into the next month when the target month has
+       fewer days, producing a duplicate month label (same fix as dashboard.jsx). */
+    d.setDate(1);
     d.setMonth(d.getMonth() - 11 + i);
     return d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' });
   });

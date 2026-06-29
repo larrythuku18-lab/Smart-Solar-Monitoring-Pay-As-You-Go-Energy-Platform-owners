@@ -515,6 +515,47 @@ async function getEnergyHistoryAsc(deviceId, limit = 50) {
   return rows;
 }
 
+/** Hourly-averaged readings for the last N hours, oldest first — feeds the
+ *  Analysis Board's Energy tab (solar generation curve, battery state,
+ *  voltage/current), which otherwise has nothing to plot against real time. */
+async function getEnergyHourly(deviceId, hours = 24) {
+  const { rows } = await q(
+    `SELECT date_trunc('hour', recorded_at)        AS hour,
+            AVG(generation_watts)::numeric(10,2)   AS generation_watts,
+            AVG(consumption_watts)::numeric(10,2)  AS consumption_watts,
+            AVG(battery_level)::numeric(5,2)       AS battery_level,
+            AVG(voltage)::numeric(6,2)             AS voltage,
+            AVG(current_amps)::numeric(6,2)        AS current_amps
+     FROM   energy_readings
+     WHERE  device_id  = $1
+     AND    recorded_at > NOW() - ($2 || ' hours')::interval
+     GROUP  BY hour
+     ORDER  BY hour ASC`,
+    [deviceId, hours]
+  );
+  return rows;
+}
+
+/** Daily-averaged generation/consumption for the last N days, oldest first —
+ *  feeds the Energy tab's "Generation vs Consumption" bar chart. Readings
+ *  are average power (W); converting to kWh assumes that average held for
+ *  the full day (avg_watts * 24 / 1000) — an approximation, same kind the
+ *  rest of this app already uses for "energy today" estimates. */
+async function getEnergyDaily(deviceId, days = 7) {
+  const { rows } = await q(
+    `SELECT recorded_at::date::text               AS day,
+            AVG(generation_watts)::numeric(10,2)  AS generation_watts,
+            AVG(consumption_watts)::numeric(10,2) AS consumption_watts
+     FROM   energy_readings
+     WHERE  device_id  = $1
+     AND    recorded_at > NOW() - ($2 || ' days')::interval
+     GROUP  BY recorded_at::date
+     ORDER  BY day ASC`,
+    [deviceId, days]
+  );
+  return rows;
+}
+
 /** All readings from the last 48 hours, oldest first — used to warm AI models on startup */
 async function getEnergyHistory48h(deviceId) {
   const { rows } = await q(
@@ -647,6 +688,76 @@ async function getPaymentTrend() {
     LIMIT  14
   `);
   return rows;
+}
+
+/** Monthly payment-reliability score per top customer, for the Analysis
+ *  Board's "Credit Score Trend" chart — there's no real credit bureau score
+ *  in this system, so this derives a heuristic from actual payment behavior:
+ *  starts at 60, +5 per completed payment that month, -12 per failed one,
+ *  -1 for a month with no activity at all, clamped to [0, 100]. Bucketing is
+ *  done in JS (not SQL date_trunc) to avoid Postgres session-timezone
+ *  shifting a payment into the wrong month. */
+async function getCustomerCreditScoreTrend(months = 12, customerLimit = 3) {
+  const { rows: customers } = await q(
+    `SELECT u.id, u.name,
+            COALESCE(SUM(p.amount) FILTER (WHERE p.status = 'completed'), 0) AS total_paid
+     FROM   users u
+     JOIN   payments p ON p.user_id = u.id
+     WHERE  u.role = 'customer'
+     GROUP  BY u.id, u.name
+     ORDER  BY total_paid DESC
+     LIMIT  $1`,
+    [customerLimit]
+  );
+
+  const monthStarts = Array.from({ length: months }, (_, i) => {
+    const d = new Date();
+    d.setUTCHours(0, 0, 0, 0);
+    d.setUTCDate(1);
+    d.setUTCMonth(d.getUTCMonth() - (months - 1) + i);
+    return d;
+  });
+  const labels = monthStarts.map((d) => d.toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' }));
+  const keyOf = (d) => `${d.getUTCFullYear()}-${d.getUTCMonth()}`;
+
+  /* Demo/seed data often has several accounts named e.g. "Test User" —
+     append the id only when a name actually collides within this result
+     set, so real, distinctly-named customers don't get a noisy suffix. */
+  const nameCounts = new Map();
+  for (const c of customers) nameCounts.set(c.name, (nameCounts.get(c.name) || 0) + 1);
+  const displayName = (c) => {
+    const base = c.name || `Customer ${c.id}`;
+    return nameCounts.get(c.name) > 1 ? `${base} (#${c.id})` : base;
+  };
+
+  const customerTrends = [];
+  for (const customer of customers) {
+    const { rows: payments } = await q(
+      `SELECT created_at, status FROM payments WHERE user_id = $1 AND created_at >= $2`,
+      [customer.id, monthStarts[0]]
+    );
+
+    const buckets = new Map();
+    for (const p of payments) {
+      const key = keyOf(new Date(p.created_at));
+      const bucket = buckets.get(key) || { completed: 0, failed: 0 };
+      if (p.status === 'completed') bucket.completed++;
+      else if (p.status === 'failed') bucket.failed++;
+      buckets.set(key, bucket);
+    }
+
+    let score = 60;
+    const scores = monthStarts.map((d) => {
+      const bucket = buckets.get(keyOf(d)) || { completed: 0, failed: 0 };
+      score = Math.max(0, Math.min(100,
+        score + bucket.completed * 5 - bucket.failed * 12 - (bucket.completed + bucket.failed === 0 ? 1 : 0)));
+      return Math.round(score);
+    });
+
+    customerTrends.push({ id: customer.id, name: displayName(customer), scores });
+  }
+
+  return { labels, customers: customerTrends };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -854,6 +965,8 @@ module.exports = {
   getLatestEnergy,
   getEnergyHistory,
   getEnergyHistoryAsc,
+  getEnergyHourly,
+  getEnergyDaily,
   getEnergyHistory48h,
   getEnergyHistory48hAllDevices,
   /* payments */
@@ -865,6 +978,7 @@ module.exports = {
   getRecentPayments,
   getPaymentsByUserId,
   getPaymentTrend,
+  getCustomerCreditScoreTrend,
   /* alerts */
   createAlert,
   getAlerts,

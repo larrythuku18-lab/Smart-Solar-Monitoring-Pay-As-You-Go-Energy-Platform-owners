@@ -46,11 +46,14 @@ const {
   getPaymentStats,
   getEnergyHistory,
   getEnergyHistoryAsc,
+  getEnergyHourly,
+  getEnergyDaily,
   getEnergyHistory48hAllDevices,
   getRecentPayments,
   getAuditTimeline,
   getAlertSeverityCounts,
   getPaymentTrend,
+  getCustomerCreditScoreTrend,
   insertEnergyReading,
   getDashboardState,
   getAdminSummary,
@@ -351,6 +354,8 @@ app.get('/api/state', async (req, res) => {
     const [state, stats] = await Promise.all([getDashboardState(), getPaymentStats()]);
     res.json({ ...state, paymentStats: stats });
   } catch (err) {
+    console.error('Dashboard state error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load state', message: err.message });
   }
 });
@@ -386,6 +391,8 @@ app.get('/api/forecast', async (req, res) => {
       .catch(err => console.error('savePrediction error:', err.message));
     res.json({ forecast: { predictions: result.data } });
   } catch (err) {
+    console.error('Forecast error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(503).json({
       error: 'AI model not ready', fallback: safeForecast(deviceId, 6).data, message: err.message
     });
@@ -412,6 +419,8 @@ app.get('/api/maintenance-alerts', async (req, res) => {
       }
     });
   } catch (err) {
+    console.error('Maintenance alerts error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(503).json({
       error: 'AI model not ready', fallback: [],
       maintenance: { alerts: [], deviceStatus: 'unknown' }
@@ -432,6 +441,8 @@ app.get('/api/optimization', async (req, res) => {
     }
     res.json({ optimization: { recommendations: result.data } });
   } catch (err) {
+    console.error('Optimization error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(503).json({ error: 'AI model not ready', fallback: [], optimization: { recommendations: [] } });
   }
 });
@@ -459,6 +470,8 @@ app.get('/api/ai-insights', async (req, res) => {
       optimization: optimization.data
     });
   } catch (err) {
+    console.error('AI insights error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(503).json({ error: 'AI services unavailable', message: err.message });
   }
 });
@@ -532,6 +545,8 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     });
 
   } catch (err) {
+    console.error('Login error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Login failed', message: err.message });
   }
 });
@@ -565,6 +580,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       user: { id: user.id, deviceId: user.device_id, role: user.role, walletBalance: user.wallet_balance }
     });
   } catch (err) {
+    console.error('Registration error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Registration failed', message: err.message });
   }
 });
@@ -580,6 +597,8 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
       walletBalance: user.wallet_balance
     });
   } catch (err) {
+    console.error('Auth /me error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load user', message: err.message });
   }
 });
@@ -590,6 +609,8 @@ app.get('/api/products', async (req, res) => {
     const catalogue = await getProductCatalogueWithCategories();
     res.json(catalogue);
   } catch (err) {
+    console.error('Products list error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load products', message: err.message });
   }
 });
@@ -602,6 +623,8 @@ app.get('/api/products/:id', async (req, res) => {
     if (!product) return res.status(404).json({ error: 'Product not found' });
     res.json(product);
   } catch (err) {
+    console.error('Product detail error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load product', message: err.message });
   }
 });
@@ -659,6 +682,8 @@ app.get('/api/customer/summary', authMiddleware, async (req, res) => {
       }
     });
   } catch (err) {
+    console.error('Customer summary error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load customer summary', message: err.message });
   }
 });
@@ -700,6 +725,8 @@ app.post('/api/fraud-check', authMiddleware, [
 
     res.json(result.data);
   } catch (err) {
+    console.error('Fraud check error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(503).json({
       error: 'AI model not ready',
       fallback: { flagged: false, fraud: null, flags: [] },
@@ -799,6 +826,8 @@ app.get('/api/pay/status/:checkoutRequestId', authMiddleware, async (req, res) =
       productName: payment.product_name
     });
   } catch (err) {
+    console.error('Payment status error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load payment status', message: err.message });
   }
 });
@@ -855,6 +884,8 @@ app.get('/api/admin/summary', authMiddleware, async (req, res) => {
   try {
     res.json(await getAdminSummary());
   } catch (err) {
+    console.error('Admin summary error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load summary', message: err.message });
   }
 });
@@ -866,6 +897,8 @@ app.get('/api/admin/alerts', authMiddleware, async (req, res) => {
   try {
     res.json({ alerts: await getAlerts() });
   } catch (err) {
+    console.error('Admin alerts error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load alerts', message: err.message });
   }
 });
@@ -874,6 +907,8 @@ app.get('/api/payments/stats', async (req, res) => {
   try {
     res.json(await getPaymentStats());
   } catch (err) {
+    console.error('Payment stats error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load stats', message: err.message });
   }
 });
@@ -890,6 +925,8 @@ app.get('/api/admin/devices', authMiddleware, async (req, res) => {
   try {
     res.json({ devices: await getAllDevices() });
   } catch (err) {
+    console.error('Admin devices list error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load devices', message: err.message });
   }
 });
@@ -907,6 +944,8 @@ app.post('/api/admin/devices', authMiddleware, [
     const device = await provisionDevice(req.body.deviceId, req.body.name);
     res.json({ device });
   } catch (err) {
+    console.error('Device provisioning error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to provision device', message: err.message });
   }
 });
@@ -921,6 +960,8 @@ app.post('/api/admin/devices/:deviceId/rotate-key', authMiddleware, async (req, 
     const device = await provisionDevice(req.params.deviceId);
     res.json({ device });
   } catch (err) {
+    console.error('Device key rotation error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to rotate device key', message: err.message });
   }
 });
@@ -955,6 +996,8 @@ app.post('/api/admin/admins', authMiddleware, [
       admin: { id: admin.id, deviceId: admin.device_id, name: admin.name, email: admin.email, role: admin.role }
     });
   } catch (err) {
+    console.error('Admin account creation error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to create admin account', message: err.message });
   }
 });
@@ -1023,7 +1066,53 @@ app.get('/api/energy/history', async (req, res) => {
       readings
     });
   } catch (err) {
+    console.error('Energy history error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load energy history', message: err.message });
+  }
+});
+
+/* Hourly-averaged readings for the last N hours — feeds the Analysis
+   Board's Energy tab (solar generation curve, battery state, voltage/
+   current), which previously plotted Math.random() instead of real data. */
+app.get('/api/energy/hourly', async (req, res) => {
+  try {
+    const deviceId = req.query.deviceId || 'DEMO-001';
+    const hours    = Math.min(Number.parseInt(req.query.hours, 10) || 24, 72);
+    const rows     = await getEnergyHourly(deviceId, hours);
+    res.json({
+      deviceId,
+      labels:      rows.map(r => new Date(r.hour).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })),
+      generation:  rows.map(r => r.generation_watts),
+      consumption: rows.map(r => r.consumption_watts),
+      battery:     rows.map(r => r.battery_level),
+      voltage:     rows.map(r => r.voltage),
+      current:     rows.map(r => r.current_amps)
+    });
+  } catch (err) {
+    console.error('Energy hourly error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load hourly energy data', message: err.message });
+  }
+});
+
+/* Daily-averaged generation/consumption for the last N days — feeds the
+   Energy tab's "Generation vs Consumption" weekly bar chart. */
+app.get('/api/energy/daily', async (req, res) => {
+  try {
+    const deviceId = req.query.deviceId || 'DEMO-001';
+    const days     = Math.min(Number.parseInt(req.query.days, 10) || 7, 30);
+    const rows     = await getEnergyDaily(deviceId, days);
+    res.json({
+      deviceId,
+      labels:      rows.map(r => new Date(r.day).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })),
+      generation:  rows.map(r => r.generation_watts),
+      consumption: rows.map(r => r.consumption_watts)
+    });
+  } catch (err) {
+    console.error('Energy daily error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load daily energy data', message: err.message });
   }
 });
 
@@ -1035,6 +1124,8 @@ app.get('/api/audit/timeline', authMiddleware, async (req, res) => {
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 30, 100);
     res.json({ events: await getAuditTimeline(limit) });
   } catch (err) {
+    console.error('Audit timeline error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load audit timeline', message: err.message });
   }
 });
@@ -1061,7 +1152,29 @@ app.get('/api/audit/charts', authMiddleware, async (req, res) => {
       ]);
     res.json({ energy, payments, paymentTrend, recentPayments, alerts, alertSeverity, forecast: forecast.data || [], timeline, summary });
   } catch (err) {
+    console.error('Audit charts error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load chart data', message: err.message });
+  }
+});
+
+/* Admin-only — payment-derived customer names + scores, same sensitivity
+   class as /api/audit/charts. Feeds the Analysis Board's "Credit Score
+   Trend" chart, which previously plotted Math.random() instead of real
+   payment behavior. */
+app.get('/api/customers/credit-score-trend', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  try {
+    const months = Math.min(Number.parseInt(req.query.months, 10) || 12, 24);
+    const limit  = Math.min(Number.parseInt(req.query.limit, 10) || 3, 10);
+    const trend  = await getCustomerCreditScoreTrend(months, limit);
+    res.json(trend);
+  } catch (err) {
+    console.error('Credit score trend error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load credit score trend', message: err.message });
   }
 });
 
@@ -1103,6 +1216,8 @@ app.get('/api/analytics/summary', authMiddleware, async (req, res) => {
 
     res.json({ dailyData, paymentTrend, payments, summary });
   } catch (err) {
+    console.error('Analytics summary error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load analytics summary', message: err.message });
   }
 });
