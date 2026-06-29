@@ -313,21 +313,28 @@ app.use(compression());
 
 /* Static files with cache headers:
    - nav files:    5 min  (change often enough that short TTL matters)
-   - everything else: 1 hour */
+   - everything else: 1 hour
+
+   public/ is split into admin/, customer/, and shared/ (login, intro, nav)
+   for codebase clarity — but every file still needs to be reachable at its
+   original flat URL (no /admin/... prefix), since nothing else in the app
+   (nav-init.js redirects, bookmarks, hardcoded hrefs) was changed to match.
+   Stacking one express.static() per subfolder, each mounted at '/', does
+   exactly that: filenames don't collide across the three folders, so each
+   request just falls through to whichever mount actually has the file. */
 const publicDir = path.join(__dirname, 'public');
 
 app.get('/', (req, res) => res.redirect('/login.html'));
 
-app.use('/nav.html',    (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'nav.html')));
-app.use('/nav.css',     (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'nav.css')));
-app.use('/nav-init.js', (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'nav-init.js')));
+app.use('/nav.html',    (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'shared', 'nav.html')));
+app.use('/nav.css',     (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'shared', 'nav.css')));
+app.use('/nav-init.js', (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'shared', 'nav-init.js')));
 
-app.use(express.static(publicDir, {
-  maxAge: '1h',
-  etag:   true,
-  lastModified: true,
-  index:  false
-}));
+const staticOpts = { maxAge: '1h', etag: true, lastModified: true, index: false };
+app.use(express.static(publicDir, staticOpts));
+app.use(express.static(path.join(publicDir, 'admin'), staticOpts));
+app.use(express.static(path.join(publicDir, 'customer'), staticOpts));
+app.use(express.static(path.join(publicDir, 'shared'), staticOpts));
 
 /* ══════════════════════════════════════════════════════════════════════════
    PUBLIC ROUTES
@@ -1287,7 +1294,7 @@ function compileJsx() {
   try {
     const Babel = require('@babel/standalone');
     const fs    = require('node:fs');
-    const pub   = path.join(__dirname, 'public');
+    const pub   = path.join(__dirname, 'public', 'admin');
     for (const name of ['dashboard', 'analytics']) {
       const src  = fs.readFileSync(path.join(pub, `${name}.jsx`), 'utf8');
       const out  = Babel.transform(src, { presets: ['react'], filename: `${name}.jsx` }).code;

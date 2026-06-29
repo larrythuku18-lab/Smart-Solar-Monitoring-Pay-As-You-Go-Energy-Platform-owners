@@ -425,16 +425,26 @@ solar-paygo-platform/
 ├── relay.js                # ESP32 HTTP relay control + retry queue
 ├── authMiddleware.js       # JWT sign and verify middleware
 │
-├── public/
-│   ├── index.html          # Live Dashboard
-│   ├── index.js            # Dashboard JavaScript (API fetching, AI display)
-│   ├── analytics.html      # Analytics Dashboard shell
-│   ├── analytics.jsx       # Analytics React components + Chart.js charts
-│   ├── dashboard.html      # Analysis Board shell
-│   ├── dashboard.jsx       # Analysis Board React components + Chart.js charts
-│   ├── login.html          # Login page
-│   ├── nav.html            # Global navigation (injected into every page)
-│   └── nav.css             # Navigation + bottom status bar styles
+├── public/                 # Split by audience; every file is still served at
+│   │                       # its original flat URL (see server.js's static mounts)
+│   ├── admin/
+│   │   ├── index.html      # Live Dashboard
+│   │   ├── index.js        # Dashboard JavaScript (API fetching, AI display)
+│   │   ├── ai-models.js    # Client-side AI model display logic (index.js only)
+│   │   ├── analytics.html  # Analytics Dashboard shell
+│   │   ├── analytics.jsx   # Analytics React components + Chart.js charts (source)
+│   │   ├── dashboard.html  # Analysis Board shell
+│   │   └── dashboard.jsx   # Analysis Board React components + Chart.js charts (source)
+│   ├── customer/
+│   │   └── customer.html   # Customer "My Account" page
+│   ├── shared/
+│   │   ├── login.html      # Login page
+│   │   ├── intro.html      # Pre-login welcome/marketing page
+│   │   ├── nav.html        # Global navigation (injected into every page)
+│   │   ├── nav.css         # Navigation + bottom status bar styles
+│   │   └── nav-init.js     # Role-aware nav fetch/cache + active-link logic
+│   ├── manifest.json
+│   └── icons/
 │
 ├── firmware/
 │   └── esp32-firmware.ino  # Arduino sketch for ESP32 solar controller
