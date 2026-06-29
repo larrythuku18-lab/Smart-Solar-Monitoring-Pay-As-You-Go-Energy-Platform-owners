@@ -53,7 +53,19 @@ jobs:
             echo "::warning::BACKUP_DATABASE_URL secret not set — skipping. See .github/workflows/db-backup.yml for setup steps."
             exit 0
           fi
-          pg_dump "$DATABASE_URL" -F c -f "backup-$(date +%Y-%m-%d).dump"
+          # Render's free Postgres plan has dropped/reset the SSL handshake from
+          # this job before ("SSL error: unexpected eof while reading" in Render's
+          # own DB logs) — a transient hiccup from a short-lived CI runner making a
+          # fresh connection, not a config problem. Retry a few times before giving up.
+          for attempt in 1 2 3 4 5; do
+            if pg_dump "$DATABASE_URL" -F c -f "backup-$(date +%Y-%m-%d).dump"; then
+              exit 0
+            fi
+            echo "::warning::pg_dump attempt $attempt failed, retrying in 15s…"
+            sleep 15
+          done
+          echo "::error::pg_dump failed after 5 attempts"
+          exit 1
 
       - name: Upload backup artifact
         if: ${{ secrets.BACKUP_DATABASE_URL != '' }}
