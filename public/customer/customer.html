@@ -1027,7 +1027,7 @@ async function loadShop() {
 
 function renderShopCategories() {
   const wrap = document.getElementById('shop-categories');
-  const pills = [{ id: 'all', name: 'All', icon: '🛒' }, ...shopCatalogue.map(c => ({ id: c.id, name: c.name, icon: c.icon }))];
+  const pills = [{ id: 'all', name: 'All' }, ...shopCatalogue.map(c => ({ id: c.id, name: c.name, icon: c.icon }))];
   wrap.innerHTML = pills.map(p => `
     <button class="shop-cat-btn${activeShopCategory === String(p.id) ? ' active' : ''}" data-cat="${p.id}">
       ${escapeHtml(p.icon || '')} ${escapeHtml(p.name)}
