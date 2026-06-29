@@ -63,42 +63,32 @@ const getDateLabels = (count, offsetDays = 0) => {
   });
 };
 
-const createSolarGenerationData = () => {
-  const labels = Array.from({ length: 14 }, (_, i) => `${6 + i}:00`);
-  const data = labels.map((_, i) => {
-    const hour = 6 + i;
-    if (hour < 8 || hour > 18) return Number((Math.random() * 0.35).toFixed(2));
-    const peak = Math.sin(((hour - 6) / 12) * Math.PI) * 4.2;
-    return Number(Math.max(0, peak + (Math.random() - 0.5) * 0.6).toFixed(2));
-  });
-  return {
-    labels,
-    datasets: [
-      {
-        label: 'Solar Generation (kW)',
-        data,
-        borderColor: 'rgb(245, 158, 11)',
-        backgroundColor: 'rgba(245, 158, 11, 0.15)',
-        fill: true,
-        tension: 0.38,
-        pointRadius: 3,
-        pointBackgroundColor: 'rgb(245, 158, 11)'
-      }
-    ]
-  };
-};
+/* Energy tab charts (Solar Generation, Battery State, Generation vs
+   Consumption, Voltage & Current) are built from real readings fetched via
+   fetchEnergyTabData() below — GET /api/energy/hourly and /api/energy/daily,
+   which aggregate the real energy_readings table. These builders just apply
+   styling on top of real arrays; they used to be Math.random() generators. */
+const buildSolarGenerationData = (labels, generationKW) => ({
+  labels,
+  datasets: [
+    {
+      label: 'Solar Generation (kW)',
+      data: generationKW,
+      borderColor: 'rgb(245, 158, 11)',
+      backgroundColor: 'rgba(245, 158, 11, 0.15)',
+      fill: true,
+      tension: 0.38,
+      pointRadius: 3,
+      pointBackgroundColor: 'rgb(245, 158, 11)'
+    }
+  ]
+});
 
-const createBatteryStateData = () => {
-  const labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
-  const data = labels.map((_, i) => {
-    const base = i < 6 ? 88 - (6 - i) * 3 : i < 12 ? 70 + (i - 6) * 3 : i < 18 ? 88 + (i - 12) * 1.5 : 96 - (i - 18) * 4;
-    return Number(Math.max(5, Math.min(100, base + (Math.random() - 0.5) * 8)).toFixed(1));
-  });
-  const pointColors = data.map((value) =>
+const buildBatteryStateData = (labels, batteryPct) => {
+  const pointColors = batteryPct.map((value) =>
     value > 50 ? 'rgb(34, 197, 94)' : value > 20 ? 'rgb(245, 158, 11)' : 'rgb(239, 68, 68)'
   );
-  const pointBackground = pointColors;
-  const background = data.map((value) =>
+  const background = batteryPct.map((value) =>
     value > 50 ? 'rgba(34, 197, 94, 0.24)' : value > 20 ? 'rgba(245, 158, 11, 0.24)' : 'rgba(239, 68, 68, 0.24)'
   );
   return {
@@ -106,74 +96,112 @@ const createBatteryStateData = () => {
     datasets: [
       {
         label: 'Battery Level (%)',
-        data,
+        data: batteryPct,
         borderColor: pointColors,
         backgroundColor: background,
         fill: true,
         tension: 0.4,
         pointRadius: 3,
-        pointBackgroundColor: pointBackground,
+        pointBackgroundColor: pointColors,
         pointBorderColor: pointColors
       }
     ]
   };
 };
 
-const createGenerationVsConsumptionData = () => {
-  const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const generated = labels.map(() => Number((15 + Math.random() * 9).toFixed(1)));
-  const consumed = labels.map(() => Number((10 + Math.random() * 8).toFixed(1)));
-  return {
-    labels,
-    datasets: [
-      {
-        label: 'Generated (kWh)',
-        data: generated,
-        backgroundColor: 'rgb(34, 197, 94)',
-        borderRadius: 6,
-        barPercentage: 0.55,
-        categoryPercentage: 0.75
-      },
-      {
-        label: 'Consumed (kWh)',
-        data: consumed,
-        backgroundColor: 'rgb(245, 158, 11)',
-        borderRadius: 6,
-        barPercentage: 0.55,
-        categoryPercentage: 0.75
-      }
-    ]
-  };
+const buildGenerationVsConsumptionData = (labels, generatedKWh, consumedKWh) => ({
+  labels,
+  datasets: [
+    {
+      label: 'Generated (kWh)',
+      data: generatedKWh,
+      backgroundColor: 'rgb(34, 197, 94)',
+      borderRadius: 6,
+      barPercentage: 0.55,
+      categoryPercentage: 0.75
+    },
+    {
+      label: 'Consumed (kWh)',
+      data: consumedKWh,
+      backgroundColor: 'rgb(245, 158, 11)',
+      borderRadius: 6,
+      barPercentage: 0.55,
+      categoryPercentage: 0.75
+    }
+  ]
+});
+
+const buildVoltageCurrentData = (labels, voltage, current) => ({
+  labels,
+  datasets: [
+    {
+      label: 'Voltage (V)',
+      data: voltage,
+      borderColor: 'rgb(59, 130, 246)',
+      backgroundColor: 'rgba(59, 130, 246, 0.08)',
+      yAxisID: 'y',
+      tension: 0.28,
+      pointRadius: 2
+    },
+    {
+      label: 'Current (A)',
+      data: current,
+      borderColor: 'rgb(236, 72, 153)',
+      borderDash: [4, 4],
+      backgroundColor: 'rgba(236, 72, 153, 0.06)',
+      yAxisID: 'y1',
+      tension: 0.28,
+      pointRadius: 2
+    }
+  ]
+});
+
+/* Real fetch — replaces what used to be four Math.random() generators.
+   Returns nulls on failure so callers can leave charts at their last-known
+   state instead of falling back to fabricated numbers. */
+const fetchEnergyTabData = async (deviceId = 'DEMO-001') => {
+  try {
+    const [hourly, daily] = await Promise.all([
+      fetch(`/api/energy/hourly?deviceId=${deviceId}&hours=24`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/energy/daily?deviceId=${deviceId}&days=7`).then((r) => (r.ok ? r.json() : null))
+    ]);
+    return { hourly, daily };
+  } catch (err) {
+    console.warn('Energy tab fetch failed:', err.message);
+    return { hourly: null, daily: null };
+  }
 };
 
-const createVoltageCurrentData = () => {
-  const labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
-  const voltage = labels.map(() => Number((12.2 + Math.random() * 1.7).toFixed(2)));
-  const current = labels.map(() => Number((0.8 + Math.random() * 7.2).toFixed(2)));
-  return {
-    labels,
-    datasets: [
-      {
-        label: 'Voltage (V)',
-        data: voltage,
-        borderColor: 'rgb(59, 130, 246)',
-        backgroundColor: 'rgba(59, 130, 246, 0.08)',
-        yAxisID: 'y',
-        tension: 0.28,
-        pointRadius: 2
-      },
-      {
-        label: 'Current (A)',
-        data: current,
-        borderColor: 'rgb(236, 72, 153)',
-        borderDash: [4, 4],
-        backgroundColor: 'rgba(236, 72, 153, 0.06)',
-        yAxisID: 'y1',
-        tension: 0.28,
-        pointRadius: 2
-      }
-    ]
-  };
+const creditScoreColors = ['rgb(34, 197, 94)', 'rgb(59, 130, 246)', 'rgb(239, 68, 68)', 'rgb(147, 51, 234)', 'rgb(245, 158, 11)'];
+
+/* There's no real credit bureau score in this system — this chart shows a
+   payment-reliability score derived from actual M-Pesa payment history
+   (see getCustomerCreditScoreTrend() in db.js). Replaces the old
+   Math.random() "Customer A/B/C" mock. */
+const buildCreditScoreTrendData = (labels, customers) => ({
+  labels,
+  datasets: customers.map((customer, i) => ({
+    label: customer.name,
+    data: customer.scores,
+    borderColor: creditScoreColors[i % creditScoreColors.length],
+    tension: 0.34,
+    pointRadius: 3
+  }))
+});
+
+/* /api/customers/credit-score-trend is admin-only (it includes customer
+   names) — must be sent with this dashboard's auth token, same as
+   /api/audit/charts in index.html. */
+const fetchCreditScoreTrendData = async () => {
+  try {
+    const token = localStorage.getItem('authToken');
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const res = await fetch('/api/customers/credit-score-trend', { headers });
+    return res.ok ? res.json() : null;
+  } catch (err) {
+    console.warn('Credit score trend fetch failed:', err.message);
+    return null;
+  }
 };
 
 const createRevenueData = () => {
@@ -211,25 +239,6 @@ const createPaymentStatusData = () => {
         data: [paidCount, lowCreditCount, defaultCount],
         backgroundColor: ['rgb(34, 197, 94)', 'rgb(245, 158, 11)', 'rgb(239, 68, 68)'],
         borderWidth: 0
-      }
-    ]
-  };
-};
-
-const createPar30Data = () => {
-  const months = ['Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr'];
-  const values = [18, 16, 14, 12, 10, 7].map((value) => Number((value + (Math.random() * 1 - 0.5)).toFixed(1)));
-  return {
-    labels: months,
-    datasets: [
-      {
-        label: 'PAR30 (%)',
-        data: values,
-        borderColor: 'rgb(239, 68, 68)',
-        backgroundColor: 'rgba(239, 68, 68, 0.1)',
-        fill: true,
-        tension: 0.4,
-        pointRadius: 3
       }
     ]
   };
@@ -339,43 +348,6 @@ const createFraudRiskData = () => {
   };
 };
 
-const createCreditScoreTrendData = () => {
-  const labels = Array.from({ length: 12 }, (_, i) => {
-    const date = new Date();
-    date.setMonth(date.getMonth() - 11 + i);
-    return date.toLocaleDateString('en-GB', { month: 'short' });
-  });
-  const customerA = labels.map((_, i) => Number((55 + i * 3 + Math.random() * 4).toFixed(1)));
-  const customerB = labels.map((_, i) => Number((72 + Math.sin(i / 2) * 3 + Math.random() * 2).toFixed(1)));
-  const customerC = labels.map((_, i) => Number((90 - i * 2 + Math.random() * 3).toFixed(1)));
-  return {
-    labels,
-    datasets: [
-      {
-        label: 'Customer A',
-        data: customerA,
-        borderColor: 'rgb(34, 197, 94)',
-        tension: 0.34,
-        pointRadius: 3
-      },
-      {
-        label: 'Customer B',
-        data: customerB,
-        borderColor: 'rgb(59, 130, 246)',
-        tension: 0.34,
-        pointRadius: 3
-      },
-      {
-        label: 'Customer C',
-        data: customerC,
-        borderColor: 'rgb(239, 68, 68)',
-        tension: 0.34,
-        pointRadius: 3
-      }
-    ]
-  };
-};
-
 const createDeviceHealthData = () => {
   const labels = ['Nairobi', 'Nakuru', 'Kisumu', 'Mombasa', 'Eldoret'];
   const online = labels.map(() => 120 + Math.round(Math.random() * 54));
@@ -388,31 +360,14 @@ const createDeviceHealthData = () => {
     ] };
 };
 
-const createAgentPerformanceData = () => {
-  const names = ['Alice', 'Brian', 'Carol', 'David', 'Eve'];
-  const amounts = names.map(() => Math.round(54000 + Math.random() * 40000));
-  const sorted = names
-    .map((name, index) => ({ name, value: amounts[index] }))
-    .sort((a, b) => b.value - a.value);
-  return {
-    labels: sorted.map((row) => row.name),
-    datasets: [
-      {
-        label: 'Collections (KES)',
-        data: sorted.map((row) => row.value),
-        backgroundColor: 'rgb(147, 51, 234)',
-        borderRadius: 8,
-        barPercentage: 0.65,
-        categoryPercentage: 0.8
-      }
-    ],
-    sorted
-  };
-};
-
 const createMRRData = () => {
   const labels = Array.from({ length: 12 }, (_, i) => {
     const date = new Date();
+    /* Set the day to 1 before shifting months — otherwise a "today" of the
+       29th-31st overflows into the next month when the target month has
+       fewer days (e.g. day 29 + setMonth(Feb) rolls over to March 1st),
+       producing a duplicate month label. */
+    date.setDate(1);
     date.setMonth(date.getMonth() - 11 + i);
     return date.toLocaleDateString('en-GB', { month: 'short' });
   });
@@ -482,20 +437,18 @@ const SolarDashboard = () => {
   const chartRefs = useRef({});
   const [globalStats, setGlobalStats] = useState({ devicesOnline: 1247, todayRevenue: 45680, activeCustomers: 892 });
 
-  const solarGenerationData = useRef(createSolarGenerationData());
-  const batteryStateData = useRef(createBatteryStateData());
-  const generationVsConsumptionData = useRef(createGenerationVsConsumptionData());
-  const voltageCurrentData = useRef(createVoltageCurrentData());
+  const solarGenerationData = useRef(buildSolarGenerationData([], []));
+  const batteryStateData = useRef(buildBatteryStateData([], []));
+  const generationVsConsumptionData = useRef(buildGenerationVsConsumptionData([], [], []));
+  const voltageCurrentData = useRef(buildVoltageCurrentData([], [], []));
   const revenueData = useRef(createRevenueData());
   const paymentStatusData = useRef(createPaymentStatusData());
-  const par30Data = useRef(createPar30Data());
   const creditDistributionData = useRef(createCreditDistributionData());
   const forecastData = useRef(createForecastData());
   const anomalyScoreData = useRef(createAnomalyScoreData());
   const fraudRiskData = useRef(createFraudRiskData());
-  const creditScoreTrendData = useRef(createCreditScoreTrendData());
+  const creditScoreTrendData = useRef(buildCreditScoreTrendData([], []));
   const deviceHealthData = useRef(createDeviceHealthData());
-  const agentPerformanceData = useRef(createAgentPerformanceData());
   const mrrData = useRef(createMRRData());
   const panelEfficiencyData = useRef(createPanelEfficiencyData());
 
@@ -552,38 +505,48 @@ const SolarDashboard = () => {
 
   const makeNumbers = (values) => values.map((value) => Number(value.toFixed(2)));
 
-  const refreshAllCharts = useCallback(() => {
-    const newSolar = createSolarGenerationData();
-    solarGenerationData.current.datasets[0].data = newSolar.datasets[0].data;
-    updateChart('solarGeneration', (data) => {
-      data.datasets[0].data = newSolar.datasets[0].data;
-    });
+  const refreshAllCharts = useCallback(async () => {
+    const { hourly, daily } = await fetchEnergyTabData();
 
-    const newBattery = createBatteryStateData();
-    batteryStateData.current.datasets[0].data = newBattery.datasets[0].data;
-    batteryStateData.current.datasets[0].borderColor = newBattery.datasets[0].borderColor;
-    batteryStateData.current.datasets[0].backgroundColor = newBattery.datasets[0].backgroundColor;
-    updateChart('batteryState', (data) => {
-      data.datasets[0].data = newBattery.datasets[0].data;
-      data.datasets[0].borderColor = newBattery.datasets[0].borderColor;
-      data.datasets[0].backgroundColor = newBattery.datasets[0].backgroundColor;
-    });
+    if (hourly && hourly.labels?.length) {
+      const newSolar = buildSolarGenerationData(hourly.labels, hourly.generation.map((w) => Number((w / 1000).toFixed(2))));
+      solarGenerationData.current = newSolar;
+      updateChart('solarGeneration', (data) => {
+        data.labels = newSolar.labels;
+        data.datasets[0].data = newSolar.datasets[0].data;
+      });
 
-    const newGenVsCons = createGenerationVsConsumptionData();
-    generationVsConsumptionData.current.datasets[0].data = newGenVsCons.datasets[0].data;
-    generationVsConsumptionData.current.datasets[1].data = newGenVsCons.datasets[1].data;
-    updateChart('generationVsConsumption', (data) => {
-      data.datasets[0].data = newGenVsCons.datasets[0].data;
-      data.datasets[1].data = newGenVsCons.datasets[1].data;
-    });
+      const newBattery = buildBatteryStateData(hourly.labels, hourly.battery.map((v) => Number(v)));
+      batteryStateData.current = newBattery;
+      updateChart('batteryState', (data) => {
+        data.labels = newBattery.labels;
+        data.datasets[0].data = newBattery.datasets[0].data;
+        data.datasets[0].borderColor = newBattery.datasets[0].borderColor;
+        data.datasets[0].backgroundColor = newBattery.datasets[0].backgroundColor;
+        data.datasets[0].pointBackgroundColor = newBattery.datasets[0].pointBackgroundColor;
+        data.datasets[0].pointBorderColor = newBattery.datasets[0].pointBorderColor;
+      });
 
-    const newVoltage = createVoltageCurrentData();
-    voltageCurrentData.current.datasets[0].data = newVoltage.datasets[0].data;
-    voltageCurrentData.current.datasets[1].data = newVoltage.datasets[1].data;
-    updateChart('voltageCurrent', (data) => {
-      data.datasets[0].data = newVoltage.datasets[0].data;
-      data.datasets[1].data = newVoltage.datasets[1].data;
-    });
+      const newVoltage = buildVoltageCurrentData(hourly.labels, hourly.voltage.map((v) => Number(v)), hourly.current.map((v) => Number(v)));
+      voltageCurrentData.current = newVoltage;
+      updateChart('voltageCurrent', (data) => {
+        data.labels = newVoltage.labels;
+        data.datasets[0].data = newVoltage.datasets[0].data;
+        data.datasets[1].data = newVoltage.datasets[1].data;
+      });
+    }
+
+    if (daily && daily.labels?.length) {
+      const generatedKWh = daily.generation.map((w) => Number(((w * 24) / 1000).toFixed(1)));
+      const consumedKWh = daily.consumption.map((w) => Number(((w * 24) / 1000).toFixed(1)));
+      const newGenVsCons = buildGenerationVsConsumptionData(daily.labels, generatedKWh, consumedKWh);
+      generationVsConsumptionData.current = newGenVsCons;
+      updateChart('generationVsConsumption', (data) => {
+        data.labels = newGenVsCons.labels;
+        data.datasets[0].data = newGenVsCons.datasets[0].data;
+        data.datasets[1].data = newGenVsCons.datasets[1].data;
+      });
+    }
 
     const newRevenue = createRevenueData();
     revenueData.current.datasets[0].data = newRevenue.datasets[0].data;
@@ -593,10 +556,6 @@ const SolarDashboard = () => {
     paymentStatusData.current.counts = newPaymentStatus.counts;
     paymentStatusData.current.datasets[0].data = newPaymentStatus.datasets[0].data;
     updateChart('paymentStatus', (data) => { data.datasets[0].data = newPaymentStatus.datasets[0].data; });
-
-    const newPar30 = createPar30Data();
-    par30Data.current.datasets[0].data = newPar30.datasets[0].data;
-    updateChart('par30', (data) => { data.datasets[0].data = newPar30.datasets[0].data; });
 
     const newCreditDistribution = createCreditDistributionData();
     creditDistributionData.current.datasets[0].data = newCreditDistribution.datasets[0].data;
@@ -631,15 +590,15 @@ const SolarDashboard = () => {
       data.datasets[0].pointBorderColor = newFraud.datasets[0].pointBorderColor;
     });
 
-    const newCreditScoreTrend = createCreditScoreTrendData();
-    creditScoreTrendData.current.datasets[0].data = newCreditScoreTrend.datasets[0].data;
-    creditScoreTrendData.current.datasets[1].data = newCreditScoreTrend.datasets[1].data;
-    creditScoreTrendData.current.datasets[2].data = newCreditScoreTrend.datasets[2].data;
-    updateChart('creditScoreTrend', (data) => {
-      data.datasets[0].data = newCreditScoreTrend.datasets[0].data;
-      data.datasets[1].data = newCreditScoreTrend.datasets[1].data;
-      data.datasets[2].data = newCreditScoreTrend.datasets[2].data;
-    });
+    const creditScoreTrend = await fetchCreditScoreTrendData();
+    if (creditScoreTrend && creditScoreTrend.labels?.length) {
+      const newCreditScoreTrend = buildCreditScoreTrendData(creditScoreTrend.labels, creditScoreTrend.customers);
+      creditScoreTrendData.current = newCreditScoreTrend;
+      updateChart('creditScoreTrend', (data) => {
+        data.labels = newCreditScoreTrend.labels;
+        data.datasets = newCreditScoreTrend.datasets;
+      });
+    }
 
     const newDeviceHealth = createDeviceHealthData();
     deviceHealthData.current.labels = newDeviceHealth.labels;
@@ -651,15 +610,6 @@ const SolarDashboard = () => {
       data.datasets[0].data = newDeviceHealth.datasets[0].data;
       data.datasets[1].data = newDeviceHealth.datasets[1].data;
       data.datasets[2].data = newDeviceHealth.datasets[2].data;
-    });
-
-    const newAgents = createAgentPerformanceData();
-    agentPerformanceData.current.labels = newAgents.labels;
-    agentPerformanceData.current.datasets[0].data = newAgents.datasets[0].data;
-    agentPerformanceData.current.sorted = newAgents.sorted;
-    updateChart('agentPerformance', (data) => {
-      data.labels = newAgents.labels;
-      data.datasets[0].data = newAgents.datasets[0].data;
     });
 
     const newMRR = createMRRData();
@@ -701,27 +651,7 @@ const SolarDashboard = () => {
   }, [refreshAllCharts]);
 
   useEffect(() => {
-    const actions = [
-      Promise.resolve(createSolarGenerationData()),
-      Promise.resolve(createBatteryStateData()),
-      Promise.resolve(createGenerationVsConsumptionData()),
-      Promise.resolve(createVoltageCurrentData()),
-      Promise.resolve(createRevenueData()),
-      Promise.resolve(createPaymentStatusData()),
-      Promise.resolve(createPar30Data()),
-      Promise.resolve(createCreditDistributionData()),
-      Promise.resolve(createForecastData()),
-      Promise.resolve(createAnomalyScoreData()),
-      Promise.resolve(createFraudRiskData()),
-      Promise.resolve(createCreditScoreTrendData()),
-      Promise.resolve(createDeviceHealthData()),
-      Promise.resolve(createAgentPerformanceData()),
-      Promise.resolve(createMRRData()),
-      Promise.resolve(createPanelEfficiencyData())
-    ];
-    Promise.allSettled(actions).then(() => {
-      refreshAllCharts();
-    });
+    refreshAllCharts();
   }, [refreshAllCharts]);
 
   const card = 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm p-5';
@@ -749,16 +679,13 @@ const SolarDashboard = () => {
     );
   });
 
-  const creditLegend = creditScoreTrendData.current.datasets.map((ds) => {
-    const dot = ds.borderColor === 'rgb(34, 197, 94)' ? 'bg-emerald-500'
-              : ds.borderColor === 'rgb(59, 130, 246)' ? 'bg-sky-500' : 'bg-rose-500';
-    return (
-      <div key={ds.label} className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-        <span className={`w-2.5 h-2.5 rounded-full ${dot}`} />
-        <span>{ds.label}</span>
-      </div>
-    );
-  });
+  const creditScoreDotColors = ['bg-emerald-500', 'bg-sky-500', 'bg-rose-500', 'bg-purple-500', 'bg-amber-500'];
+  const creditLegend = creditScoreTrendData.current.datasets.map((ds, i) => (
+    <div key={ds.label} className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+      <span className={`w-2.5 h-2.5 rounded-full ${creditScoreDotColors[i % creditScoreDotColors.length]}`} />
+      <span>{ds.label}</span>
+    </div>
+  ));
 
   const latestGeneration  = solarGenerationData.current.datasets[0].data;
   const peakToday         = Math.max(...latestGeneration).toFixed(1);
@@ -769,14 +696,12 @@ const SolarDashboard = () => {
   const todayRevenue      = revenueData.current.datasets[0].data.at(-1) ?? 0;
   const mtdRevenue        = revenueData.current.datasets[0].data.slice(-7).reduce((s, v) => s + v, 0);
   const attentionCount    = paymentStatusData.current.counts[1] + paymentStatusData.current.counts[2];
-  const currentPAR        = par30Data.current.datasets[0].data.at(-1) ?? 0;
   const lowCreditCount    = creditDistributionData.current.datasets[0].data[0] + creditDistributionData.current.datasets[0].data[1];
   const modelAccuracy     = 92;
   const nextLow           = forecastData.current.labels[forecastData.current.datasets[0].data.indexOf(Math.min(...forecastData.current.datasets[0].data))];
   const anomaliesCount    = anomalyScoreData.current.datasets[0].data.filter(v => v >= 2).length;
   const flaggedCount      = fraudRiskData.current.points.filter(p => p.y > 0.8).length;
   const deviceOffline     = deviceHealthData.current.offline.reduce((s, v) => s + v, 0);
-  const topAgent          = agentPerformanceData.current.sorted[0];
   const currentMRR        = mrrData.current.values.at(-1) ?? 0;
   const growth            = currentMRR && mrrData.current.values.length > 1
     ? (((currentMRR - mrrData.current.values.at(-2)) / mrrData.current.values.at(-2)) * 100).toFixed(1) : 0;
@@ -886,7 +811,10 @@ const SolarDashboard = () => {
             <ChartCard title="Generation vs Consumption" badge="Weekly" badgeColor="sky"
               subtitle="Weekly bar chart comparing energy produced and consumed."
               footer={<>Surplus today: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{surplusToday} kWh</span></>}>
-              <Bar ref={mkRef('generationVsConsumption')} data={generationVsConsumptionData.current} options={baseOptions} />
+              <Bar ref={mkRef('generationVsConsumption')} data={generationVsConsumptionData.current}
+                options={{ ...baseOptions, scales: { ...baseOptions.scales,
+                  y: { ...baseOptions.scales.y, beginAtZero: true }
+                } }} />
             </ChartCard>
 
             <ChartCard title="Voltage & Current" badge="Live" badgeColor="violet"
@@ -895,8 +823,11 @@ const SolarDashboard = () => {
               <Line ref={mkRef('voltageCurrent')} data={voltageCurrentData.current}
                 options={{ ...baseOptions, scales: {
                   x: { ...baseOptions.scales.x },
-                  y: { ...baseOptions.scales.y, title: { display: true, text: 'Voltage (V)', color: themeColors.text }, min: 10, max: 16 },
-                  y1: { type: 'linear', position: 'right', grid: { drawOnChartArea: false }, ticks: { color: 'rgb(236,72,153)' }, title: { display: true, text: 'Current (A)', color: 'rgb(236,72,153)' }, min: 0, max: 9 }
+                  /* This is a 48V system (see voltage NUMERIC DEFAULT 48 in db.js / the
+                     47-51V simulated range in server.js) — these bounds used to assume a
+                     12V system (10-16V), which clipped every real reading off-canvas. */
+                  y: { ...baseOptions.scales.y, title: { display: true, text: 'Voltage (V)', color: themeColors.text }, min: 44, max: 54 },
+                  y1: { type: 'linear', position: 'right', grid: { drawOnChartArea: false }, ticks: { color: 'rgb(236,72,153)' }, title: { display: true, text: 'Current (A)', color: 'rgb(236,72,153)' }, min: 0, max: 16 }
                 }}} />
             </ChartCard>
           </div>
@@ -923,13 +854,6 @@ const SolarDashboard = () => {
               <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">{paymentLegend}</div>
             </ChartCard>
 
-            <ChartCard title="Portfolio at Risk — PAR30" badge="Target" badgeColor="red"
-              subtitle="Percentage of portfolio overdue > 30 days (target: < 12%)."
-              footer={<>Current PAR30: <span className="font-semibold text-rose-600 dark:text-rose-400">{currentPAR}%</span></>}>
-              <Line ref={mkRef('par30')} data={par30Data.current}
-                options={{ ...baseOptions, plugins: { ...baseOptions.plugins, threshold: { value: 12, label: 'Target 12%', color: 'rgba(239,68,68,0.8)' } } }} />
-            </ChartCard>
-
             <ChartCard title="Credit Balance Distribution" badge="Distribution" badgeColor="blue"
               subtitle="How customer credit balances are spread across buckets."
               footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{lowCreditCount}</span> customers below 25% — send top-up alerts</>}>
@@ -941,13 +865,6 @@ const SolarDashboard = () => {
               footer={<>MRR: <span className="font-semibold text-purple-600 dark:text-purple-400">{formatKES(currentMRR)}</span> · Growth: <span className="font-semibold text-emerald-600 dark:text-emerald-400">+{growth}% MoM</span></>}>
               <Line ref={mkRef('mrr')} data={mrrData.current}
                 options={{ ...baseOptions, scales: { x: { ...baseOptions.scales.x }, y: { ...baseOptions.scales.y, ticks: { callback: v => `KES ${Math.round(v/1000)}k`, color: themeColors.text } } } }} />
-            </ChartCard>
-
-            <ChartCard title="Agent Collection Performance" badge="Leaderboard" badgeColor="violet"
-              subtitle="Top field collection agents ranked by monthly volume."
-              footer={<>Top: <span className="font-semibold">{topAgent.name}</span> · {formatKES(topAgent.value)} this month</>}>
-              <Bar ref={mkRef('agentPerformance')} data={agentPerformanceData.current}
-                options={{ ...baseOptions, indexAxis: 'y', scales: { x: { ...baseOptions.scales.x, ticks: { callback: v => `KES ${Math.round(v/1000)}k`, color: themeColors.text } }, y: { ...baseOptions.scales.y } } }} />
             </ChartCard>
           </div>
         )}
@@ -978,9 +895,15 @@ const SolarDashboard = () => {
             </ChartCard>
 
             <ChartCard title="Customer Credit Score Trend" badge="Trend" badgeColor="emerald"
-              subtitle="Three customer credit-score trajectories over 12 months.">
-              <Line ref={mkRef('creditScoreTrend')} data={creditScoreTrendData.current} options={baseOptions} />
-              <div className="mt-3 flex flex-wrap items-center justify-center gap-4">{creditLegend}</div>
+              subtitle="Top customers' payment-reliability score, derived from real M-Pesa payment history over 12 months.">
+              {creditScoreTrendData.current.datasets.length > 0 ? (
+                <>
+                  <Line ref={mkRef('creditScoreTrend')} data={creditScoreTrendData.current} options={baseOptions} />
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-4">{creditLegend}</div>
+                </>
+              ) : (
+                <div className="flex items-center justify-center h-48 text-sm text-slate-400">Not enough customer payment history yet.</div>
+              )}
             </ChartCard>
           </div>
         )}

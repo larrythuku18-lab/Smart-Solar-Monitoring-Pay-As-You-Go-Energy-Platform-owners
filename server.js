@@ -46,11 +46,14 @@ const {
   getPaymentStats,
   getEnergyHistory,
   getEnergyHistoryAsc,
+  getEnergyHourly,
+  getEnergyDaily,
   getEnergyHistory48hAllDevices,
   getRecentPayments,
   getAuditTimeline,
   getAlertSeverityCounts,
   getPaymentTrend,
+  getCustomerCreditScoreTrend,
   insertEnergyReading,
   getDashboardState,
   getAdminSummary,
@@ -1069,6 +1072,50 @@ app.get('/api/energy/history', async (req, res) => {
   }
 });
 
+/* Hourly-averaged readings for the last N hours — feeds the Analysis
+   Board's Energy tab (solar generation curve, battery state, voltage/
+   current), which previously plotted Math.random() instead of real data. */
+app.get('/api/energy/hourly', async (req, res) => {
+  try {
+    const deviceId = req.query.deviceId || 'DEMO-001';
+    const hours    = Math.min(Number.parseInt(req.query.hours, 10) || 24, 72);
+    const rows     = await getEnergyHourly(deviceId, hours);
+    res.json({
+      deviceId,
+      labels:      rows.map(r => new Date(r.hour).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })),
+      generation:  rows.map(r => r.generation_watts),
+      consumption: rows.map(r => r.consumption_watts),
+      battery:     rows.map(r => r.battery_level),
+      voltage:     rows.map(r => r.voltage),
+      current:     rows.map(r => r.current_amps)
+    });
+  } catch (err) {
+    console.error('Energy hourly error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load hourly energy data', message: err.message });
+  }
+});
+
+/* Daily-averaged generation/consumption for the last N days — feeds the
+   Energy tab's "Generation vs Consumption" weekly bar chart. */
+app.get('/api/energy/daily', async (req, res) => {
+  try {
+    const deviceId = req.query.deviceId || 'DEMO-001';
+    const days     = Math.min(Number.parseInt(req.query.days, 10) || 7, 30);
+    const rows     = await getEnergyDaily(deviceId, days);
+    res.json({
+      deviceId,
+      labels:      rows.map(r => new Date(r.day).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })),
+      generation:  rows.map(r => r.generation_watts),
+      consumption: rows.map(r => r.consumption_watts)
+    });
+  } catch (err) {
+    console.error('Energy daily error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load daily energy data', message: err.message });
+  }
+});
+
 app.get('/api/audit/timeline', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
     return res.status(403).json({ error: 'Admin access required' });
@@ -1108,6 +1155,26 @@ app.get('/api/audit/charts', authMiddleware, async (req, res) => {
     console.error('Audit charts error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load chart data', message: err.message });
+  }
+});
+
+/* Admin-only — payment-derived customer names + scores, same sensitivity
+   class as /api/audit/charts. Feeds the Analysis Board's "Credit Score
+   Trend" chart, which previously plotted Math.random() instead of real
+   payment behavior. */
+app.get('/api/customers/credit-score-trend', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  try {
+    const months = Math.min(Number.parseInt(req.query.months, 10) || 12, 24);
+    const limit  = Math.min(Number.parseInt(req.query.limit, 10) || 3, 10);
+    const trend  = await getCustomerCreditScoreTrend(months, limit);
+    res.json(trend);
+  } catch (err) {
+    console.error('Credit score trend error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load credit score trend', message: err.message });
   }
 });
 
