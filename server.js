@@ -881,6 +881,7 @@ app.post('/api/mpesa/callback', async (req, res) => {
     }
   } catch (err) {
     console.error('M-Pesa callback error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
   }
 });
 
@@ -910,7 +911,12 @@ app.get('/api/admin/alerts', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/api/payments/stats', async (req, res) => {
+/* Admin-only — total_revenue is a business-sensitive aggregate, same
+   sensitivity class as /api/audit/charts just above. */
+app.get('/api/payments/stats', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
   try {
     res.json(await getPaymentStats());
   } catch (err) {
@@ -1307,6 +1313,16 @@ function compileJsx() {
 }
 
 async function startup() {
+  /* Fail closed, not open: in production, a live M-Pesa integration with no
+     callback secret means /api/mpesa/callback accepts forged "payment
+     succeeded" callbacks from anyone who has seen a checkoutRequestId.
+     Refuse to start rather than silently run with that door open. */
+  if (process.env.NODE_ENV === 'production' && mpesaConfigured() && !process.env.MPESA_CALLBACK_SECRET) {
+    console.error('[FATAL] MPESA_CALLBACK_SECRET is required in production when M-Pesa is configured — '
+      + 'refusing to start with an unauthenticated payment-callback endpoint.');
+    process.exit(1);
+  }
+
   compileJsx();
   console.log('[DB] Connecting to PostgreSQL…');
   await runMigrations();

@@ -723,12 +723,13 @@
   async function fetchAdminData() {
     try {
       const token = localStorage.getItem('authToken');
-      // /api/audit/charts is admin-only (it includes customer phone numbers and
-      // M-Pesa receipt data) — must be sent with this dashboard's auth token.
+      // /api/audit/charts and /api/payments/stats are both admin-only (revenue
+      // aggregates, customer phone numbers, M-Pesa receipt data) — must be sent
+      // with this dashboard's auth token.
       const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
       const [chartRes, statsRes] = await Promise.all([
         fetch(`${API}/audit/charts`, { headers: authHeaders }).then(r => r.ok ? r.json() : null).catch(() => null),
-        fetch(`${API}/payments/stats`).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch(`${API}/payments/stats`, { headers: authHeaders }).then(r => r.ok ? r.json() : null).catch(() => null),
       ]);
 
       if (chartRes) {
