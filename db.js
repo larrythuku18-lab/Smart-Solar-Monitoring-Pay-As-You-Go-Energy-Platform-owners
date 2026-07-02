@@ -191,6 +191,12 @@ async function runMigrations() {
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_id   INTEGER REFERENCES products(id) ON DELETE SET NULL;
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_name VARCHAR(255);
 
+    -- Data fix: category icons were originally seeded as emojis; the UI no
+    -- longer renders them and the product style is text-only. seedProducts()
+    -- only runs on an empty catalogue, so existing databases keep the old
+    -- emoji values unless cleared here (idempotent).
+    UPDATE product_categories SET icon = NULL WHERE icon IS NOT NULL;
+
     -- ── Indexes ────────────────────────────────────────────────────────────
     CREATE INDEX IF NOT EXISTS idx_energy_device_ts  ON energy_readings(device_id, recorded_at DESC);
     CREATE INDEX IF NOT EXISTS idx_payments_user     ON payments(user_id);

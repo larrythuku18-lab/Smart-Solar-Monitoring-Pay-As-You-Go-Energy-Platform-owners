@@ -205,7 +205,6 @@
       padding: 18px; display: flex; flex-direction: column; gap: 8px; transition: border-color .18s;
     }
     .product-card:hover { border-color: rgba(16,185,129,.35); }
-    .product-card .p-icon { font-size: 26px; }
     .product-card .p-name { font-size: 14px; font-weight: 700; color: var(--text); }
     .product-card .p-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
     .product-card .p-specs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
@@ -1024,10 +1023,10 @@ async function loadShop() {
 
 function renderShopCategories() {
   const wrap = document.getElementById('shop-categories');
-  const pills = [{ id: 'all', name: 'All' }, ...shopCatalogue.map(c => ({ id: c.id, name: c.name, icon: c.icon }))];
+  const pills = [{ id: 'all', name: 'All' }, ...shopCatalogue.map(c => ({ id: c.id, name: c.name }))];
   wrap.innerHTML = pills.map(p => `
     <button class="shop-cat-btn${activeShopCategory === String(p.id) ? ' active' : ''}" data-cat="${p.id}">
-      ${escapeHtml(p.icon || '')} ${escapeHtml(p.name)}
+      ${escapeHtml(p.name)}
     </button>
   `).join('');
   wrap.querySelectorAll('.shop-cat-btn').forEach(btn => {
@@ -1052,7 +1051,6 @@ function renderShopGrid() {
         .map(([k, v]) => `<span class="p-spec-tag">${escapeHtml(v)}</span>`).join('');
       cards.push(`
         <div class="product-card">
-          <div class="p-icon">${escapeHtml(cat.icon || '')}</div>
           <div class="p-name">${escapeHtml(p.name)}</div>
           <div class="p-desc">${escapeHtml(p.description)}</div>
           <div class="p-specs">${specTags}</div>
