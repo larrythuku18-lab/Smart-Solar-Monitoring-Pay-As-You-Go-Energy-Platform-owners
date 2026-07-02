@@ -287,6 +287,18 @@ below); KES pricing/billing logic untouched.
   (`/api/audit/charts.recentPayments`) with status completed.
 - **Test suite:** 26/26 pass on the final tree.
 
+## Follow-up fix (post-report)
+
+- **Removed stale `schema.sql`** — it described an early, never-built design
+  (UUID keys, `tokens`/`alerts` tables, an `agent` role) that contradicts the
+  real schema created by `runMigrations()` in db.js. Worse, docker-compose.yml
+  mounted it as the Postgres init script, so a fresh compose database was
+  seeded with an incompatible `users`/`devices` layout that the app's own
+  migrations then collided with. The migrations in db.js are the single
+  source of truth; the compose Postgres now starts empty and the app
+  creates the schema on boot. Changed: `schema.sql` (deleted),
+  `docker-compose.yml`, `README.md`.
+
 ## Found but deliberately NOT fixed
 
 - **Plaintext device PINs** (`users.pin`, compared at server.js login).
