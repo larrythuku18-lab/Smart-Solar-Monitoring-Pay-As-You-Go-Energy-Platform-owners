@@ -780,14 +780,15 @@ const AnalyticsDashboard = () => {
   /* ── Fetch data ── */
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    // /api/payments/stats is admin-only (revenue aggregates) — must be sent
-    // with this dashboard's auth token, same as the other admin-only fetches
+    // /api/state, /api/energy/history and /api/payments/stats are
+    // auth-protected (revenue aggregates / telemetry) — send this
+    // dashboard's auth token, same as the other admin-only fetches
     // in dashboard.jsx and index.html.
     const token = localStorage.getItem('authToken');
     const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
     const [stateR, energyR, payR, aiR] = await Promise.allSettled([
-      fetch('/api/state').then(r => r.json()),
-      fetch('/api/energy/history?limit=48&deviceId=DEMO-001').then(r => r.json()),
+      fetch('/api/state', { headers: authHeaders }).then(r => r.json()),
+      fetch('/api/energy/history?limit=48&deviceId=DEMO-001', { headers: authHeaders }).then(r => r.json()),
       fetch('/api/payments/stats', { headers: authHeaders }).then(r => r.json()),
       fetch('/api/ai-insights').then(r => r.json())
     ]);

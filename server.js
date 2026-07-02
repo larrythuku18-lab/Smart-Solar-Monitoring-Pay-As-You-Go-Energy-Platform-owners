@@ -356,7 +356,15 @@ app.get('/api/demo-credentials', (req, res) => {
   });
 });
 
-app.get('/api/state', async (req, res) => {
+/* Admin-only — getDashboardState() embeds getPaymentStats() (total_revenue)
+   and the demo customer's wallet balance. Leaving this open would leak the
+   exact aggregates /api/payments/stats was locked down to protect. Its only
+   consumers (admin dashboard index.js, analytics page) run post-login and
+   send the JWT. */
+app.get('/api/state', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
   try {
     const [state, stats] = await Promise.all([getDashboardState(), getPaymentStats()]);
     res.json({ ...state, paymentStats: stats });
