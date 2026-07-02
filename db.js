@@ -71,6 +71,10 @@ async function runMigrations() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS email         VARCHAR(255) UNIQUE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS role          VARCHAR(20) NOT NULL DEFAULT 'customer';
+    -- Password reset: only the SHA-256 hash of the emailed token is stored,
+    -- so a database leak doesn't hand out working reset links.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_hash    VARCHAR(64);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ;
 
     -- ── Devices ────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS devices (
@@ -381,6 +385,33 @@ async function setWalletBalance(userId, balance) {
   await q('UPDATE users SET wallet_balance = $1 WHERE id = $2', [balance, userId]);
 }
 
+/* ── Password reset ──────────────────────────────────────────────────────
+   The raw token goes to the user by email; only its SHA-256 hash is stored.
+   A new request overwrites any previous token (old links stop working). */
+async function setPasswordResetToken(userId, tokenHash, expiresAt) {
+  await q(
+    'UPDATE users SET reset_token_hash = $1, reset_token_expires = $2 WHERE id = $3',
+    [tokenHash, expiresAt, userId]
+  );
+}
+
+async function getUserByValidResetToken(tokenHash) {
+  const { rows } = await q(
+    'SELECT * FROM users WHERE reset_token_hash = $1 AND reset_token_expires > NOW()',
+    [tokenHash]
+  );
+  return rows[0] ?? null;
+}
+
+async function completePasswordReset(userId, passwordHash) {
+  await q(
+    `UPDATE users
+     SET password_hash = $1, reset_token_hash = NULL, reset_token_expires = NULL
+     WHERE id = $2`,
+    [passwordHash, userId]
+  );
+}
+
 async function getExpiredWalletUsers() {
   const { rows } = await q(`
     SELECT u.*, d.device_id AS linked_device_id, d.device_ip
@@ -450,8 +481,24 @@ async function setRelayState(deviceId, state) {
 }
 
 async function getAllDevices() {
-  const { rows } = await q('SELECT * FROM devices ORDER BY created_at DESC');
+  // Owner columns feed the admin fleet panel's Owner column and let the
+  // assign flow show who a device is currently linked to.
+  const { rows } = await q(
+    `SELECT d.*, u.email AS owner_email, u.name AS owner_name
+     FROM devices d
+     LEFT JOIN users u ON u.id = d.user_id
+     ORDER BY d.created_at DESC`
+  );
   return rows.map(d => ({ ...d, online: isDeviceOnline(d.last_seen) }));
+}
+
+/** Link a device to a customer account (or unlink with userId = null). */
+async function assignDeviceToUser(deviceId, userId) {
+  const { rows } = await q(
+    'UPDATE devices SET user_id = $1 WHERE device_id = $2 RETURNING *',
+    [userId, deviceId]
+  );
+  return rows[0] ?? null;
 }
 
 /**
@@ -953,6 +1000,9 @@ module.exports = {
   updateWallet,
   setWalletBalance,
   getExpiredWalletUsers,
+  setPasswordResetToken,
+  getUserByValidResetToken,
+  completePasswordReset,
   /* devices */
   getDevice,
   getDeviceByUserId,
@@ -960,6 +1010,7 @@ module.exports = {
   setRelayState,
   upsertDeviceHeartbeat,
   provisionDevice,
+  assignDeviceToUser,
   /* energy */
   insertEnergyReading,
   getLatestEnergy,

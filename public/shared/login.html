@@ -405,6 +405,11 @@
         <span id="auth-toggle-text">New customer?</span> <a id="auth-toggle-link">Create an account</a>
       </div>
 
+      <!-- Forgot password (email+password accounts, any role) -->
+      <div id="forgot-toggle" class="auth-toggle">
+        <a id="forgot-link">Forgot password?</a>
+      </div>
+
       <!-- Demo credentials -->
       <div class="divider" id="demo-divider">Demo credentials</div>
       <div class="demo-box" id="demo-box">
@@ -421,7 +426,7 @@
 <script>
   const API = '/api';
   let activeRole = 'admin';
-  let authMode   = 'login'; // 'login' | 'signup' (signup only available for customers)
+  let authMode   = 'login'; // 'login' | 'signup' | 'forgot' (signup only available for customers)
 
   /* ── Demo credential sets ── */
   const CREDS = {
@@ -544,6 +549,7 @@
 
   /* ── Default submit-button label for the current role/mode ── */
   function defaultBtnText() {
+    if (authMode === 'forgot') return 'Send Reset Link';
     if (activeRole === 'admin') return 'Sign in as Admin';
     return authMode === 'signup' ? 'Create Account' : 'Sign in as Customer';
   }
@@ -565,14 +571,26 @@
     const demoBox      = document.getElementById('demo-box');
 
     const isSignup = mode === 'signup';
+    const isForgot = mode === 'forgot';
+    const pwGroup  = passwordEl.closest('.form-group');
 
     nameGroup.style.display    = isSignup ? 'block' : 'none';
     phoneGroup.style.display   = isSignup ? 'block' : 'none';
     confirmGroup.style.display = isSignup ? 'block' : 'none';
-    demoDivider.style.display  = isSignup ? 'none'  : 'block';
-    demoBox.style.display      = isSignup ? 'none'  : 'block';
+    pwGroup.style.display      = isForgot ? 'none'  : 'block';
+    demoDivider.style.display  = (isSignup || isForgot) ? 'none' : 'block';
+    demoBox.style.display      = (isSignup || isForgot) ? 'none' : 'block';
+    document.getElementById('forgot-toggle').style.display = (isSignup || isForgot) ? 'none' : 'block';
 
-    if (isSignup) {
+    if (isForgot) {
+      idLabel.textContent    = 'Email Address';
+      idInput.placeholder    = 'you@example.com';
+      toggleText.textContent = 'Remembered it?';
+      toggleLink.textContent = 'Back to sign in';
+      /* The back-link must be visible in forgot mode for BOTH roles —
+         setRole() hides #auth-toggle for admins in normal login mode. */
+      document.getElementById('auth-toggle').style.display = 'block';
+    } else if (isSignup) {
       idLabel.textContent    = 'Email Address';
       idInput.placeholder    = 'you@example.com';
       pwLabel.textContent    = 'Create Password';
@@ -580,12 +598,19 @@
       toggleText.textContent = 'Already have an account?';
       toggleLink.textContent = 'Sign in';
     } else {
-      idLabel.textContent    = 'Device ID or Email';
-      idInput.placeholder    = 'DEMO-001 or customer@example.com';
-      pwLabel.textContent    = 'PIN or Password';
+      if (activeRole === 'admin') {
+        idLabel.textContent  = 'Email Address';
+        idInput.placeholder  = 'admin@solarpayg.com';
+        pwLabel.textContent  = 'Password';
+      } else {
+        idLabel.textContent  = 'Device ID or Email';
+        idInput.placeholder  = 'DEMO-001 or customer@example.com';
+        pwLabel.textContent  = 'PIN or Password';
+      }
       passwordEl.placeholder = 'Enter password or PIN';
       toggleText.textContent = 'New customer?';
       toggleLink.textContent = 'Create an account';
+      document.getElementById('auth-toggle').style.display = activeRole === 'customer' ? 'block' : 'none';
     }
 
     document.getElementById('reg-name').value        = '';
@@ -615,6 +640,7 @@
     clearAlert();
 
     if (authMode === 'signup') return handleSignup();
+    if (authMode === 'forgot') return handleForgot();
 
     const identifier = document.getElementById('identifier').value.trim();
     const password   = document.getElementById('password').value;
@@ -677,6 +703,40 @@
       console.error('Login error:', err);
       showAlert('Network error. Please check your connection.', 'error');
       btn.disabled  = false;
+      btnText.textContent = defaultBtnText();
+    }
+  }
+
+  /* ── Forgot password: request a reset link by email ── */
+  async function handleForgot() {
+    const email = document.getElementById('identifier').value.trim();
+    if (!email || !email.includes('@')) {
+      showAlert('Please enter the email address on your account.', 'error');
+      return;
+    }
+
+    const btn     = document.getElementById('submit-btn');
+    const btnText = document.getElementById('btn-text');
+    btn.disabled  = true;
+    btnText.innerHTML = '<span class="spinner"></span> Sending…';
+
+    try {
+      const res  = await fetch(`${API}/auth/forgot-password`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showAlert(data.error || 'Could not send reset link. Please try again.', 'error');
+      } else {
+        showAlert(data.message || 'If that email has an account, a reset link has been sent.', 'success');
+      }
+    } catch (err) {
+      console.error('Forgot password error:', err);
+      showAlert('Network error. Please check your connection.', 'error');
+    } finally {
+      btn.disabled = false;
       btnText.textContent = defaultBtnText();
     }
   }
@@ -776,6 +836,10 @@
   document.getElementById('auth-toggle-link').addEventListener('click', e => {
     e.preventDefault();
     setAuthMode(authMode === 'login' ? 'signup' : 'login');
+  });
+  document.getElementById('forgot-link').addEventListener('click', e => {
+    e.preventDefault();
+    setAuthMode('forgot');
   });
 
   /* ── Password visibility toggles ── */

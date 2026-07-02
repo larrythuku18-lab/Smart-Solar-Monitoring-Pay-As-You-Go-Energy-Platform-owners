@@ -66,7 +66,17 @@ after(() => {
   server.kill('SIGKILL');
 });
 
+/* Tokens are valid for 24h, so one login per role serves the whole suite.
+   Memoized because every helper login counts against the server's
+   authLimiter budget (20 auth requests / 15 min / IP) — with each test
+   logging in fresh, the suite itself trips 429s once it grows past ~20
+   auth-limited calls, which it did when the password-reset tests (whose
+   forgot/reset endpoints share that limiter) were added. */
+let _adminToken = null;
+let _customerToken = null;
+
 async function loginAdmin() {
+  if (_adminToken) return _adminToken;
   // Mirrors db.js's seedDemoData() fallback — ADMIN_EMAIL/ADMIN_PASSWORD may be
   // overridden locally (e.g. to a real address so login alerts don't bounce).
   const r = await fetch(`${BASE}/api/auth/login`, {
@@ -79,10 +89,12 @@ async function loginAdmin() {
   });
   const body = await r.json();
   assert.equal(r.status, 200, `admin login failed: ${JSON.stringify(body)}`);
-  return body.token;
+  _adminToken = body.token;
+  return _adminToken;
 }
 
 async function loginCustomer() {
+  if (_customerToken) return _customerToken;
   const r = await fetch(`${BASE}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -90,7 +102,8 @@ async function loginCustomer() {
   });
   const body = await r.json();
   assert.equal(r.status, 200, `customer login failed: ${JSON.stringify(body)}`);
-  return body.token;
+  _customerToken = body.token;
+  return _customerToken;
 }
 
 describe('authentication', () => {
@@ -309,5 +322,155 @@ describe('per-device telemetry keys', () => {
     assert.equal(allowed.status, 200);
     const body = await allowed.json();
     assert.ok(Array.isArray(body.devices));
+  });
+});
+
+describe('password reset flow', () => {
+  test('forgot-password answers identically for known and unknown emails', async () => {
+    const known = await fetch(`${BASE}/api/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: process.env.CUSTOMER_EMAIL || 'customer@example.com' })
+    });
+    const unknown = await fetch(`${BASE}/api/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: `nobody-${Date.now()}@example.com` })
+    });
+    assert.equal(known.status, 200);
+    assert.equal(unknown.status, 200);
+    assert.deepEqual(await known.json(), await unknown.json());
+  });
+
+  test('a valid token resets the password; the token is then dead', async () => {
+    // The raw token normally only exists in the reset email — plant one
+    // directly (same as the route does) so the HTTP flow can be exercised
+    // without a mailbox.
+    const crypto = require('node:crypto');
+    const bcrypt = require('bcrypt');
+    const db = require('../db');
+
+    const email = `reset-test-${Date.now()}@example.com`;
+    const user = await db.createUser({
+      deviceId: `RESET-${Date.now()}`, name: 'Reset Test', email,
+      passwordHash: await bcrypt.hash('OldPass@123', 10), role: 'customer'
+    });
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    await db.setPasswordResetToken(user.id, tokenHash, new Date(Date.now() + 60_000));
+
+    const reset = await fetch(`${BASE}/api/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: rawToken, password: 'NewPass@456' })
+    });
+    assert.equal(reset.status, 200);
+
+    // New password logs in…
+    const login = await fetch(`${BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'NewPass@456' })
+    });
+    assert.equal(login.status, 200);
+
+    // …the old one doesn't, and the token can't be replayed.
+    const oldLogin = await fetch(`${BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'OldPass@123' })
+    });
+    assert.equal(oldLogin.status, 401);
+
+    const replay = await fetch(`${BASE}/api/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: rawToken, password: 'Another@789' })
+    });
+    assert.equal(replay.status, 400);
+  });
+
+  test('an expired token is rejected', async () => {
+    const crypto = require('node:crypto');
+    const bcrypt = require('bcrypt');
+    const db = require('../db');
+
+    const email = `expired-test-${Date.now()}@example.com`;
+    const user = await db.createUser({
+      deviceId: `EXPIRED-${Date.now()}`, name: 'Expired Test', email,
+      passwordHash: await bcrypt.hash('OldPass@123', 10), role: 'customer'
+    });
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    await db.setPasswordResetToken(user.id, tokenHash, new Date(Date.now() - 1000));
+
+    const reset = await fetch(`${BASE}/api/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: rawToken, password: 'NewPass@456' })
+    });
+    assert.equal(reset.status, 400);
+  });
+});
+
+describe('device assignment', () => {
+  test('assignment is admin-only', async () => {
+    const customerToken = await loginCustomer();
+    const r = await fetch(`${BASE}/api/admin/devices/DEMO-001/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${customerToken}` },
+      body: JSON.stringify({ email: 'x@example.com' })
+    });
+    assert.equal(r.status, 403);
+  });
+
+  test('an admin can assign a device to a customer by email, then unassign it', async () => {
+    const bcrypt = require('bcrypt');
+    const db = require('../db');
+    const adminToken = await loginAdmin();
+
+    const email = `assign-test-${Date.now()}@example.com`;
+    const user = await db.createUser({
+      deviceId: `OWNER-${Date.now()}`, name: 'Assign Test', email,
+      passwordHash: await bcrypt.hash('SomePass@123', 10), role: 'customer'
+    });
+    const deviceId = `ASSIGN-${Date.now()}`;
+    await db.provisionDevice(deviceId, 'Assignment test unit');
+
+    const assign = await fetch(`${BASE}/api/admin/devices/${deviceId}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ email })
+    });
+    assert.equal(assign.status, 200);
+    const assigned = await assign.json();
+    assert.equal(assigned.device.user_id, user.id);
+    assert.equal(assigned.owner.email, email);
+
+    // Owner shows up in the fleet list
+    const list = await fetch(`${BASE}/api/admin/devices`, { headers: { Authorization: `Bearer ${adminToken}` } });
+    const { devices } = await list.json();
+    assert.equal(devices.find(d => d.device_id === deviceId)?.owner_email, email);
+
+    // Unassign with email: null
+    const unassign = await fetch(`${BASE}/api/admin/devices/${deviceId}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ email: null })
+    });
+    assert.equal(unassign.status, 200);
+    assert.equal((await unassign.json()).device.user_id, null);
+  });
+
+  test('assigning to an unknown email 404s', async () => {
+    const adminToken = await loginAdmin();
+    const r = await fetch(`${BASE}/api/admin/devices/DEMO-001/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ email: `ghost-${Date.now()}@example.com` })
+    });
+    assert.equal(r.status, 404);
   });
 });

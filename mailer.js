@@ -95,4 +95,40 @@ Your SolGrid account has been created successfully. You can now log in and top u
   }
 }
 
-module.exports = { sendLoginAlert, sendSignupConfirmation, resendConfigured };
+/* Fire-and-forget — the forgot-password endpoint answers identically whether
+   or not the email exists, so a mail failure must never change the response.
+   The raw reset link only ever exists here and in the recipient's inbox. */
+async function sendPasswordReset(toEmail, { name, resetUrl }) {
+  try {
+    const client = getResendClient();
+    if (!client || !toEmail) return false;
+
+    const { error } = await client.emails.send({
+      from:    process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
+      to:      toEmail,
+      subject: 'Reset your SolGrid password',
+      text:
+`Hi ${name || 'there'},
+
+We received a request to reset the password for your SolGrid account.
+
+Reset it here (link valid for 1 hour):
+${resetUrl}
+
+If you didn't request this, you can safely ignore this email — your password is unchanged.
+
+— SolGrid`
+    });
+
+    if (error) {
+      console.warn('[Mailer] Resend rejected password reset email:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Mailer] Failed to send password reset email:', err.message);
+    return false;
+  }
+}
+
+module.exports = { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, resendConfigured };

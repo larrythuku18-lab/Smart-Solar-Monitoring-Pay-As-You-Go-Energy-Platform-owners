@@ -27,7 +27,7 @@ const helmet      = require('helmet');
 const rateLimit   = require('express-rate-limit');
 const compression = require('compression');
 const { body, validationResult } = require('express-validator');
-const { sendLoginAlert, sendSignupConfirmation, resendConfigured } = require('./mailer');
+const { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, resendConfigured } = require('./mailer');
 
 const {
   runMigrations,
@@ -64,6 +64,10 @@ const {
   getLatestEnergy,
   savePrediction,
   getExpiredWalletUsers,
+  setPasswordResetToken,
+  getUserByValidResetToken,
+  completePasswordReset,
+  assignDeviceToUser,
   getUserByEmail,
   createUser,
   seedProducts,
@@ -617,6 +621,61 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
   }
 });
 
+/* POST /api/auth/forgot-password
+   Always answers with the same 200 whether or not the email has an account —
+   responding differently would let anyone probe which emails are registered.
+   The raw token is only ever emailed; the DB stores its SHA-256 hash. */
+app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
+  const { email } = req.body;
+  if (!email || typeof email !== 'string') {
+    return res.status(400).json({ error: 'email is required' });
+  }
+  const genericReply = { message: 'If that email has an account, a reset link has been sent.' };
+
+  try {
+    const user = await getUserByEmail(email);
+    if (user?.email) {
+      const token     = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      await setPasswordResetToken(user.id, tokenHash, new Date(Date.now() + 60 * 60 * 1000));
+
+      /* trust proxy is set (server.js top), so req.protocol/host are correct
+         behind Render's proxy and this builds the right absolute URL in every
+         environment without a config knob. */
+      const resetUrl = `${req.protocol}://${req.get('host')}/reset-password.html?token=${token}`;
+      sendPasswordReset(user.email, { name: user.name, resetUrl })
+        .catch(err => console.error('sendPasswordReset error:', err.message));
+    }
+    res.json(genericReply);
+  } catch (err) {
+    console.error('Forgot password error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Could not process request', message: err.message });
+  }
+});
+
+/* POST /api/auth/reset-password — completes the flow started above. */
+app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
+  const { token, password } = req.body;
+  if (!token || !password) return res.status(400).json({ error: 'token and password are required' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(String(token)).digest('hex');
+    const user = await getUserByValidResetToken(tokenHash);
+    if (!user) {
+      return res.status(400).json({ error: 'Reset link is invalid or has expired — request a new one' });
+    }
+    const passwordHash = await bcrypt.hash(password, 12);
+    await completePasswordReset(user.id, passwordHash);
+    res.json({ message: 'Password updated — you can now sign in' });
+  } catch (err) {
+    console.error('Reset password error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Could not reset password', message: err.message });
+  }
+});
+
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     const user = await getUserById(req.user.id);
@@ -984,6 +1043,36 @@ app.post('/api/admin/devices', authMiddleware, [
     console.error('Device provisioning error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to provision device', message: err.message });
+  }
+});
+
+/* Link a device to a customer account, or unlink it — admin-only.
+   Body: { email } to assign to that user, { email: null } (or omitted) to
+   unassign. Closes the gap where devices.user_id could only be set by hand
+   in SQL, which made onboarding a real installation a developer task. */
+app.post('/api/admin/devices/:deviceId/assign', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  try {
+    const device = await getDevice(req.params.deviceId);
+    if (!device) return res.status(404).json({ error: 'Device not found' });
+
+    let userId = null;
+    let owner  = null;
+    if (req.body.email) {
+      const user = await getUserByEmail(req.body.email);
+      if (!user) return res.status(404).json({ error: 'No account with that email' });
+      userId = user.id;
+      owner  = { id: user.id, email: user.email, name: user.name };
+    }
+
+    const updated = await assignDeviceToUser(req.params.deviceId, userId);
+    res.json({ device: updated, owner });
+  } catch (err) {
+    console.error('Device assignment error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to assign device', message: err.message });
   }
 });
 

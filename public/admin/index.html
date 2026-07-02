@@ -502,6 +502,7 @@
             <tr>
               <th>Device ID</th>
               <th>Name</th>
+              <th>Owner</th>
               <th>Status</th>
               <th>Last Seen</th>
               <th>API Key</th>
@@ -509,7 +510,7 @@
             </tr>
           </thead>
           <tbody id="device-fleet-body">
-            <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">Loading devices…</td></tr>
+            <tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading devices…</td></tr>
           </tbody>
         </table>
       </div>
@@ -779,7 +780,7 @@
     const tbody = document.getElementById('device-fleet-body');
     if (!tbody) return;
     if (!devices || !devices.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No devices provisioned yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">No devices provisioned yet</td></tr>';
       return;
     }
     tbody.innerHTML = devices.map(d => {
@@ -788,21 +789,33 @@
       // derived separately from last_seen recency (see isDeviceOnline in db.js).
       const statusClass = d.is_active === false ? 'badge-red' : (d.online ? 'badge-green' : 'badge-amber');
       const statusText = d.is_active === false ? 'inactive' : (d.online ? 'online' : 'offline');
+      const owner = d.owner_email
+        ? `${escapeHtml(d.owner_name || '')}${d.owner_name ? '<br>' : ''}<span style="color:var(--muted)">${escapeHtml(d.owner_email)}</span>`
+        : '<span style="color:var(--muted)">unassigned</span>';
       return `
       <tr>
         <td class="tx-device">${id}</td>
         <td style="font-size:11px;color:var(--sub)">${escapeHtml(d.name) || '—'}</td>
+        <td style="font-size:10px">${owner}</td>
         <td><span class="badge ${statusClass}" style="font-size:9px">${escapeHtml(statusText)}</span></td>
         <td style="font-size:10px;color:var(--muted)">${fmtDate(d.last_seen)}</td>
         <td style="font-family:monospace;font-size:10px;color:var(--muted)">${escapeHtml(maskKey(d.api_key))}</td>
-        <td><button type="button" class="device-rotate-btn" data-device-id="${id}"
+        <td style="white-space:nowrap">
+          <button type="button" class="device-assign-btn" data-device-id="${id}" data-owner="${escapeHtml(d.owner_email || '')}"
+              style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--green);font-size:10px;padding:4px 9px;cursor:pointer;font-family:inherit;margin-right:4px">
+              ${d.owner_email ? 'Reassign' : 'Assign'}</button>
+          <button type="button" class="device-rotate-btn" data-device-id="${id}"
               style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--amber);font-size:10px;padding:4px 9px;cursor:pointer;font-family:inherit">
-              Rotate Key</button></td>
+              Rotate Key</button>
+        </td>
       </tr>`;
     }).join('');
 
     tbody.querySelectorAll('.device-rotate-btn').forEach(btn => {
       btn.addEventListener('click', () => rotateDeviceKey(btn.dataset.deviceId, btn));
+    });
+    tbody.querySelectorAll('.device-assign-btn').forEach(btn => {
+      btn.addEventListener('click', () => assignDevice(btn.dataset.deviceId, btn.dataset.owner, btn));
     });
   }
 
@@ -862,6 +875,42 @@
       throw new Error(data?.errors?.[0]?.msg || data?.message || data?.error || `Request failed (${res.status})`);
     }
     return data.device;
+  }
+
+  /* Link a device to a customer account by email. window.prompt keeps it
+     dependency-free, same UX weight as the confirm() used for key rotation:
+     enter an email to assign, clear the field to unassign, Cancel to abort. */
+  async function assignDevice(deviceId, currentOwner, triggerBtn) {
+    if (!deviceId) return;
+    const email = window.prompt(
+      `Assign "${deviceId}" to which customer?\n\nEnter the customer's account email` +
+      (currentOwner ? `, clear the field to unassign (currently: ${currentOwner})` : '') +
+      `, or Cancel.`,
+      currentOwner || ''
+    );
+    if (email === null) return; // cancelled
+
+    if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Saving…'; }
+    try {
+      const res = await fetch(`${API}/admin/devices/${encodeURIComponent(deviceId)}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ email: email.trim() || null })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || data?.error || `Request failed (${res.status})`);
+      showDeviceAddResult(
+        data.owner
+          ? `<strong>${escapeHtml(deviceId)}</strong> assigned to ${escapeHtml(data.owner.email)}.`
+          : `<strong>${escapeHtml(deviceId)}</strong> unassigned.`,
+        false
+      );
+      await loadDeviceFleet();
+    } catch (e) {
+      showDeviceAddResult(`Failed to assign device: ${escapeHtml(e.message)}`, true);
+    } finally {
+      if (triggerBtn) { triggerBtn.disabled = false; }
+    }
   }
 
   async function rotateDeviceKey(deviceId, triggerBtn) {
