@@ -71,6 +71,10 @@ async function runMigrations() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS email         VARCHAR(255) UNIQUE;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS role          VARCHAR(20) NOT NULL DEFAULT 'customer';
+    -- Password reset: only the SHA-256 hash of the emailed token is stored,
+    -- so a database leak doesn't hand out working reset links.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_hash    VARCHAR(64);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ;
 
     -- ── Devices ────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS devices (
@@ -246,34 +250,57 @@ async function seedDemoData() {
     phone: '+254722222222', walletBalance: 75, relayUnlocked: true
   });
 
-  /* ── Seed device + readings only if DEMO-001 doesn't exist yet ── */
-  const { rows } = await q("SELECT id FROM users WHERE device_id = 'DEMO-001'");
+  /* ── Demo fleet across regions (idempotent — never clobbers real rows).
+     Gives the fleet panel a realistic multi-region mix: Nairobi, Kisumu
+     and Mombasa, with DEMO-004 running a failing battery (exercises the
+     low-battery flag) and DEMO-005 deliberately inactive/offline. The
+     ON CONFLICT branch only fills location where it's still NULL, so an
+     admin-set region always wins. */
+  const demoFleet = [
+    ['DEMO-001', 'Demo Solar Kit',   'Nairobi, Kenya', true],
+    ['DEMO-002', 'Kibera Homes Kit', 'Nairobi, Kenya', true],
+    ['DEMO-003', 'Lakeside Kit A',   'Kisumu, Kenya',  true],
+    ['DEMO-004', 'Lakeside Kit B',   'Kisumu, Kenya',  true],
+    ['DEMO-005', 'Coast Depot Unit', 'Mombasa, Kenya', false]
+  ];
+  for (const [id, name, location, active] of demoFleet) {
+    await q(
+      `INSERT INTO devices (device_id, name, location, status, is_active, relay_state)
+       VALUES ($1,$2,$3,'active',$4,'on')
+       ON CONFLICT (device_id) DO UPDATE
+         SET location = COALESCE(devices.location, EXCLUDED.location)`,
+      [id, name, location, active]
+    );
+  }
+  // Link the demo device to the demo customer so the Owner column isn't empty
+  await q(
+    `UPDATE devices d SET user_id = u.id
+     FROM users u
+     WHERE d.device_id = 'DEMO-001' AND u.device_id = 'DEMO-001' AND d.user_id IS NULL`
+  );
+
+  /* ── Seed readings only on a fresh database ── */
+  const { rows } = await q('SELECT id FROM energy_readings LIMIT 1');
   if (rows.length > 0) return;
 
-  const { rows: [user] } = await q(
-    `INSERT INTO users (device_id, pin, phone, wallet_balance, relay_unlocked)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    ['DEMO-001', '1234', '254712345678', 50, true]
-  );
-
-  await q(
-    `INSERT INTO devices (device_id, user_id, name, device_ip, relay_state, status, location)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    ['DEMO-001', user.id, 'Demo Solar Kit', '192.168.1.100', 'on', 'active', 'Nairobi, Kenya']
-  );
-
+  // Users and devices are already upserted above — a fresh database only
+  // needs an hour of starter readings per simulated device so the fleet
+  // panel and charts have data before the live simulator's first tick.
+  const starterBattery = { 'DEMO-001': 70, 'DEMO-002': 80, 'DEMO-003': 58, 'DEMO-004': 14 };
   const now = Date.now();
-  for (let i = 12; i >= 0; i--) {
-    const ts = new Date(now - i * 5 * 60_000);
-    const hour = ts.getHours();
-    const seasonal = Math.sin(((hour - 6) * Math.PI) / 12) * 80 + 150;
-    const gen = Math.max(0, seasonal + Math.random() * 30);
-    await q(
-      `INSERT INTO energy_readings
-         (device_id, generation_watts, consumption_watts, battery_level, voltage, current_amps, power_output, recorded_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      ['DEMO-001', gen, 120 + Math.random() * 20, 70 + Math.random() * 10, 48, 10, gen * 0.95, ts]
-    );
+  for (const [deviceId, batt] of Object.entries(starterBattery)) {
+    for (let i = 12; i >= 0; i--) {
+      const ts = new Date(now - i * 5 * 60_000);
+      const hour = ts.getHours();
+      const seasonal = Math.sin(((hour - 6) * Math.PI) / 12) * 80 + 150;
+      const gen = Math.max(0, seasonal + Math.random() * 30);
+      await q(
+        `INSERT INTO energy_readings
+           (device_id, generation_watts, consumption_watts, battery_level, voltage, current_amps, power_output, recorded_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [deviceId, gen, 120 + Math.random() * 20, batt + Math.random() * 6 - 3, 48, 10, gen * 0.95, ts]
+      );
+    }
   }
 
   console.log('[DB] Demo data seeded  (deviceId: DEMO-001  pin: 1234)');
@@ -381,6 +408,33 @@ async function setWalletBalance(userId, balance) {
   await q('UPDATE users SET wallet_balance = $1 WHERE id = $2', [balance, userId]);
 }
 
+/* ── Password reset ──────────────────────────────────────────────────────
+   The raw token goes to the user by email; only its SHA-256 hash is stored.
+   A new request overwrites any previous token (old links stop working). */
+async function setPasswordResetToken(userId, tokenHash, expiresAt) {
+  await q(
+    'UPDATE users SET reset_token_hash = $1, reset_token_expires = $2 WHERE id = $3',
+    [tokenHash, expiresAt, userId]
+  );
+}
+
+async function getUserByValidResetToken(tokenHash) {
+  const { rows } = await q(
+    'SELECT * FROM users WHERE reset_token_hash = $1 AND reset_token_expires > NOW()',
+    [tokenHash]
+  );
+  return rows[0] ?? null;
+}
+
+async function completePasswordReset(userId, passwordHash) {
+  await q(
+    `UPDATE users
+     SET password_hash = $1, reset_token_hash = NULL, reset_token_expires = NULL
+     WHERE id = $2`,
+    [passwordHash, userId]
+  );
+}
+
 async function getExpiredWalletUsers() {
   const { rows } = await q(`
     SELECT u.*, d.device_id AS linked_device_id, d.device_ip
@@ -411,7 +465,7 @@ async function upsertDeviceHeartbeat({ deviceId, ip, name }) {
     `INSERT INTO devices (device_id, device_ip, name, status, is_active, relay_state, last_seen)
      VALUES ($1,$2,$3,'active',TRUE,'on',NOW())
      ON CONFLICT (device_id) DO UPDATE
-       SET device_ip = EXCLUDED.device_ip,
+       SET device_ip = COALESCE(EXCLUDED.device_ip, devices.device_ip),
            status    = 'active',
            is_active = TRUE,
            last_seen = NOW()`,
@@ -450,8 +504,33 @@ async function setRelayState(deviceId, state) {
 }
 
 async function getAllDevices() {
-  const { rows } = await q('SELECT * FROM devices ORDER BY created_at DESC');
+  // Owner columns feed the admin fleet panel's Owner column; the LATERAL
+  // join pulls each device's most recent battery reading so the fleet view
+  // can flag low-battery units without N+1 queries.
+  const { rows } = await q(
+    `SELECT d.*, u.email AS owner_email, u.name AS owner_name,
+            e.battery_level, e.recorded_at AS battery_at
+     FROM devices d
+     LEFT JOIN users u ON u.id = d.user_id
+     LEFT JOIN LATERAL (
+       SELECT battery_level, recorded_at
+       FROM energy_readings er
+       WHERE er.device_id = d.device_id
+       ORDER BY er.recorded_at DESC
+       LIMIT 1
+     ) e ON TRUE
+     ORDER BY d.created_at DESC`
+  );
   return rows.map(d => ({ ...d, online: isDeviceOnline(d.last_seen) }));
+}
+
+/** Link a device to a customer account (or unlink with userId = null). */
+async function assignDeviceToUser(deviceId, userId) {
+  const { rows } = await q(
+    'UPDATE devices SET user_id = $1 WHERE device_id = $2 RETURNING *',
+    [userId, deviceId]
+  );
+  return rows[0] ?? null;
 }
 
 /**
@@ -459,18 +538,28 @@ async function getAllDevices() {
  * device row if it doesn't exist yet (admin pre-provisioning a unit before
  * it's ever powered on), or rotates the key if it's already provisioned.
  */
-async function provisionDevice(deviceId, name) {
+async function provisionDevice(deviceId, name, location) {
   const apiKey = crypto.randomBytes(24).toString('hex');
   const { rows } = await q(
-    `INSERT INTO devices (device_id, name, api_key, status, is_active, relay_state)
-     VALUES ($1, $2, $3, 'active', TRUE, 'on')
+    `INSERT INTO devices (device_id, name, api_key, status, is_active, relay_state, location)
+     VALUES ($1, $2, $3, 'active', TRUE, 'on', $4)
      ON CONFLICT (device_id) DO UPDATE
-       SET api_key = EXCLUDED.api_key,
-           name    = COALESCE(EXCLUDED.name, devices.name)
+       SET api_key  = EXCLUDED.api_key,
+           name     = COALESCE(EXCLUDED.name, devices.name),
+           location = COALESCE(EXCLUDED.location, devices.location)
      RETURNING *`,
-    [deviceId, name || deviceId, apiKey]
+    [deviceId, name || deviceId, apiKey, location || null]
   );
   return rows[0];
+}
+
+/** Set/replace the region (location) shown for a device on the fleet panel. */
+async function setDeviceLocation(deviceId, location) {
+  const { rows } = await q(
+    'UPDATE devices SET location = $1 WHERE device_id = $2 RETURNING *',
+    [location || null, deviceId]
+  );
+  return rows[0] ?? null;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -953,6 +1042,9 @@ module.exports = {
   updateWallet,
   setWalletBalance,
   getExpiredWalletUsers,
+  setPasswordResetToken,
+  getUserByValidResetToken,
+  completePasswordReset,
   /* devices */
   getDevice,
   getDeviceByUserId,
@@ -960,6 +1052,8 @@ module.exports = {
   setRelayState,
   upsertDeviceHeartbeat,
   provisionDevice,
+  assignDeviceToUser,
+  setDeviceLocation,
   /* energy */
   insertEnergyReading,
   getLatestEnergy,

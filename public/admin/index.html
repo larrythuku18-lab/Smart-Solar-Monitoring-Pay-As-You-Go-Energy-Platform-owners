@@ -485,15 +485,18 @@
         <span class="badge badge-teal" style="font-size:9px">Provisioning</span>
       </div>
       <form id="device-add-form" style="display:flex;gap:8px;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--border)">
-        <input id="device-add-id" type="text" placeholder="Device ID (e.g. SOLAR-014)" required
+        <input id="device-add-id" type="text" placeholder="Device ID (e.g. SOLAR-014)" aria-label="Device ID" required
           style="flex:1;min-width:160px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
-        <input id="device-add-name" type="text" placeholder="Name (optional)"
+        <input id="device-add-name" type="text" placeholder="Name (optional)" aria-label="Device name"
+          style="flex:1;min-width:160px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
+        <input id="device-add-location" type="text" placeholder="Region (e.g. Kisumu, Kenya)" aria-label="Device region"
           style="flex:1;min-width:160px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
         <button type="submit" id="device-add-btn"
           style="background:var(--teal);color:#04231f;border:none;border-radius:8px;padding:7px 16px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">
           + Provision Device
         </button>
       </form>
+      <div id="fleet-summary" style="display:none;gap:8px;flex-wrap:wrap;padding:10px 18px;border-bottom:1px solid var(--border);font-size:10px"></div>
       <div id="device-add-result" style="display:none;padding:12px 18px;border-bottom:1px solid var(--border);font-size:11px"></div>
       <div id="device-fleet-error" style="display:none;padding:12px 18px;border-bottom:1px solid var(--border);font-size:11px;color:var(--red)"></div>
       <div class="tx-table-wrap">
@@ -502,6 +505,8 @@
             <tr>
               <th>Device ID</th>
               <th>Name</th>
+              <th>Owner</th>
+              <th>Battery</th>
               <th>Status</th>
               <th>Last Seen</th>
               <th>API Key</th>
@@ -509,7 +514,7 @@
             </tr>
           </thead>
           <tbody id="device-fleet-body">
-            <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">Loading devices…</td></tr>
+            <tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted)">Loading devices…</td></tr>
           </tbody>
         </table>
       </div>
@@ -767,6 +772,27 @@
     return key.length > 8 ? `${key.slice(0, 4)}••••${key.slice(-4)}` : '••••••••';
   }
 
+  /* Below this a unit can't reliably power an evening's load; the firmware's
+     hard cutoff is 10% (CRITICAL_BATTERY_PCT), so 20% is the "act now"
+     warning band shown to operators. */
+  const LOW_BATTERY_PCT = 20;
+
+  function isLowBattery(d) {
+    return d.battery_level !== null && d.battery_level !== undefined
+      && Number(d.battery_level) < LOW_BATTERY_PCT;
+  }
+
+  function fmtBattery(d) {
+    if (d.battery_level === null || d.battery_level === undefined) {
+      return '<span style="color:var(--muted)">—</span>';
+    }
+    const pct = Math.round(Number(d.battery_level));
+    const color = pct < LOW_BATTERY_PCT ? 'var(--red)' : (pct < 50 ? 'var(--amber)' : 'var(--green)');
+    const lowBadge = pct < LOW_BATTERY_PCT
+      ? ' <span class="badge badge-red" style="font-size:9px">LOW</span>' : '';
+    return `<span style="color:${color};font-weight:700">${pct}%</span>${lowBadge}`;
+  }
+
   function showDeviceFleetError(message) {
     const el = document.getElementById('device-fleet-error');
     if (!el) return;
@@ -779,30 +805,78 @@
     const tbody = document.getElementById('device-fleet-body');
     if (!tbody) return;
     if (!devices || !devices.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No devices provisioned yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted)">No devices provisioned yet</td></tr>';
       return;
     }
-    tbody.innerHTML = devices.map(d => {
+
+    const deviceRow = d => {
       const id = escapeHtml(d.device_id || d.deviceId || '—');
       // is_active reflects an admin enable/disable flag; online/offline is
       // derived separately from last_seen recency (see isDeviceOnline in db.js).
       const statusClass = d.is_active === false ? 'badge-red' : (d.online ? 'badge-green' : 'badge-amber');
       const statusText = d.is_active === false ? 'inactive' : (d.online ? 'online' : 'offline');
+      const owner = d.owner_email
+        ? `${escapeHtml(d.owner_name || '')}${d.owner_name ? '<br>' : ''}<span style="color:var(--muted)">${escapeHtml(d.owner_email)}</span>`
+        : '<span style="color:var(--muted)">unassigned</span>';
       return `
       <tr>
         <td class="tx-device">${id}</td>
         <td style="font-size:11px;color:var(--sub)">${escapeHtml(d.name) || '—'}</td>
+        <td style="font-size:10px">${owner}</td>
+        <td style="font-size:11px">${fmtBattery(d)}</td>
         <td><span class="badge ${statusClass}" style="font-size:9px">${escapeHtml(statusText)}</span></td>
         <td style="font-size:10px;color:var(--muted)">${fmtDate(d.last_seen)}</td>
         <td style="font-family:monospace;font-size:10px;color:var(--muted)">${escapeHtml(maskKey(d.api_key))}</td>
-        <td><button type="button" class="device-rotate-btn" data-device-id="${id}"
+        <td style="white-space:nowrap">
+          <button type="button" class="device-assign-btn" data-device-id="${id}" data-owner="${escapeHtml(d.owner_email || '')}"
+              style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--green);font-size:10px;padding:4px 9px;cursor:pointer;font-family:inherit;margin-right:4px">
+              ${d.owner_email ? 'Reassign' : 'Assign'}</button>
+          <button type="button" class="device-region-btn" data-device-id="${id}" data-region="${escapeHtml((d.location || '').trim())}"
+              style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--sub);font-size:10px;padding:4px 9px;cursor:pointer;font-family:inherit;margin-right:4px">
+              Region</button>
+          <button type="button" class="device-rotate-btn" data-device-id="${id}"
               style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--amber);font-size:10px;padding:4px 9px;cursor:pointer;font-family:inherit">
-              Rotate Key</button></td>
+              Rotate Key</button>
+        </td>
       </tr>`;
+    };
+
+    /* One console, grouped by region: devices bucket under their location
+       (blank → "Unassigned region", sorted last), each group headed by a
+       count strip — N devices · online · offline · low battery. */
+    const groups = new Map();
+    for (const d of devices) {
+      const region = (d.location || '').trim() || 'Unassigned region';
+      if (!groups.has(region)) groups.set(region, []);
+      groups.get(region).push(d);
+    }
+    const regions = [...groups.keys()].sort((a, b) =>
+      a === 'Unassigned region' ? 1 : b === 'Unassigned region' ? -1 : a.localeCompare(b));
+
+    tbody.innerHTML = regions.map(region => {
+      const list   = groups.get(region);
+      const online = list.filter(d => d.online).length;
+      const low    = list.filter(isLowBattery).length;
+      const lowStr = low ? ` · <span style="color:var(--red);font-weight:700">${low} low battery</span>` : '';
+      return `
+      <tr style="background:rgba(255,255,255,.03)">
+        <td colspan="8" style="padding:8px 12px;font-size:10px;letter-spacing:.05em;text-transform:uppercase;font-weight:700;color:var(--sub)">
+          ${escapeHtml(region)}
+          <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">
+            · ${list.length} device${list.length !== 1 ? 's' : ''} · ${online} online · ${list.length - online} offline${lowStr}
+          </span>
+        </td>
+      </tr>` + list.map(deviceRow).join('');
     }).join('');
 
     tbody.querySelectorAll('.device-rotate-btn').forEach(btn => {
       btn.addEventListener('click', () => rotateDeviceKey(btn.dataset.deviceId, btn));
+    });
+    tbody.querySelectorAll('.device-assign-btn').forEach(btn => {
+      btn.addEventListener('click', () => assignDevice(btn.dataset.deviceId, btn.dataset.owner, btn));
+    });
+    tbody.querySelectorAll('.device-region-btn').forEach(btn => {
+      btn.addEventListener('click', () => setDeviceRegion(btn.dataset.deviceId, btn.dataset.region, btn));
     });
   }
 
@@ -816,9 +890,23 @@
   function updateDeviceFleetStats(devices) {
     const total = devices.length;
     const offline = devices.filter(d => !d.online).length;
-    window.__deviceFleetStats = { total, online: total - offline, offline };
+    const lowBattery = devices.filter(isLowBattery).length;
+    window.__deviceFleetStats = { total, online: total - offline, offline, lowBattery };
     setText('kpi-offline', fmtCount(offline));
     setText('overview-active-devices', fmtCount(total - offline));
+
+    const summary = document.getElementById('fleet-summary');
+    if (summary) {
+      const chip = (label, value, color) =>
+        `<span style="border:1px solid var(--border);border-radius:999px;padding:3px 10px;color:${color}">
+           <strong>${value}</strong> ${label}</span>`;
+      summary.style.display = 'flex';
+      summary.innerHTML =
+        chip('devices', total, 'var(--sub)') +
+        chip('online', total - offline, 'var(--green)') +
+        chip('offline', offline, 'var(--amber)') +
+        chip('low battery', lowBattery, lowBattery ? 'var(--red)' : 'var(--muted)');
+    }
   }
 
   async function loadDeviceFleet() {
@@ -851,17 +939,83 @@
     el.innerHTML = message;
   }
 
-  async function provisionDevice(deviceId, name) {
+  async function provisionDevice(deviceId, name, location) {
     const res = await fetch(`${API}/admin/devices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ deviceId, name: name || undefined })
+      body: JSON.stringify({ deviceId, name: name || undefined, location: location || undefined })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(data?.errors?.[0]?.msg || data?.message || data?.error || `Request failed (${res.status})`);
     }
     return data.device;
+  }
+
+  /* Link a device to a customer account by email. window.prompt keeps it
+     dependency-free, same UX weight as the confirm() used for key rotation:
+     enter an email to assign, clear the field to unassign, Cancel to abort. */
+  async function assignDevice(deviceId, currentOwner, triggerBtn) {
+    if (!deviceId) return;
+    const email = window.prompt(
+      `Assign "${deviceId}" to which customer?\n\nEnter the customer's account email` +
+      (currentOwner ? `, clear the field to unassign (currently: ${currentOwner})` : '') +
+      `, or Cancel.`,
+      currentOwner || ''
+    );
+    if (email === null) return; // cancelled
+
+    if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Saving…'; }
+    try {
+      const res = await fetch(`${API}/admin/devices/${encodeURIComponent(deviceId)}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ email: email.trim() || null })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || data?.error || `Request failed (${res.status})`);
+      showDeviceAddResult(
+        data.owner
+          ? `<strong>${escapeHtml(deviceId)}</strong> assigned to ${escapeHtml(data.owner.email)}.`
+          : `<strong>${escapeHtml(deviceId)}</strong> unassigned.`,
+        false
+      );
+      await loadDeviceFleet();
+    } catch (e) {
+      showDeviceAddResult(`Failed to assign device: ${escapeHtml(e.message)}`, true);
+    } finally {
+      if (triggerBtn) { triggerBtn.disabled = false; }
+    }
+  }
+
+  /* Move a device to a (new) region — drives the fleet panel's grouping. */
+  async function setDeviceRegion(deviceId, currentRegion, triggerBtn) {
+    if (!deviceId) return;
+    const location = window.prompt(
+      `Region for "${deviceId}" (e.g. Nairobi, Kenya).\nClear the field to mark it unassigned, or Cancel.`,
+      currentRegion || ''
+    );
+    if (location === null) return; // cancelled
+
+    if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Saving…'; }
+    try {
+      const res = await fetch(`${API}/admin/devices/${encodeURIComponent(deviceId)}/location`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ location: location.trim() || null })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || data?.error || `Request failed (${res.status})`);
+      showDeviceAddResult(
+        `<strong>${escapeHtml(deviceId)}</strong> region set to ${escapeHtml(data.device?.location || 'unassigned')}.`,
+        false
+      );
+      await loadDeviceFleet();
+    } catch (e) {
+      showDeviceAddResult(`Failed to set region: ${escapeHtml(e.message)}`, true);
+    } finally {
+      if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = 'Region'; }
+    }
   }
 
   async function rotateDeviceKey(deviceId, triggerBtn) {
@@ -892,6 +1046,7 @@
     ev.preventDefault();
     const idInput = document.getElementById('device-add-id');
     const nameInput = document.getElementById('device-add-name');
+    const locationInput = document.getElementById('device-add-location');
     const btn = document.getElementById('device-add-btn');
     const deviceId = idInput.value.trim();
     if (!deviceId) return;
@@ -899,7 +1054,7 @@
     btn.disabled = true;
     btn.textContent = 'Provisioning…';
     try {
-      const device = await provisionDevice(deviceId, nameInput.value.trim());
+      const device = await provisionDevice(deviceId, nameInput.value.trim(), locationInput.value.trim());
       showDeviceAddResult(
         `Provisioned <strong>${escapeHtml(device.device_id)}</strong>. API key (copy now — shown only once, flash it into the device firmware):<br>` +
         `<code style="display:inline-block;margin-top:4px;background:rgba(255,255,255,.06);padding:4px 8px;border-radius:6px;font-size:11px">${escapeHtml(device.api_key)}</code>`,
@@ -907,6 +1062,7 @@
       );
       idInput.value = '';
       nameInput.value = '';
+      locationInput.value = '';
       await loadDeviceFleet();
     } catch (e) {
       showDeviceAddResult(`Failed to provision device: ${escapeHtml(e.message)}`, true);
