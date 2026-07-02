@@ -32,9 +32,7 @@ services:
       - POSTGRES_PASSWORD=solarpayg_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # No init script — the app creates/migrates the schema itself on boot
-      # (runMigrations in db.js). The old ./schema.sql mount seeded a stale,
-      # incompatible schema that collided with those migrations.
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
     ports:
       - "5432:5432"
     restart: unless-stopped

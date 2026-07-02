@@ -449,6 +449,7 @@ solar-paygo-platform/
 ├── firmware/
 │   └── esp32-firmware.ino  # Arduino sketch for ESP32 solar controller
 │
+├── schema.sql              # Reference PostgreSQL schema (extended version)
 ├── docker-compose.yml      # Full stack: Node + PostgreSQL + Redis + MQTT
 ├── Dockerfile              # Production container image
 ├── package.json
