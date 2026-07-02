@@ -2,7 +2,7 @@
  * server.js — SolGrid Express API
  *
  * Storage layer: PostgreSQL via ./db.js (all helpers are async).
- * AI layer:      TensorFlow.js models in ./ai-models.js
+ * AI layer:      statistical models (regression/heuristics) in ./ai-models.js
  * Payments:      M-Pesa STK Push via Safaricom Daraja API (or simulation mode)
  */
 
@@ -1424,6 +1424,13 @@ process.on('unhandledRejection', async (reason) => {
     await Sentry.flush(2000).catch(() => {});
   }
   process.exit(1);
+});
+
+/* JSON 404 for unknown API routes — without this, Express's default HTML
+   "Cannot GET /api/..." page leaks into clients that expect JSON. Static
+   pages and assets are unaffected (they're matched earlier). */
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Not found', path: req.originalUrl });
 });
 
 /* Global error handler — never leak stack traces to clients */
