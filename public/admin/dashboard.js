@@ -154,7 +154,17 @@ const buildVoltageCurrentData = (labels, voltage, current) => ({
    state instead of falling back to fabricated numbers. */
 const fetchEnergyTabData = async (deviceId = 'DEMO-001') => {
   try {
-    const [hourly, daily] = await Promise.all([fetch(`/api/energy/hourly?deviceId=${deviceId}&hours=24`).then(r => r.ok ? r.json() : null), fetch(`/api/energy/daily?deviceId=${deviceId}&days=7`).then(r => r.ok ? r.json() : null)]);
+    // /api/energy/* requires a logged-in session — same token the
+    // credit-score fetch below already sends.
+    const token = localStorage.getItem('authToken');
+    const headers = token ? {
+      Authorization: `Bearer ${token}`
+    } : {};
+    const [hourly, daily] = await Promise.all([fetch(`/api/energy/hourly?deviceId=${deviceId}&hours=24`, {
+      headers
+    }).then(r => r.ok ? r.json() : null), fetch(`/api/energy/daily?deviceId=${deviceId}&days=7`, {
+      headers
+    }).then(r => r.ok ? r.json() : null)]);
     return {
       hourly,
       daily

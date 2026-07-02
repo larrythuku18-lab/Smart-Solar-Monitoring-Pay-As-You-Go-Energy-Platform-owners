@@ -555,12 +555,19 @@ function renderTransactionCounts() {
 
 // ===== STATE FETCH =====
 
+// /api/state (and other admin endpoints) require this page's JWT —
+// attach it to every API fetch from this dashboard.
+function authHeaders() {
+  const token = localStorage.getItem('authToken');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 // Fetch with timeout helper
 function fetchWithTimeout(url, timeout) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
-  
-  return fetch(url, { signal: controller.signal })
+
+  return fetch(url, { signal: controller.signal, headers: authHeaders() })
     .then(response => {
       clearTimeout(timeoutId);
       return response.ok ? response.json() : null;
@@ -590,7 +597,7 @@ async function fetchState() {
     const timeout = setTimeout(() => controller.abort(), CRITICAL_TIMEOUT);
     
     try {
-      const response = await fetch(`${API_BASE}/state`, { signal: controller.signal });
+      const response = await fetch(`${API_BASE}/state`, { signal: controller.signal, headers: authHeaders() });
       clearTimeout(timeout);
       
       if (response.ok) {

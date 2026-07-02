@@ -487,15 +487,18 @@
   function fillCreds(set) {
     const id  = document.getElementById('identifier');
     const pw  = document.getElementById('password');
+    /* '(set by operator)' is a display hint, not a password — leave the
+       field alone so the user types the real one. */
+    const fillPw = v => { if (!v.startsWith('(')) pw.value = v; };
     if (set === 'admin') {
       id.value = CREDS.admin[0].val;
-      pw.value = CREDS.admin[1].val; // NOSONAR
+      fillPw(CREDS.admin[1].val); // NOSONAR
     } else if (set === 'customer-email') {
       id.value = CREDS.customer[0].val;
-      pw.value = CREDS.customer[1].val; // NOSONAR
+      fillPw(CREDS.customer[1].val); // NOSONAR
     } else if (set === 'customer-device') {
       id.value = CREDS.customer[2].val;
-      pw.value = CREDS.customer[3].val; // NOSONAR
+      fillPw(CREDS.customer[3].val); // NOSONAR
     }
   }
 
@@ -866,6 +869,11 @@
       const data = await res.json();
       if (data.adminEmail)    CREDS.admin[0].val    = data.adminEmail;
       if (data.customerEmail) CREDS.customer[0].val = data.customerEmail;
+      /* If the operator overrode a demo password via env, the hardcoded
+         default shown here would be wrong — display a hint instead. The
+         real value is never exposed. */
+      if (data.adminPasswordIsDefault === false)    CREDS.admin[1].val    = '(set by operator)';
+      if (data.customerPasswordIsDefault === false) CREDS.customer[1].val = '(set by operator)';
     } catch (e) { /* keep hardcoded defaults if this fails */ }
     renderDemoBox(activeRole);
   }
