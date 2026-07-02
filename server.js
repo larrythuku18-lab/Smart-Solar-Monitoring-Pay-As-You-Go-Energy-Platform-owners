@@ -1241,7 +1241,7 @@ app.get('/api/analytics/summary', authMiddleware, async (req, res) => {
 
 // Wallet expiry check — runs every 15 minutes
 cron.schedule('*/15 * * * *', async () => {
-  console.log('⏰ Running wallet expiry check…');
+  console.log('[CRON] Running wallet expiry check…');
   try {
     const expiredUsers = await getExpiredWalletUsers();
     for (const user of expiredUsers) {

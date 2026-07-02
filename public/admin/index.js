@@ -399,19 +399,19 @@ function renderDashboardMetrics() {
 }
 
 function getSolarImpactLabel(multiplier) {
-  if (multiplier >= 0.9) return '☀️ Excellent';
-  if (multiplier >= 0.75) return '🌤️ Good';
-  if (multiplier >= 0.5) return '⛅ Moderate';
-  if (multiplier >= 0.25) return '☁️ Poor';
-  return '🌧️ Very Poor';
+  if (multiplier >= 0.9) return 'Excellent';
+  if (multiplier >= 0.75) return 'Good';
+  if (multiplier >= 0.5) return 'Moderate';
+  if (multiplier >= 0.25) return 'Poor';
+  return 'Very Poor';
 }
 
 function getSolarImpactMessage(multiplier) {
-  if (multiplier >= 0.9) return '☀️ Excellent solar conditions — peak generation expected';
-  if (multiplier >= 0.75) return '🌤️ Good solar conditions — strong generation';
-  if (multiplier >= 0.5) return '⛅ Moderate solar conditions — decent generation';
-  if (multiplier >= 0.25) return '☁️ Poor solar conditions — reduced generation';
-  return '🌧️ Very poor conditions — minimal generation';
+  if (multiplier >= 0.9) return 'Excellent solar conditions — peak generation expected';
+  if (multiplier >= 0.75) return 'Good solar conditions — strong generation';
+  if (multiplier >= 0.5) return 'Moderate solar conditions — decent generation';
+  if (multiplier >= 0.25) return 'Poor solar conditions — reduced generation';
+  return 'Very poor conditions — minimal generation';
 }
 
 function renderRainDrops(isRainy) {
@@ -480,7 +480,7 @@ function renderForecast() {
     return `
       <div class="fc-cell ${surplus ? 'surplus' : 'deficit'}">
         <div class="fc-time">+${f.hour || '?'}h</div>
-        <div class="fc-icon">${surplus ? '✅' : '⚠️'}</div>
+        <div class="fc-icon">${surplus ? '▲' : '▼'}</div>
         <div class="fc-gen">${genValue}W</div>
         <div class="fc-cons" style="color:var(--red)">${consValue}W</div>
       </div>
@@ -493,9 +493,9 @@ function renderForecast() {
   if (elements.aiReco) {
     const topSurplus = state.forecast.find(f => f.surplus || (f.predictedGeneration > f.consumption));
     if (topSurplus) {
-      elements.aiReco.textContent = `💡 Peak generation at +${topSurplus.hour}h — optimal time to charge batteries`;
+      elements.aiReco.textContent = `Peak generation at +${topSurplus.hour}h — optimal time to charge batteries`;
     } else {
-      elements.aiReco.textContent = '⚡ Load shifting recommended across all hours';
+      elements.aiReco.textContent = 'Load shifting recommended across all hours';
     }
   }
 }
@@ -504,16 +504,16 @@ function renderMaintenanceAlerts() {
   if (!elements.alertList) return;
   
   if (!state.maintenanceAlerts || state.maintenanceAlerts.length === 0) {
-    elements.alertList.innerHTML = '<div style="padding:16px;color:var(--green);font-size:11px">✅ All systems nominal</div>';
+    elements.alertList.innerHTML = '<div style="padding:16px;color:var(--green);font-size:11px">✓ All systems nominal</div>';
     if (elements.badgeAlerts) elements.badgeAlerts.textContent = '0 Alerts';
     return;
   }
   
   const html = state.maintenanceAlerts.slice(0, 5).map(alert => {
         const icons = {
-          high: '🔴',
-          medium: '🟠',
-          low: '🟡'
+          high: '<span style="color:#ef4444">●</span>',
+          medium: '<span style="color:#f59e0b">●</span>',
+          low: '<span style="color:#eab308">●</span>'
         };
         let bgColor;
         let borderColor;

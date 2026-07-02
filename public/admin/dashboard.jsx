@@ -657,10 +657,10 @@ const SolarDashboard = () => {
   const card = 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm p-5';
 
   const tabs = [
-    { id: 'energy',     label: 'Energy',      emoji: '⚡' },
-    { id: 'financial',  label: 'Financial',   emoji: '💳' },
-    { id: 'ai',         label: 'AI Insights', emoji: '🤖' },
-    { id: 'operations', label: 'Operations',  emoji: '🏢' }
+    { id: 'energy',     label: 'Energy' },
+    { id: 'financial',  label: 'Financial' },
+    { id: 'ai',         label: 'AI Insights' },
+    { id: 'operations', label: 'Operations' }
   ];
 
   const mkRef = (key) => (c) => { if (c) chartRefs.current[key] = c.chartInstance || c; };
@@ -760,16 +760,15 @@ const SolarDashboard = () => {
         {/* ── KPI Strip ── */}
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
           {[
-            { title: 'Devices Online',    value: globalStats.devicesOnline.toLocaleString(), icon: '📡', accent: 'text-emerald-600 dark:text-emerald-400' },
-            { title: "Today's Revenue",   value: formatKES(globalStats.todayRevenue),        icon: '💰', accent: 'text-blue-600 dark:text-blue-400'    },
-            { title: 'Active Customers',  value: globalStats.activeCustomers.toLocaleString(), icon: '👥', accent: 'text-violet-600 dark:text-violet-400' }
+            { title: 'Devices Online',    value: globalStats.devicesOnline.toLocaleString(), accent: 'text-emerald-600 dark:text-emerald-400' },
+            { title: "Today's Revenue",   value: formatKES(globalStats.todayRevenue),        accent: 'text-blue-600 dark:text-blue-400'    },
+            { title: 'Active Customers',  value: globalStats.activeCustomers.toLocaleString(), accent: 'text-violet-600 dark:text-violet-400' }
           ].map(m => (
             <div key={m.title} className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm flex items-center justify-between gap-4">
               <div>
                 <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">{m.title}</p>
                 <p className={`mt-2 text-2xl font-bold ${m.accent}`}>{m.value}</p>
               </div>
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-xl">{m.icon}</div>
             </div>
           ))}
         </div>
@@ -787,7 +786,7 @@ const SolarDashboard = () => {
                   : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400 hover:text-amber-600 dark:hover:text-amber-400'
               ].join(' ')}
             >
-              {tab.emoji} {tab.label}
+              {tab.label}
             </button>
           ))}
         </div>
