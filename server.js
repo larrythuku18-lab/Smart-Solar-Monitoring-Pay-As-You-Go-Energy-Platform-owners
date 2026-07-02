@@ -344,6 +344,18 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', mpesa: mpesaConfigured() ? 'live' : 'simulation' });
 });
 
+/* Render cold-start mitigation / uptime probe. Kept separate from /health
+   (which render.yaml and the Dockerfile HEALTHCHECK already probe) so
+   external uptime pingers have a stable, documented target. */
+app.get('/healthz', (req, res) => {
+  res.status(200).json({
+    status:        'ok',
+    uptimeSeconds: Math.round(process.uptime()),
+    startedAt:     new Date(Date.now() - process.uptime() * 1000).toISOString(),
+    mpesa:         mpesaConfigured() ? 'live' : 'simulation'
+  });
+});
+
 /* Lets the static login page show the actual configured demo emails instead
    of hardcoded defaults — ADMIN_EMAIL/CUSTOMER_EMAIL can be overridden per
    environment (see seedDemoData), and login.html has no way to read env vars
