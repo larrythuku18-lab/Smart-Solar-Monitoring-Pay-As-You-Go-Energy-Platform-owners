@@ -347,12 +347,16 @@ app.get('/health', (req, res) => {
 /* Lets the static login page show the actual configured demo emails instead
    of hardcoded defaults — ADMIN_EMAIL/CUSTOMER_EMAIL can be overridden per
    environment (see seedDemoData), and login.html has no way to read env vars
-   on its own since it's served as a static file. Passwords/PIN are always
-   the fixed defaults regardless, so only emails need to be reported here. */
+   on its own since it's served as a static file. Passwords can be overridden
+   too (ADMIN_PASSWORD/CUSTOMER_PASSWORD) — never expose those values, but do
+   tell the login page whether the well-known defaults still apply so it
+   doesn't display a password that stopped working. */
 app.get('/api/demo-credentials', (req, res) => {
   res.json({
     adminEmail:    process.env.ADMIN_EMAIL    || 'admin@solarpayg.com',
-    customerEmail: process.env.CUSTOMER_EMAIL || 'customer@example.com'
+    customerEmail: process.env.CUSTOMER_EMAIL || 'customer@example.com',
+    adminPasswordIsDefault:    !process.env.ADMIN_PASSWORD,
+    customerPasswordIsDefault: !process.env.CUSTOMER_PASSWORD
   });
 });
 
