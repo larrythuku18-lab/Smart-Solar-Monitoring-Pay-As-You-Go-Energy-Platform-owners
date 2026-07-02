@@ -551,7 +551,7 @@ const GaugeChart = ({ value, label, color = '#10b981' }) => {
 ══════════════════════════════════════════════════════════════ */
 
 /* Summary KPI card */
-const SummaryCard = ({ label, value, sub, icon, color, trend }) => {
+const SummaryCard = ({ label, value, sub, color, trend }) => {
   const palette = {
     amber:  { border: 'rgba(245,158,11,0.28)',  text: '#f59e0b', glow: 'rgba(245,158,11,0.06)' },
     green:  { border: 'rgba(16,185,129,0.28)',  text: '#10b981', glow: 'rgba(16,185,129,0.06)' },
@@ -579,7 +579,7 @@ const SummaryCard = ({ label, value, sub, icon, color, trend }) => {
       }} />
       <div className="flex items-start justify-between gap-2 mb-2">
         <p className="text-xs text-slate-400 uppercase tracking-widest font-medium leading-tight">{label}</p>
-        <span className="text-xl flex-shrink-0">{icon}</span>
+        <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 mt-1" style={{ background: p.text }} />
       </div>
       <p className="text-xl font-bold truncate" style={{ color: p.text }}>{value}</p>
       {sub && <p className="text-xs text-slate-500 mt-1 truncate">{sub}</p>}
@@ -639,16 +639,16 @@ const ChartCard = ({ title, subtitle, badge, badgeColor, h = '288px', children, 
 /* Insight / alert banner */
 const InsightBanner = ({ type, message, detail }) => {
   const s = {
-    warning: { bg: 'rgba(245,158,11,0.07)', bd: 'rgba(245,158,11,0.25)', tc: '#f59e0b', icon: '⚠️' },
-    danger:  { bg: 'rgba(239,68,68,0.07)',  bd: 'rgba(239,68,68,0.25)',  tc: '#ef4444', icon: '🔴' },
-    success: { bg: 'rgba(16,185,129,0.07)', bd: 'rgba(16,185,129,0.25)', tc: '#10b981', icon: '✅' },
-    info:    { bg: 'rgba(59,130,246,0.07)', bd: 'rgba(59,130,246,0.25)', tc: '#60a5fa', icon: '💡' }
-  }[type] || { bg: 'rgba(59,130,246,0.07)', bd: 'rgba(59,130,246,0.25)', tc: '#60a5fa', icon: '💡' };
+    warning: { bg: 'rgba(245,158,11,0.07)', bd: 'rgba(245,158,11,0.25)', tc: '#f59e0b', icon: '!' },
+    danger:  { bg: 'rgba(239,68,68,0.07)',  bd: 'rgba(239,68,68,0.25)',  tc: '#ef4444', icon: '!' },
+    success: { bg: 'rgba(16,185,129,0.07)', bd: 'rgba(16,185,129,0.25)', tc: '#10b981', icon: '✓' },
+    info:    { bg: 'rgba(59,130,246,0.07)', bd: 'rgba(59,130,246,0.25)', tc: '#60a5fa', icon: 'i' }
+  }[type] || { bg: 'rgba(59,130,246,0.07)', bd: 'rgba(59,130,246,0.25)', tc: '#60a5fa', icon: 'i' };
 
   return (
     <div style={{ background: s.bg, borderColor: s.bd, borderWidth: 1, borderStyle: 'solid', borderRadius: 12 }}
          className="p-3.5 flex gap-3">
-      <span className="text-base flex-shrink-0 mt-0.5">{s.icon}</span>
+      <span className="text-base flex-shrink-0 mt-0.5 font-bold" style={{ color: s.tc }}>{s.icon}</span>
       <div>
         <p className="text-sm font-semibold" style={{ color: s.tc }}>{message}</p>
         {detail && <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{detail}</p>}
@@ -673,7 +673,7 @@ const Spinner = () => (
 /* Empty state */
 const EmptyState = ({ message = 'No data available' }) => (
   <div className="flex flex-col items-center justify-center h-full gap-2 text-slate-600">
-    <span className="text-3xl">📊</span>
+    <span className="text-3xl text-slate-700">—</span>
     <p className="text-sm">{message}</p>
   </div>
 );
@@ -906,11 +906,11 @@ const AnalyticsDashboard = () => {
 
   /* ── Tab definitions ── */
   const tabs = [
-    { id: 'energy',   label: 'Energy',   emoji: '⚡' },
-    { id: 'solar',    label: 'Solar',    emoji: '☀️' },
-    { id: 'battery',  label: 'Battery',  emoji: '🔋' },
-    { id: 'payments', label: 'Payments', emoji: '💳' },
-    { id: 'insights', label: 'Insights', emoji: '💡' }
+    { id: 'energy',   label: 'Energy' },
+    { id: 'solar',    label: 'Solar' },
+    { id: 'battery',  label: 'Battery' },
+    { id: 'payments', label: 'Payments' },
+    { id: 'insights', label: 'Insights' }
   ];
 
   /* ── Render ── */
@@ -964,20 +964,19 @@ const AnalyticsDashboard = () => {
           gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
           gap: 12, marginBottom: 28
         }}>
-          <SummaryCard label="Power Now"       value={`${currentPower}W`}      sub="Current draw"      icon="⚡" color="blue"   trend={-2.1} />
-          <SummaryCard label="Daily Usage"     value={`${dailyUsage} kWh`}    sub="Since midnight"    icon="📊" color="teal"   trend={1.8}  />
-          <SummaryCard label="Monthly Usage"   value={`${totalMonthly} kWh`}  sub="This month"        icon="📅" color="indigo" trend={3.2}  />
-          <SummaryCard label="Total Revenue"   value={totalRevenue}            sub="M-Pesa collected"  icon="💰" color="green"  trend={5.4}  />
-          <SummaryCard label="Wallet Balance"  value={walletBalance}           sub="Remaining credit"  icon="💳" color="amber"  trend={-8.2} />
+          <SummaryCard label="Power Now"       value={`${currentPower}W`}      sub="Current draw" color="blue"   trend={-2.1} />
+          <SummaryCard label="Daily Usage"     value={`${dailyUsage} kWh`}    sub="Since midnight" color="teal"   trend={1.8}  />
+          <SummaryCard label="Monthly Usage"   value={`${totalMonthly} kWh`}  sub="This month" color="indigo" trend={3.2}  />
+          <SummaryCard label="Total Revenue"   value={totalRevenue}            sub="M-Pesa collected" color="green"  trend={5.4}  />
+          <SummaryCard label="Wallet Balance"  value={walletBalance}           sub="Remaining credit" color="amber"  trend={-8.2} />
           <SummaryCard
             label="Battery"
             value={`${batteryLevel}%`}
             sub={batteryLevel > 50 ? 'Healthy' : batteryLevel > 20 ? 'Low' : 'Critical'}
-            icon="🔋"
             color={batteryLevel > 50 ? 'green' : batteryLevel > 20 ? 'amber' : 'red'}
             trend={2.1}
           />
-          <SummaryCard label="Solar Today"     value={`${solarToday} kWh`}    sub="Generated"         icon="☀️" color="amber"  trend={4.7}  />
+          <SummaryCard label="Solar Today"     value={`${solarToday} kWh`}    sub="Generated" color="amber"  trend={4.7}  />
         </div>
 
         {/* ══ TAB NAVIGATION ══ */}
@@ -996,7 +995,7 @@ const AnalyticsDashboard = () => {
               onMouseOver={e => { if (activeTab !== tab.id) { e.currentTarget.style.color = '#f59e0b'; e.currentTarget.style.borderColor = 'rgba(245,158,11,0.4)'; } }}
               onMouseOut={e  => { if (activeTab !== tab.id) { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.borderColor = 'rgba(148,163,184,0.12)'; } }}
             >
-              {tab.emoji} {tab.label}
+              {tab.label}
             </button>
           ))}
         </div>
@@ -1240,17 +1239,16 @@ const AnalyticsDashboard = () => {
             {/* Revenue summary strip */}
             <div className="lg:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
-                { label: 'Total Revenue',   value: totalRevenue,                                icon: '💰', color: '#10b981' },
-                { label: 'Completed',       value: (payStats?.completed ?? payStats?.success ?? 642).toLocaleString(), icon: '✅', color: '#3b82f6' },
-                { label: 'Pending',         value: (payStats?.pending  ?? 38).toLocaleString(),  icon: '⏳', color: '#f59e0b' },
-                { label: 'Failed',          value: (payStats?.failed   ?? 12).toLocaleString(),  icon: '❌', color: '#ef4444' }
+                { label: 'Total Revenue',   value: totalRevenue,                                color: '#10b981' },
+                { label: 'Completed',       value: (payStats?.completed ?? payStats?.success ?? 642).toLocaleString(), icon: '●', color: '#3b82f6' },
+                { label: 'Pending',         value: (payStats?.pending  ?? 38).toLocaleString(),  color: '#f59e0b' },
+                { label: 'Failed',          value: (payStats?.failed   ?? 12).toLocaleString(),  color: '#ef4444' }
               ].map(item => (
                 <div key={item.label}
                      className="analytics-card rounded-2xl border border-slate-800 p-4"
                      style={{ background: 'rgba(13,21,32,0.85)' }}>
                   <p className="text-xs text-slate-500 uppercase tracking-wide">{item.label}</p>
                   <p className="text-xl font-bold mt-2 truncate" style={{ color: item.color }}>{item.value}</p>
-                  <p className="text-lg mt-1">{item.icon}</p>
                 </div>
               ))}
             </div>
@@ -1387,17 +1385,16 @@ const AnalyticsDashboard = () => {
             {/* System health grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {[
-                { label: 'Solar Panels',    status: 'Healthy',  value: 94,          color: '#10b981', icon: '☀️' },
-                { label: 'Battery Bank',    status: batteryLevel > 50 ? 'Good' : batteryLevel > 20 ? 'Low' : 'Critical', value: batteryLevel, color: batteryColor, icon: '🔋' },
-                { label: 'Grid Connection', status: 'Active',   value: 100,         color: '#3b82f6', icon: '🔌' },
-                { label: 'AI Engine',       status: aiInsights?.health === 'operational' ? 'Running' : 'Standby', value: 98, color: '#8b5cf6', icon: '🤖' }
+                { label: 'Solar Panels',    status: 'Healthy',  value: 94,          color: '#10b981' },
+                { label: 'Battery Bank',    status: batteryLevel > 50 ? 'Good' : batteryLevel > 20 ? 'Low' : 'Critical', value: batteryLevel, color: batteryColor },
+                { label: 'Grid Connection', status: 'Active',   value: 100,         color: '#3b82f6' },
+                { label: 'AI Engine',       status: aiInsights?.health === 'operational' ? 'Running' : 'Standby', value: 98, color: '#8b5cf6' }
               ].map(item => (
                 <div key={item.label}
                      className="analytics-card rounded-2xl border border-slate-800 p-4"
                      style={{ background: 'rgba(13,21,32,0.85)' }}>
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-xs text-slate-400 font-medium">{item.label}</p>
-                    <span className="text-xl">{item.icon}</span>
                   </div>
                   <p className="text-sm font-bold" style={{ color: item.color }}>{item.status}</p>
                   <div className="mt-2 h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>

@@ -675,20 +675,16 @@ const SolarDashboard = () => {
   const card = 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm p-5';
   const tabs = [{
     id: 'energy',
-    label: 'Energy',
-    emoji: '⚡'
+    label: 'Energy'
   }, {
     id: 'financial',
-    label: 'Financial',
-    emoji: '💳'
+    label: 'Financial'
   }, {
     id: 'ai',
-    label: 'AI Insights',
-    emoji: '🤖'
+    label: 'AI Insights'
   }, {
     id: 'operations',
-    label: 'Operations',
-    emoji: '🏢'
+    label: 'Operations'
   }];
   const mkRef = key => c => {
     if (c) chartRefs.current[key] = c.chartInstance || c;
@@ -805,17 +801,14 @@ const SolarDashboard = () => {
   }, [{
     title: 'Devices Online',
     value: globalStats.devicesOnline.toLocaleString(),
-    icon: '📡',
     accent: 'text-emerald-600 dark:text-emerald-400'
   }, {
     title: "Today's Revenue",
     value: formatKES(globalStats.todayRevenue),
-    icon: '💰',
     accent: 'text-blue-600 dark:text-blue-400'
   }, {
     title: 'Active Customers',
     value: globalStats.activeCustomers.toLocaleString(),
-    icon: '👥',
     accent: 'text-violet-600 dark:text-violet-400'
   }].map(m => /*#__PURE__*/React.createElement("div", {
     key: m.title,
@@ -824,15 +817,13 @@ const SolarDashboard = () => {
     className: "text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide"
   }, m.title), /*#__PURE__*/React.createElement("p", {
     className: `mt-2 text-2xl font-bold ${m.accent}`
-  }, m.value)), /*#__PURE__*/React.createElement("div", {
-    className: "flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-xl"
-  }, m.icon)))), /*#__PURE__*/React.createElement("div", {
+  }, m.value))))), /*#__PURE__*/React.createElement("div", {
     className: "mt-8 flex gap-2 flex-wrap"
   }, tabs.map(tab => /*#__PURE__*/React.createElement("button", {
     key: tab.id,
     onClick: () => setActiveTab(tab.id),
     className: ['px-5 py-2.5 rounded-full text-sm font-semibold transition-all duration-200', activeTab === tab.id ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30 scale-105' : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400 hover:text-amber-600 dark:hover:text-amber-400'].join(' ')
-  }, tab.emoji, " ", tab.label))), activeTab === 'energy' && /*#__PURE__*/React.createElement("div", {
+  }, tab.label))), activeTab === 'energy' && /*#__PURE__*/React.createElement("div", {
     className: "mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2"
   }, /*#__PURE__*/React.createElement(ChartCard, {
     title: "Solar Generation",

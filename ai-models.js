@@ -465,7 +465,7 @@ function seedFromEnergyReadings(readings) {
         con
       );
     }
-    console.log(`🤖 AI models seeded with ${readings.length} energy readings across ${deviceModels.size} device(s)`);
+    console.log(`[AI] AI models seeded with ${readings.length} energy readings across ${deviceModels.size} device(s)`);
   } catch (err) {
     console.warn('AI energy seed warning:', err.message);
   }
@@ -494,7 +494,7 @@ function seedFromPayments(payments) {
       );
       count++;
     }
-    if (count > 0) console.log(`🤖 Fraud models seeded with ${count} historical payments across ${fraudDetectors.size} user(s)`);
+    if (count > 0) console.log(`[AI] Fraud models seeded with ${count} historical payments across ${fraudDetectors.size} user(s)`);
   } catch (err) {
     console.warn('AI payment seed warning:', err.message);
   }
