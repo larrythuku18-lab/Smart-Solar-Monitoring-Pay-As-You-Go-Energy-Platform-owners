@@ -2,7 +2,7 @@
  * server.js — SolGrid Express API
  *
  * Storage layer: PostgreSQL via ./db.js (all helpers are async).
- * AI layer:      TensorFlow.js models in ./ai-models.js
+ * AI layer:      statistical models (regression/heuristics) in ./ai-models.js
  * Payments:      M-Pesa STK Push via Safaricom Daraja API (or simulation mode)
  */
 
@@ -344,19 +344,43 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', mpesa: mpesaConfigured() ? 'live' : 'simulation' });
 });
 
-/* Lets the static login page show the actual configured demo emails instead
-   of hardcoded defaults — ADMIN_EMAIL/CUSTOMER_EMAIL can be overridden per
-   environment (see seedDemoData), and login.html has no way to read env vars
-   on its own since it's served as a static file. Passwords/PIN are always
-   the fixed defaults regardless, so only emails need to be reported here. */
-app.get('/api/demo-credentials', (req, res) => {
-  res.json({
-    adminEmail:    process.env.ADMIN_EMAIL    || 'admin@solarpayg.com',
-    customerEmail: process.env.CUSTOMER_EMAIL || 'customer@example.com'
+/* Render cold-start mitigation / uptime probe. Kept separate from /health
+   (which render.yaml and the Dockerfile HEALTHCHECK already probe) so
+   external uptime pingers have a stable, documented target. */
+app.get('/healthz', (req, res) => {
+  res.status(200).json({
+    status:        'ok',
+    uptimeSeconds: Math.round(process.uptime()),
+    startedAt:     new Date(Date.now() - process.uptime() * 1000).toISOString(),
+    mpesa:         mpesaConfigured() ? 'live' : 'simulation'
   });
 });
 
-app.get('/api/state', async (req, res) => {
+/* Lets the static login page show the actual configured demo emails instead
+   of hardcoded defaults — ADMIN_EMAIL/CUSTOMER_EMAIL can be overridden per
+   environment (see seedDemoData), and login.html has no way to read env vars
+   on its own since it's served as a static file. Passwords can be overridden
+   too (ADMIN_PASSWORD/CUSTOMER_PASSWORD) — never expose those values, but do
+   tell the login page whether the well-known defaults still apply so it
+   doesn't display a password that stopped working. */
+app.get('/api/demo-credentials', (req, res) => {
+  res.json({
+    adminEmail:    process.env.ADMIN_EMAIL    || 'admin@solarpayg.com',
+    customerEmail: process.env.CUSTOMER_EMAIL || 'customer@example.com',
+    adminPasswordIsDefault:    !process.env.ADMIN_PASSWORD,
+    customerPasswordIsDefault: !process.env.CUSTOMER_PASSWORD
+  });
+});
+
+/* Admin-only — getDashboardState() embeds getPaymentStats() (total_revenue)
+   and the demo customer's wallet balance. Leaving this open would leak the
+   exact aggregates /api/payments/stats was locked down to protect. Its only
+   consumers (admin dashboard index.js, analytics page) run post-login and
+   send the JWT. */
+app.get('/api/state', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
   try {
     const [state, stats] = await Promise.all([getDashboardState(), getPaymentStats()]);
     res.json({ ...state, paymentStats: stats });
@@ -1063,7 +1087,11 @@ app.post('/api/telemetry', apiLimiter, async (req, res) => {
   }
 });
 
-app.get('/api/energy/history', async (req, res) => {
+/* Raw device telemetry for an arbitrary deviceId is customer data on a real
+   fleet — require a logged-in session (any role) on all three energy
+   endpoints. Every consumer (admin dashboard/analytics, customer Energy tab)
+   already runs post-login and sends the JWT. */
+app.get('/api/energy/history', authMiddleware, async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
     const limit    = Math.min(Number.parseInt(req.query.limit, 10) || 48, 200);
@@ -1088,7 +1116,7 @@ app.get('/api/energy/history', async (req, res) => {
 /* Hourly-averaged readings for the last N hours — feeds the Analysis
    Board's Energy tab (solar generation curve, battery state, voltage/
    current), which previously plotted Math.random() instead of real data. */
-app.get('/api/energy/hourly', async (req, res) => {
+app.get('/api/energy/hourly', authMiddleware, async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
     const hours    = Math.min(Number.parseInt(req.query.hours, 10) || 24, 72);
@@ -1111,7 +1139,7 @@ app.get('/api/energy/hourly', async (req, res) => {
 
 /* Daily-averaged generation/consumption for the last N days — feeds the
    Energy tab's "Generation vs Consumption" weekly bar chart. */
-app.get('/api/energy/daily', async (req, res) => {
+app.get('/api/energy/daily', authMiddleware, async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
     const days     = Math.min(Number.parseInt(req.query.days, 10) || 7, 30);
@@ -1408,6 +1436,13 @@ process.on('unhandledRejection', async (reason) => {
     await Sentry.flush(2000).catch(() => {});
   }
   process.exit(1);
+});
+
+/* JSON 404 for unknown API routes — without this, Express's default HTML
+   "Cannot GET /api/..." page leaks into clients that expect JSON. Static
+   pages and assets are unaffected (they're matched earlier). */
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Not found', path: req.originalUrl });
 });
 
 /* Global error handler — never leak stack traces to clients */
