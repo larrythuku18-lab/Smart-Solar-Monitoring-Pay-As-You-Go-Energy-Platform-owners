@@ -248,22 +248,22 @@ curl http://localhost:3000/api/state
 
 ```env
 # ── Database (required) ───────────────────────────────────────────────────
-DATABASE_URL=postgresql://user:password@localhost:5432/solarpayg
+DATABASE_URL=hehehe
 
 # ── Server ───────────────────────────────────────────────────────────────
 PORT=3000
 NODE_ENV=development
 
 # ── Authentication ───────────────────────────────────────────────────────
-JWT_SECRET=change_this_to_a_random_32_char_string
+JWT_SECRET= Nice to meet you
 JWT_EXPIRES_IN=24h
 
 # ── M-Pesa / Safaricom Daraja API ────────────────────────────────────────
 # Leave all blank to run in simulation mode (payments auto-confirm in 3 s)
-MPESA_CONSUMER_KEY=
-MPESA_CONSUMER_SECRET=
+MPESA_CONSUMER_KEY= I am Larry Thuku a Software Developer 
+MPESA_CONSUMER_SECRET= I'll be glad to partner with you
 MPESA_SHORTCODE=174379
-MPESA_PASSKEY=
+MPESA_PASSKEY= I'm here to upgrade from what tyou have with what I have 
 MPESA_CALLBACK_URL=https://yourdomain.com/api/mpesa/callback
 MPESA_ENVIRONMENT=sandbox          # or "production"
 ```
