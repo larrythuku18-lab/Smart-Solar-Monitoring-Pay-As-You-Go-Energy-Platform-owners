@@ -930,7 +930,7 @@ async function loadEnergy() {
   if (!energyHistory) {
     try {
       const deviceId = userInfo.deviceId || 'DEMO-001';
-      const r = await authFetch(`${API}/energy/history?deviceId=${deviceId}&limit=24`);
+      const r = await fetch(`${API}/energy/history?deviceId=${deviceId}&limit=24`);
       if (r.ok) energyHistory = await r.json();
     } catch (e) { /* ignore */ }
   }

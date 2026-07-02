@@ -19,14 +19,7 @@
  * No model weights are written to disk — all state is derived from the DB.
  */
 
-/* In-memory training window per device. Sized so the 48 h DB warm-up
-   (getEnergyHistory48hAllDevices) fits even at the fastest real cadence:
-   the live simulator inserts every 30 s (2,880/day) and ESP32 firmware
-   reports every 5 s. The old value of 288 ("24 h × 12 readings/h") only
-   held ~2.4 h of 30-second data, so models trained on a sliver of the
-   intended window. Plain number arrays — 5,760 points is a few hundred KB
-   across the whole fleet. */
-const MAX_HISTORY = 5760; // 48 h × 120 readings/h (30 s cadence)
+const MAX_HISTORY = 288; // 24 h × 12 readings/h
 
 /* ══════════════════════════════════════════════════════════════════════════
    1. ENERGY FORECASTER  (linear regression) — one instance per device
