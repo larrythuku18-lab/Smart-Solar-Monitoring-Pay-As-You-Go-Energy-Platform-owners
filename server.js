@@ -1071,7 +1071,11 @@ app.post('/api/telemetry', apiLimiter, async (req, res) => {
   }
 });
 
-app.get('/api/energy/history', async (req, res) => {
+/* Raw device telemetry for an arbitrary deviceId is customer data on a real
+   fleet — require a logged-in session (any role) on all three energy
+   endpoints. Every consumer (admin dashboard/analytics, customer Energy tab)
+   already runs post-login and sends the JWT. */
+app.get('/api/energy/history', authMiddleware, async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
     const limit    = Math.min(Number.parseInt(req.query.limit, 10) || 48, 200);
@@ -1096,7 +1100,7 @@ app.get('/api/energy/history', async (req, res) => {
 /* Hourly-averaged readings for the last N hours — feeds the Analysis
    Board's Energy tab (solar generation curve, battery state, voltage/
    current), which previously plotted Math.random() instead of real data. */
-app.get('/api/energy/hourly', async (req, res) => {
+app.get('/api/energy/hourly', authMiddleware, async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
     const hours    = Math.min(Number.parseInt(req.query.hours, 10) || 24, 72);
@@ -1119,7 +1123,7 @@ app.get('/api/energy/hourly', async (req, res) => {
 
 /* Daily-averaged generation/consumption for the last N days — feeds the
    Energy tab's "Generation vs Consumption" weekly bar chart. */
-app.get('/api/energy/daily', async (req, res) => {
+app.get('/api/energy/daily', authMiddleware, async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
     const days     = Math.min(Number.parseInt(req.query.days, 10) || 7, 30);
