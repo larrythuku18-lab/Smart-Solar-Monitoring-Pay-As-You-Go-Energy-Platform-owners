@@ -39,6 +39,7 @@ const {
   getAllDevices,
   upsertDeviceHeartbeat,
   provisionDevice,
+  setDeviceLocation,
   createPayment,
   completePayment,
   getPaymentByCheckoutId,
@@ -1037,12 +1038,29 @@ app.post('/api/admin/devices', authMiddleware, [
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
   try {
-    const device = await provisionDevice(req.body.deviceId, req.body.name);
+    const device = await provisionDevice(req.body.deviceId, req.body.name, req.body.location);
     res.json({ device });
   } catch (err) {
     console.error('Device provisioning error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to provision device', message: err.message });
+  }
+});
+
+/* Set/replace the region shown for a device on the fleet panel — admin-only.
+   Body: { location } ({ location: null } clears it back to "Unassigned"). */
+app.post('/api/admin/devices/:deviceId/location', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  try {
+    const device = await setDeviceLocation(req.params.deviceId, req.body.location);
+    if (!device) return res.status(404).json({ error: 'Device not found' });
+    res.json({ device });
+  } catch (err) {
+    console.error('Device location error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to set device location', message: err.message });
   }
 });
 
@@ -1383,26 +1401,41 @@ cron.schedule('*/5 * * * *', async () => {
   await processRetryQueue().catch(err => console.error('Retry queue error:', err.message));
 });
 
-// Live telemetry simulation (every 30 s) — seeds energy_readings for demo / AI training
+/* Live telemetry simulation (every 30 s) — keeps the demo fleet alive.
+   Each profiled device has its own battery/generation character so the
+   fleet panel shows a realistic mix without hardware: healthy units,
+   DEMO-004 hovering at a failing battery (exercises the low-battery flag).
+   DEMO-005 is deliberately NOT driven — it stays offline/inactive as the
+   fleet view's "problem unit" example. The heartbeat marks driven devices
+   online, mirroring what real firmware posting /api/telemetry would do. */
+const SIM_FLEET = {
+  'DEMO-001': { battBase: 62, battSwing: 28, genScale: 1.0  },
+  'DEMO-002': { battBase: 78, battSwing: 16, genScale: 0.9  },
+  'DEMO-003': { battBase: 55, battSwing: 24, genScale: 1.1  },
+  'DEMO-004': { battBase: 13, battSwing: 6,  genScale: 0.35 }
+};
 setInterval(() => {
-  const hour       = new Date().getHours();
-  const seasonal   = Math.sin(((hour - 6) * Math.PI) / 12) * 80 + 150;
-  const reading = {
-    deviceId:     'DEMO-001',
-    generation:   Math.max(0, Math.round(seasonal + Math.random() * 40 - 20)),
-    consumption:  Math.round(120 + Math.random() * 30),
-    batteryLevel: Math.round(55 + Math.random() * 35),
-    voltage:      Math.round((47 + Math.random() * 4) * 10) / 10,
-    current:      Math.round((8  + Math.random() * 6) * 10) / 10
-  };
-  insertEnergyReading(reading).catch(err => console.error('Energy insert error:', err.message));
+  const hour     = new Date().getHours();
+  const seasonal = Math.sin(((hour - 6) * Math.PI) / 12) * 80 + 150;
+  for (const [deviceId, p] of Object.entries(SIM_FLEET)) {
+    const reading = {
+      deviceId,
+      generation:   Math.max(0, Math.round((seasonal + Math.random() * 40 - 20) * p.genScale)),
+      consumption:  Math.round(120 + Math.random() * 30),
+      batteryLevel: Math.max(3, Math.min(100, Math.round(p.battBase + (Math.random() - 0.5) * p.battSwing))),
+      voltage:      Math.round((47 + Math.random() * 4) * 10) / 10,
+      current:      Math.round((8  + Math.random() * 6) * 10) / 10
+    };
+    insertEnergyReading(reading).catch(err => console.error('Energy insert error:', err.message));
+    upsertDeviceHeartbeat({ deviceId }).catch(err => console.error('Sim heartbeat error:', err.message));
 
-  // Feed the live forecaster/maintenance models too, so they keep retraining
-  // throughout the session instead of only warming up once at startup.
-  safeRecordEnergyReading(
-    reading.deviceId, reading.generation, reading.consumption,
-    reading.voltage, reading.current, reading.batteryLevel
-  );
+    // Feed the live forecaster/maintenance models too, so they keep retraining
+    // throughout the session instead of only warming up once at startup.
+    safeRecordEnergyReading(
+      deviceId, reading.generation, reading.consumption,
+      reading.voltage, reading.current, reading.batteryLevel
+    );
+  }
 }, 30_000);
 
 /* ══════════════════════════════════════════════════════════════════════════

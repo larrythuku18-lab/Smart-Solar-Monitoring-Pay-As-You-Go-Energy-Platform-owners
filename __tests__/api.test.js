@@ -474,3 +474,68 @@ describe('device assignment', () => {
     assert.equal(r.status, 404);
   });
 });
+
+describe('fleet management (regions + battery)', () => {
+  test('provisioning accepts a region and the fleet list carries location + latest battery', async () => {
+    const db = require('../db');
+    const adminToken = await loginAdmin();
+    const deviceId = `FLEET-${Date.now()}`;
+
+    const prov = await fetch(`${BASE}/api/admin/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ deviceId, name: 'Fleet test unit', location: 'Nakuru, Kenya' })
+    });
+    assert.equal(prov.status, 200);
+    assert.equal((await prov.json()).device.location, 'Nakuru, Kenya');
+
+    // Give it a low-battery reading; the fleet list must surface it
+    await db.insertEnergyReading({
+      deviceId, generation: 50, consumption: 90, batteryLevel: 11, voltage: 47.5, current: 6
+    });
+
+    const list = await fetch(`${BASE}/api/admin/devices`, { headers: { Authorization: `Bearer ${adminToken}` } });
+    const { devices } = await list.json();
+    const mine = devices.find(d => d.device_id === deviceId);
+    assert.ok(mine, 'provisioned device missing from fleet list');
+    assert.equal(mine.location, 'Nakuru, Kenya');
+    assert.equal(Math.round(Number(mine.battery_level)), 11);
+    assert.equal(typeof mine.online, 'boolean');
+  });
+
+  test('an admin can move a device between regions and clear the region', async () => {
+    const adminToken = await loginAdmin();
+    const deviceId = `REGION-${Date.now()}`;
+    await fetch(`${BASE}/api/admin/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ deviceId, location: 'Eldoret, Kenya' })
+    });
+
+    const move = await fetch(`${BASE}/api/admin/devices/${deviceId}/location`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ location: 'Kisumu, Kenya' })
+    });
+    assert.equal(move.status, 200);
+    assert.equal((await move.json()).device.location, 'Kisumu, Kenya');
+
+    const clear = await fetch(`${BASE}/api/admin/devices/${deviceId}/location`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ location: null })
+    });
+    assert.equal(clear.status, 200);
+    assert.equal((await clear.json()).device.location, null);
+  });
+
+  test('setting a region is admin-only', async () => {
+    const customerToken = await loginCustomer();
+    const r = await fetch(`${BASE}/api/admin/devices/DEMO-001/location`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${customerToken}` },
+      body: JSON.stringify({ location: 'Hacked, Kenya' })
+    });
+    assert.equal(r.status, 403);
+  });
+});
