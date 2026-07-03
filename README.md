@@ -58,7 +58,7 @@ SolGrid solves two problems at once.
 
 ### For Developers
 - **PostgreSQL persistence** — full schema with auto-migrations on startup; safe to redeploy without data loss
-- **AI model warm-up** — all four TensorFlow.js models reload the last 48 hours of sensor data and payment history on every restart so predictions stay accurate across deployments
+- **AI model warm-up** — all four statistical AI models (regression forecaster, anomaly detection, fraud heuristics, usage optimizer) reload the last 48 hours of sensor data and payment history on every restart so predictions stay accurate across deployments
 - **Async Express API** — all database calls use `pg` connection pooling with `async`/`await`; no blocking the event loop
 - **ESP32 relay control** — HTTP commands to IoT devices with an automatic retry queue (failed commands retried every 5 minutes)
 - **Docker-ready** — `docker-compose.yml` included with PostgreSQL, Redis, and MQTT broker
@@ -479,7 +479,7 @@ All tables are created automatically by `runMigrations()` inside `db.js` on ever
 |---|---|
 | Backend | Node.js 22 · Express 4 |
 | Database | PostgreSQL 15 · `pg` (node-postgres) connection pool |
-| AI / ML | TensorFlow.js 4 · linear regression · rule-based anomaly detection |
+| AI / ML | Statistical models — linear regression · rule-based anomaly detection · payment-velocity heuristics |
 | Payments | Safaricom Daraja API — M-Pesa STK Push |
 | IoT | ESP32 · HTTP relay control · GSM / WiFi |
 | Authentication | JWT (jsonwebtoken) |

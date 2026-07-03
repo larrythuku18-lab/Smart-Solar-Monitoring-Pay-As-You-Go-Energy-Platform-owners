@@ -102,9 +102,22 @@
     });
   }
 
+  /* Site-wide developer credit — appended to every page that carries the
+     nav, so it doesn't need to be duplicated in each HTML file. */
+  function insertCredit() {
+    if (document.getElementById('site-credit')) return;
+    const credit = document.createElement('div');
+    credit.id = 'site-credit';
+    credit.style.cssText =
+      'text-align:center;padding:14px 16px 18px;font-size:11px;color:#64748b;';
+    credit.textContent = 'SolGrid v2.1 · Developed by Larry Thuku';
+    document.body.appendChild(credit);
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initNav);
+    document.addEventListener('DOMContentLoaded', () => { initNav(); insertCredit(); });
   } else {
     initNav();
+    insertCredit();
   }
 }());
