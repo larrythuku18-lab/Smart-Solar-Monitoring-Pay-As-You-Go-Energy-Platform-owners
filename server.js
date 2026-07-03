@@ -396,20 +396,91 @@ app.get('/api/state', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/api/weather', (req, res) => {
-  const hour  = new Date().getHours();
-  const isDay = hour >= 6 && hour < 18;
-  res.json({
-    weather: {
-      condition:       isDay ? 'sunny' : 'night',
-      temperature:     28,
-      humidity:        60,
-      cloudCover:      15,
-      windSpeed:       5,
-      backgroundClass: isDay ? 'weather-sunny' : 'weather-night',
-      solarImpact:     isDay ? 0.95 : 0.1
+/* Real weather via Open-Meteo (free, no API key), cached for 10 minutes so
+   the dashboard's 30s polling never hammers the upstream. Falls back to the
+   old simulated values if the fetch fails, so the demo keeps working offline.
+   Location defaults to Nairobi; override with WEATHER_LAT / WEATHER_LON. */
+const WEATHER_LAT = process.env.WEATHER_LAT || '-1.2864';
+const WEATHER_LON = process.env.WEATHER_LON || '36.8172';
+let _weatherCache   = null;
+let _weatherCacheAt = 0;
+
+/* WMO weather codes → the condition/background vocabulary index.js already
+   renders (sunny/night/cloudy/rainy/thunderstorm; the rain animation
+   triggers on the last two). */
+function describeWmoCode(code, isDay) {
+  if (code >= 95) return { condition: 'thunderstorm', backgroundClass: 'weather-rainy' };
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) {
+    return { condition: 'rainy', backgroundClass: 'weather-rainy' };
+  }
+  if (code === 3 || code === 45 || code === 48 || (code >= 71 && code <= 86)) {
+    return { condition: 'cloudy', backgroundClass: 'weather-cloudy' };
+  }
+  return isDay
+    ? { condition: 'sunny', backgroundClass: 'weather-sunny' }
+    : { condition: 'night', backgroundClass: 'weather-night' };
+}
+
+app.get('/api/weather', async (req, res) => {
+  if (_weatherCache && Date.now() - _weatherCacheAt < 10 * 60_000) {
+    return res.json(_weatherCache);
+  }
+  try {
+    const { data } = await axios.get('https://api.open-meteo.com/v1/forecast', {
+      params: {
+        latitude:  WEATHER_LAT,
+        longitude: WEATHER_LON,
+        current:   'temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,weather_code,is_day'
+      },
+      timeout: 5000
+    });
+    const c     = data.current;
+    const isDay = c.is_day === 1;
+    const cloud = Math.round(c.cloud_cover);
+    let { condition, backgroundClass } = describeWmoCode(c.weather_code, isDay);
+    /* WMO code and cloud-cover % can disagree at the margins ("mainly
+       clear" with 78% cover) — a mostly-covered sky should read cloudy. */
+    if (condition === 'sunny' && cloud >= 70) {
+      condition = 'cloudy';
+      backgroundClass = 'weather-cloudy';
     }
-  });
+    /* Solar impact: full sun ≈ 1.0, cloud cover costs up to 75% of output,
+       night ≈ 0.05 — same scale the simulated version used. */
+    const solarImpact = isDay
+      ? Math.max(0.15, Math.round((1 - (cloud / 100) * 0.75) * 100) / 100)
+      : 0.05;
+
+    _weatherCache = {
+      weather: {
+        condition,
+        temperature: Math.round(c.temperature_2m),
+        humidity:    Math.round(c.relative_humidity_2m),
+        cloudCover:  cloud,
+        windSpeed:   Math.round(c.wind_speed_10m),
+        backgroundClass,
+        solarImpact,
+        source:      'live'
+      }
+    };
+    _weatherCacheAt = Date.now();
+    res.json(_weatherCache);
+  } catch (err) {
+    console.warn('[Weather] live fetch failed, serving simulated values:', err.message);
+    const hour  = new Date().getHours();
+    const isDay = hour >= 6 && hour < 18;
+    res.json({
+      weather: {
+        condition:       isDay ? 'sunny' : 'night',
+        temperature:     28,
+        humidity:        60,
+        cloudCover:      15,
+        windSpeed:       5,
+        backgroundClass: isDay ? 'weather-sunny' : 'weather-night',
+        solarImpact:     isDay ? 0.95 : 0.1,
+        source:          'simulated'
+      }
+    });
+  }
 });
 
 app.get('/api/forecast', async (req, res) => {
