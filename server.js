@@ -432,7 +432,7 @@ app.get('/api/weather', async (req, res) => {
         longitude: WEATHER_LON,
         current:   'temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,weather_code,is_day'
       },
-      timeout: 5000
+      timeout: 8000
     });
     const c     = data.current;
     const isDay = c.is_day === 1;
@@ -468,18 +468,23 @@ app.get('/api/weather', async (req, res) => {
     console.warn('[Weather] live fetch failed, serving simulated values:', err.message);
     const hour  = new Date().getHours();
     const isDay = hour >= 6 && hour < 18;
-    res.json({
-      weather: {
-        condition:       isDay ? 'sunny' : 'night',
-        temperature:     28,
-        humidity:        60,
-        cloudCover:      15,
-        windSpeed:       5,
-        backgroundClass: isDay ? 'weather-sunny' : 'weather-night',
-        solarImpact:     isDay ? 0.95 : 0.1,
-        source:          'simulated'
-      }
-    });
+    const weather = {
+      condition:       isDay ? 'sunny' : 'night',
+      temperature:     28,
+      humidity:        60,
+      cloudCover:      15,
+      windSpeed:       5,
+      backgroundClass: isDay ? 'weather-sunny' : 'weather-night',
+      solarImpact:     isDay ? 0.95 : 0.1,
+      source:          'simulated'
+    };
+    /* Ops aid: ?debug=1 exposes only the upstream error CODE (ETIMEDOUT,
+       ENOTFOUND, HTTP status…) so a failing weather feed can be diagnosed
+       from a browser without shell access to the host. */
+    if (req.query.debug === '1') {
+      weather.upstreamError = String(err.code || err.response?.status || err.message).slice(0, 60);
+    }
+    res.json({ weather });
   }
 });
 
