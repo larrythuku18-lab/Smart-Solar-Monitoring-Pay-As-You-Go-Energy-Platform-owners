@@ -1,0 +1,29 @@
+# Keeps the Render free-tier service from spinning down (it sleeps after
+# ~15 idle minutes, and the next visitor then waits 30-60s for a cold start —
+# unacceptable mid-demo). A ping every 10 minutes holds it warm.
+#
+# Bonus: if the site is down, the scheduled run fails and GitHub emails the
+# repo owner — a free uptime monitor. Note GitHub pauses scheduled workflows
+# after ~60 days without repo activity; any push re-enables them.
+name: Keep demo warm
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /healthz
+        run: |
+          for attempt in 1 2 3; do
+            if curl -sS --max-time 70 https://smart-solar-monitoring-pay-as-you-go.onrender.com/healthz; then
+              exit 0
+            fi
+            echo "attempt $attempt failed; retrying in 20s"
+            sleep 20
+          done
+          echo "Service did not respond after 3 attempts" >&2
+          exit 1
