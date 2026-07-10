@@ -446,10 +446,17 @@ app.get('/api/state', authMiddleware, async (req, res) => {
    the dashboard's 30s polling never hammers the upstream. Falls back to the
    old simulated values if the fetch fails, so the demo keeps working offline.
    Location defaults to Nairobi; override with WEATHER_LAT / WEATHER_LON. */
-const WEATHER_LAT = process.env.WEATHER_LAT || '-1.2864';
-const WEATHER_LON = process.env.WEATHER_LON || '36.8172';
-let _weatherCache   = null;
-let _weatherCacheAt = 0;
+/* A malformed override would make Open-Meteo 400 every call and silently
+   pin the dashboard to simulated weather — validate, don't trust. */
+function coordOr(envValue, fallback) {
+  const n = Number.parseFloat(envValue);
+  return Number.isFinite(n) ? String(n) : fallback;
+}
+const WEATHER_LAT = coordOr(process.env.WEATHER_LAT, '-1.2864');
+const WEATHER_LON = coordOr(process.env.WEATHER_LON, '36.8172');
+let _weatherCache    = null;
+let _weatherCacheAt  = 0;
+let _weatherCacheTtl = 0;
 
 /* WMO weather codes → the condition/background vocabulary index.js already
    renders (sunny/night/cloudy/rainy/thunderstorm; the rain animation
@@ -468,7 +475,9 @@ function describeWmoCode(code, isDay) {
 }
 
 app.get('/api/weather', async (req, res) => {
-  if (_weatherCache && Date.now() - _weatherCacheAt < 10 * 60_000) {
+  /* ?debug=1 always attempts a live upstream fetch, so the ops probe can't
+     be masked by a cached fallback. */
+  if (!req.query.debug && _weatherCache && Date.now() - _weatherCacheAt < _weatherCacheTtl) {
     return res.json(_weatherCache);
   }
   try {
@@ -508,7 +517,8 @@ app.get('/api/weather', async (req, res) => {
         source:      'live'
       }
     };
-    _weatherCacheAt = Date.now();
+    _weatherCacheAt  = Date.now();
+    _weatherCacheTtl = 10 * 60_000;
     res.json(_weatherCache);
   } catch (err) {
     console.warn('[Weather] live fetch failed, serving simulated values:', err.message);
@@ -524,11 +534,22 @@ app.get('/api/weather', async (req, res) => {
       solarImpact:     isDay ? 0.95 : 0.1,
       source:          'simulated'
     };
-    /* Ops aid: ?debug=1 exposes only the upstream error CODE (ETIMEDOUT,
-       ENOTFOUND, HTTP status…) so a failing weather feed can be diagnosed
-       from a browser without shell access to the host. */
+    /* Negative-cache the fallback briefly: the dashboard polls every 30s,
+       and re-hitting a failing upstream twice a minute keeps a rate-limit
+       (429) from ever clearing. */
+    _weatherCache    = { weather };
+    _weatherCacheAt  = Date.now();
+    _weatherCacheTtl = 60_000;
+    /* Ops aid: ?debug=1 exposes only the upstream error code AND HTTP status
+       (e.g. "ERR_BAD_REQUEST/429") so a failing weather feed can be diagnosed
+       from a browser without shell access to the host — the axios code alone
+       can't distinguish a rate-limited shared egress IP (429) from a
+       malformed request (400). Kept out of the cached copy. */
     if (req.query.debug === '1') {
-      weather.upstreamError = String(err.code || err.response?.status || err.message).slice(0, 60);
+      const upstreamError = String(
+        [err.code, err.response?.status].filter(Boolean).join('/') || err.message
+      ).slice(0, 60);
+      return res.json({ weather: { ...weather, upstreamError } });
     }
     res.json({ weather });
   }

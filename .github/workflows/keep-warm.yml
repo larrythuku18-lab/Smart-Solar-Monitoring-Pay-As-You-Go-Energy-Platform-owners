@@ -5,11 +5,27 @@
 # Bonus: if the site is down, the scheduled run fails and GitHub emails the
 # repo owner — a free uptime monitor. Note GitHub pauses scheduled workflows
 # after ~60 days without repo activity; any push re-enables them.
+#
+# QUOTA WARNING — why this only runs during Kenya business hours:
+# this repo is PRIVATE, so every job run bills a 1-minute minimum against
+# the 2,000 free Actions minutes/month. Pinging every 10 min around the
+# clock is ~4,400 min/month — more than double the allowance — and when the
+# quota runs out GitHub blocks ALL workflows: CI, the nightly DB backup,
+# and this ping itself. 06:00-13:59 UTC (9am-4:59pm EAT, when demos happen)
+# is ~1,500 min/month, leaving headroom for CI + backups. Off-hours
+# visitors get a one-off 30-60s cold start; the site still works.
+#
+# The proper fix is a free external pinger (e.g. UptimeRobot or
+# cron-job.org) hitting /healthz every 5-10 min, 24/7, costing no Actions
+# minutes — set one up, then delete this workflow. Also GitHub cron is
+# best-effort and can slip 5-20 min past Render's 15-min sleep threshold,
+# so even in-hours a rare cold start can happen; an external pinger fixes
+# that too.
 name: Keep demo warm
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/10 6-13 * * *'  # 9:00-16:59 EAT (UTC+3)
   workflow_dispatch: {}
 
 jobs:

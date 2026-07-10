@@ -25,10 +25,12 @@ services:
         generateValue: true
       - key: JWT_EXPIRES_IN
         value: 24h
-      - key: DATABASE_URL
-        fromDatabase:
-          name: SolarTracker-db
-          property: connectionString
+      # DATABASE_URL is deliberately NOT declared here. Production has run on
+      # Neon since 2026-07-06 (the free Render Postgres this file used to
+      # declare via fromDatabase expired after 30 days and was deleted); the
+      # Neon direct URL is set by hand in the dashboard's Environment tab.
+      # Re-adding a fromDatabase reference would silently point the app at a
+      # fresh, empty Render database if Blueprint sync were ever activated.
       - key: MPESA_ENVIRONMENT
         value: sandbox
       # Set these manually in the Render dashboard (not tracked here):
@@ -41,8 +43,8 @@ services:
       #   stop the demo being browsed/cloned by anyone who finds the URL)
       # RESEND_API_KEY, RESEND_FROM_EMAIL  (login alerts + signup confirmation)
       # SENTRY_DSN  (error monitoring)
+      # WEATHER_LAT, WEATHER_LON  (dashboard weather location; defaults to Nairobi)
 
-databases:
-  - name: SolarTracker-db
-    databaseName: solartracker_db
-    plan: free
+# No databases: section — the Render free Postgres expired 2026-06 and was
+# deleted; production uses Neon (see DATABASE_URL note above). Declaring one
+# here would create a new empty free-tier DB on Blueprint sync.
