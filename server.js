@@ -442,11 +442,12 @@ app.get('/api/state', authMiddleware, async (req, res) => {
   }
 });
 
-/* Real weather via Open-Meteo (free, no API key), cached for 10 minutes so
-   the dashboard's 30s polling never hammers the upstream. Falls back to the
-   old simulated values if the fetch fails, so the demo keeps working offline.
+/* Real weather, cached for 10 minutes so the dashboard's 30s polling never
+   hammers the upstreams. Tries Open-Meteo first, then MET Norway (both free,
+   no API key), and only then falls back to the old simulated values, so the
+   demo keeps working offline.
    Location defaults to Nairobi; override with WEATHER_LAT / WEATHER_LON. */
-/* A malformed override would make Open-Meteo 400 every call and silently
+/* A malformed override would make the upstreams 400 every call and silently
    pin the dashboard to simulated weather — validate, don't trust. */
 function coordOr(envValue, fallback) {
   const n = Number.parseFloat(envValue);
@@ -474,85 +475,150 @@ function describeWmoCode(code, isDay) {
     : { condition: 'night', backgroundClass: 'weather-night' };
 }
 
+/* met.no symbol codes (clearsky, fair, partlycloudy, cloudy, fog, *rain*,
+   *sleet*, *snow*, *thunder*) → the same vocabulary. partlycloudy/fair fall
+   through to sunny and let the cloud-cover override below decide. */
+function describeMetNoSymbol(sym, isDay) {
+  if (sym.includes('thunder')) return { condition: 'thunderstorm', backgroundClass: 'weather-rainy' };
+  if (sym.includes('rain') || sym.includes('sleet')) {
+    return { condition: 'rainy', backgroundClass: 'weather-rainy' };
+  }
+  if (sym.startsWith('cloudy') || sym.startsWith('fog') || sym.includes('snow')) {
+    return { condition: 'cloudy', backgroundClass: 'weather-cloudy' };
+  }
+  return isDay
+    ? { condition: 'sunny', backgroundClass: 'weather-sunny' }
+    : { condition: 'night', backgroundClass: 'weather-night' };
+}
+
+/* Both fetchers return the same normalized shape:
+   { condition, backgroundClass, isDay, temperature °C, humidity %, cloud %, windKmh } */
+async function fetchOpenMeteo() {
+  const { data } = await axios.get('https://api.open-meteo.com/v1/forecast', {
+    params: {
+      latitude:  WEATHER_LAT,
+      longitude: WEATHER_LON,
+      current:   'temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,weather_code,is_day'
+    },
+    timeout: 8000
+  });
+  const c     = data.current;
+  const isDay = c.is_day === 1;
+  return {
+    ...describeWmoCode(c.weather_code, isDay),
+    isDay,
+    temperature: c.temperature_2m,
+    humidity:    c.relative_humidity_2m,
+    cloud:       c.cloud_cover,
+    windKmh:     c.wind_speed_10m
+  };
+}
+
+/* Fallback upstream: Open-Meteo rate-limits per source IP, and Render's
+   egress IP is shared with other Render customers, so the free allowance
+   can be exhausted (429) through no fault of ours. MET Norway is also
+   free/keyless but requires an identifying User-Agent. */
+async function fetchMetNo() {
+  const { data } = await axios.get('https://api.met.no/weatherapi/locationforecast/2.0/compact', {
+    params:  { lat: WEATHER_LAT, lon: WEATHER_LON },
+    headers: { 'User-Agent': 'SolGrid-solar-paygo-demo/1.0 larrythuku18@gmail.com' },
+    timeout: 8000
+  });
+  const slot = data.properties.timeseries[0];
+  const d    = slot.data.instant.details;
+  const sym  = slot.data.next_1_hours?.summary?.symbol_code
+            || slot.data.next_6_hours?.summary?.symbol_code || '';
+  /* Suffix-less symbols (cloudy, fog) carry no day flag — approximate with
+     the location's clock; WEATHER_LAT/LON default to Nairobi (UTC+3). */
+  const isDay = sym.endsWith('_day') ? true : sym.endsWith('_night') ? false
+    : (() => { const h = (new Date().getUTCHours() + 3) % 24; return h >= 6 && h < 18; })();
+  return {
+    ...describeMetNoSymbol(sym, isDay),
+    isDay,
+    temperature: d.air_temperature,
+    humidity:    d.relative_humidity,
+    cloud:       d.cloud_area_fraction,
+    windKmh:     d.wind_speed * 3.6  /* met.no reports m/s */
+  };
+}
+
 app.get('/api/weather', async (req, res) => {
   /* ?debug=1 always attempts a live upstream fetch, so the ops probe can't
      be masked by a cached fallback. */
   if (!req.query.debug && _weatherCache && Date.now() - _weatherCacheAt < _weatherCacheTtl) {
     return res.json(_weatherCache);
   }
-  try {
-    const { data } = await axios.get('https://api.open-meteo.com/v1/forecast', {
-      params: {
-        latitude:  WEATHER_LAT,
-        longitude: WEATHER_LON,
-        current:   'temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,weather_code,is_day'
-      },
-      timeout: 8000
-    });
-    const c     = data.current;
-    const isDay = c.is_day === 1;
-    const cloud = Math.round(c.cloud_cover);
-    let { condition, backgroundClass } = describeWmoCode(c.weather_code, isDay);
-    /* WMO code and cloud-cover % can disagree at the margins ("mainly
-       clear" with 78% cover) — a mostly-covered sky should read cloudy. */
-    if (condition === 'sunny' && cloud >= 70) {
-      condition = 'cloudy';
-      backgroundClass = 'weather-cloudy';
-    }
-    /* Solar impact: full sun ≈ 1.0, cloud cover costs up to 75% of output,
-       night ≈ 0.05 — same scale the simulated version used. */
-    const solarImpact = isDay
-      ? Math.max(0.15, Math.round((1 - (cloud / 100) * 0.75) * 100) / 100)
-      : 0.05;
-
-    _weatherCache = {
-      weather: {
-        condition,
-        temperature: Math.round(c.temperature_2m),
-        humidity:    Math.round(c.relative_humidity_2m),
-        cloudCover:  cloud,
-        windSpeed:   Math.round(c.wind_speed_10m),
-        backgroundClass,
-        solarImpact,
-        source:      'live'
+  const upstreamErrors = [];
+  for (const [name, fetcher] of [['open-meteo', fetchOpenMeteo], ['met.no', fetchMetNo]]) {
+    try {
+      const w     = await fetcher();
+      const cloud = Math.round(w.cloud);
+      let { condition, backgroundClass } = w;
+      /* Condition and cloud-cover % can disagree at the margins ("mainly
+         clear" with 78% cover) — a mostly-covered sky should read cloudy. */
+      if (condition === 'sunny' && cloud >= 70) {
+        condition = 'cloudy';
+        backgroundClass = 'weather-cloudy';
       }
-    };
-    _weatherCacheAt  = Date.now();
-    _weatherCacheTtl = 10 * 60_000;
-    res.json(_weatherCache);
-  } catch (err) {
-    console.warn('[Weather] live fetch failed, serving simulated values:', err.message);
-    const hour  = new Date().getHours();
-    const isDay = hour >= 6 && hour < 18;
-    const weather = {
-      condition:       isDay ? 'sunny' : 'night',
-      temperature:     28,
-      humidity:        60,
-      cloudCover:      15,
-      windSpeed:       5,
-      backgroundClass: isDay ? 'weather-sunny' : 'weather-night',
-      solarImpact:     isDay ? 0.95 : 0.1,
-      source:          'simulated'
-    };
-    /* Negative-cache the fallback briefly: the dashboard polls every 30s,
-       and re-hitting a failing upstream twice a minute keeps a rate-limit
-       (429) from ever clearing. */
-    _weatherCache    = { weather };
-    _weatherCacheAt  = Date.now();
-    _weatherCacheTtl = 60_000;
-    /* Ops aid: ?debug=1 exposes only the upstream error code AND HTTP status
-       (e.g. "ERR_BAD_REQUEST/429") so a failing weather feed can be diagnosed
-       from a browser without shell access to the host — the axios code alone
-       can't distinguish a rate-limited shared egress IP (429) from a
-       malformed request (400). Kept out of the cached copy. */
-    if (req.query.debug === '1') {
-      const upstreamError = String(
-        [err.code, err.response?.status].filter(Boolean).join('/') || err.message
-      ).slice(0, 60);
-      return res.json({ weather: { ...weather, upstreamError } });
+      /* Solar impact: full sun ≈ 1.0, cloud cover costs up to 75% of output,
+         night ≈ 0.05 — same scale the simulated version used. */
+      const solarImpact = w.isDay
+        ? Math.max(0.15, Math.round((1 - (cloud / 100) * 0.75) * 100) / 100)
+        : 0.05;
+
+      _weatherCache = {
+        weather: {
+          condition,
+          temperature: Math.round(w.temperature),
+          humidity:    Math.round(w.humidity),
+          cloudCover:  cloud,
+          windSpeed:   Math.round(w.windKmh),
+          backgroundClass,
+          solarImpact,
+          source:      'live',
+          upstream:    name
+        }
+      };
+      _weatherCacheAt  = Date.now();
+      _weatherCacheTtl = 10 * 60_000;
+      return res.json(_weatherCache);
+    } catch (err) {
+      const detail = name + ':' + ([err.code, err.response?.status].filter(Boolean).join('/') || err.message);
+      /* Logged even when a later upstream succeeds — a quietly dead primary
+         should be visible in the logs, not discovered months later. */
+      console.warn('[Weather] upstream failed:', detail);
+      upstreamErrors.push(detail);
     }
-    res.json({ weather });
   }
+
+  console.warn('[Weather] all live upstreams failed, serving simulated values:', upstreamErrors.join(' '));
+  const hour  = new Date().getHours();
+  const isDay = hour >= 6 && hour < 18;
+  const weather = {
+    condition:       isDay ? 'sunny' : 'night',
+    temperature:     28,
+    humidity:        60,
+    cloudCover:      15,
+    windSpeed:       5,
+    backgroundClass: isDay ? 'weather-sunny' : 'weather-night',
+    solarImpact:     isDay ? 0.95 : 0.1,
+    source:          'simulated'
+  };
+  /* Negative-cache the fallback briefly: the dashboard polls every 30s,
+     and re-hitting failing upstreams twice a minute keeps a rate-limit
+     (429) from ever clearing. */
+  _weatherCache    = { weather };
+  _weatherCacheAt  = Date.now();
+  _weatherCacheTtl = 60_000;
+  /* Ops aid: ?debug=1 exposes only the upstream error codes AND HTTP
+     statuses (e.g. "open-meteo:ERR_BAD_REQUEST/429 met.no:ETIMEDOUT") so a
+     failing weather feed can be diagnosed from a browser without shell
+     access to the host. Kept out of the cached copy. */
+  if (req.query.debug === '1') {
+    const upstreamError = upstreamErrors.join(' ').slice(0, 120);
+    return res.json({ weather: { ...weather, upstreamError } });
+  }
+  res.json({ weather });
 });
 
 app.get('/api/forecast', async (req, res) => {
