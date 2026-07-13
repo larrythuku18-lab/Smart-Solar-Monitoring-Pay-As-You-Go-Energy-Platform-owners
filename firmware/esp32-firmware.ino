@@ -35,7 +35,16 @@
 // Fallback below is the shared DEVICE_API_KEY env var, used for any device
 // that hasn't been individually provisioned yet — fine to start with, but
 // migrate real deployed units to their own key when you can.
-#define DEVICE_API_KEY "8039c15a9ada7594daf52e43984a52acb1da70816d2788f5"
+// 🔴 SECURITY WARNING — DO NOT HARDCODE A LIVE API KEY HERE.
+// The key below must remain EMPTY in source control. Instead:
+//   1. Admin provisions each device via POST /api/admin/devices (admin-only)
+//      and gets a unique per-device key.
+//   2. Flash that unique key into THIS device's firmware.
+//
+// A shared DEVICE_API_KEY fallback can be set via the server env var as a
+// convenience during development, but migrate every real unit to its own
+// per-device key before field deployment.
+#define DEVICE_API_KEY ""
 #define DEVICE_ID "SOLAR_DEVICE_001"  // Give each physical device a unique ID before flashing
 #define PANEL_TYPE "Monocrystalline_400W"  // Panel configuration
 #define UPDATE_INTERVAL 5000  // Send data every 5 seconds

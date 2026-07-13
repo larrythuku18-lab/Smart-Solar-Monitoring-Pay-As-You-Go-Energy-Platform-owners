@@ -28,6 +28,7 @@ const rateLimit   = require('express-rate-limit');
 const compression = require('compression');
 const { body, validationResult } = require('express-validator');
 const { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, resendConfigured } = require('./mailer');
+const jwt = require('jsonwebtoken');
 
 const {
   runMigrations,
@@ -77,6 +78,25 @@ const {
 } = require('./db');
 
 const { authMiddleware, signToken } = require('./authMiddleware');
+
+/* ── Password strength validation ─────────────────────────────────────────
+   Reused across registration and password reset. Eight+ characters with at
+   least one uppercase, one lowercase, one digit, and one special character.
+   This is checked server-side only; the frontend may have its own rules. */
+function validatePasswordStrength(password) {
+  if (!password || password.length < 8) {
+    return 'Password must be at least 8 characters';
+  }
+  const missing = [];
+  if (!/[A-Z]/.test(password)) missing.push('uppercase letter');
+  if (!/[a-z]/.test(password)) missing.push('lowercase letter');
+  if (!/[0-9]/.test(password)) missing.push('number');
+  if (!/[^A-Za-z0-9]/.test(password)) missing.push('special character');
+  if (missing.length > 0) {
+    return `Password must contain at least one ${missing.join(', ')}`;
+  }
+  return null;
+}
 const { unlockRelay, lockRelay, processRetryQueue } = require('./relay');
 const {
   safeForecast,
@@ -253,9 +273,10 @@ app.use(helmet({
     directives: {
       defaultSrc:  ["'self'"],
       scriptSrc:   ["'self'", "'unsafe-inline'", "'unsafe-eval'",
-                    'https://cdn.tailwindcss.com', 'https://unpkg.com',
-                    'https://cdn.jsdelivr.net', 'https://fonts.googleapis.com'],
-      styleSrc:    ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+                    'https://cdn.tailwindcss.com',
+                    'https://cdn.jsdelivr.net'],
+      styleSrc:    ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com',
+                    'https://fonts.gstatic.com'],
       fontSrc:     ["'self'", 'https://fonts.gstatic.com'],
       imgSrc:      ["'self'", 'data:'],
       connectSrc:  ["'self'"],
@@ -613,8 +634,24 @@ app.get('/api/weather', async (req, res) => {
   /* Ops aid: ?debug=1 exposes only the upstream error codes AND HTTP
      statuses (e.g. "open-meteo:ERR_BAD_REQUEST/429 met.no:ETIMEDOUT") so a
      failing weather feed can be diagnosed from a browser without shell
-     access to the host. Kept out of the cached copy. */
+     access to the host. Kept out of the cached copy.
+     Restricted to authenticated admins — internal infrastructure details
+     (upstream names, error codes) shouldn't leak to unauthenticated clients. */
   if (req.query.debug === '1') {
+    /* Verify JWT inline (the weather route itself is public, but debug mode
+       adds sensitive upstream error details). */
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Authentication required for debug mode' });
+    }
+    try {
+      const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+      if (decoded.role !== 'admin' && decoded.deviceId !== 'ADMIN') {
+        return res.status(403).json({ error: 'Admin access required for debug mode' });
+      }
+    } catch (_err) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
     const upstreamError = upstreamErrors.join(' ').slice(0, 120);
     return res.json({ weather: { ...weather, upstreamError } });
   }
@@ -768,7 +805,17 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
 
     const user = await getUserByDeviceId(lookupId);
-    if (!user || user.pin !== String(lookupPin)) {
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid device ID or PIN' });
+    }
+    /* PIN may be bcrypt-hashed or legacy plaintext — detect by prefix.
+       bcrypt hashes always start with $2a$, $2b$, or $2y$. During the
+       transition period, plaintext PINs still work; after the migration
+       seedDemoData hashes them on the next boot. */
+    const pinMatch = user.pin && (user.pin.startsWith('$2')
+      ? await bcrypt.compare(String(lookupPin), user.pin)
+      : user.pin === String(lookupPin));
+    if (!pinMatch) {
       return res.status(401).json({ error: 'Invalid device ID or PIN' });
     }
 
@@ -804,7 +851,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
   const { name, email, password, phone, deviceId } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
   if (!email || !password) return res.status(400).json({ error: 'email and password are required' });
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const pwError = validatePasswordStrength(password);
+  if (pwError) return res.status(400).json({ error: pwError });
 
   try {
     const existing = await getUserByEmail(email);
@@ -868,7 +916,8 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
 app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) return res.status(400).json({ error: 'token and password are required' });
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const pwError = validatePasswordStrength(password);
+  if (pwError) return res.status(400).json({ error: pwError });
 
   try {
     const tokenHash = crypto.createHash('sha256').update(String(token)).digest('hex');
@@ -1330,6 +1379,9 @@ app.post('/api/admin/admins', authMiddleware, [
   body('email').isEmail().withMessage('a valid email is required'),
   body('password').isLength({ min: 8 }).withMessage('password must be at least 8 characters')
 ], async (req, res) => {
+  /* Password strength is validated inline below (same pattern as registration
+     and password-reset) so the error response format stays consistent — a
+     plain { error: '...' } instead of express-validator's wrapped format. */
   if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
     return res.status(403).json({ error: 'Admin access required' });
   }
@@ -1338,6 +1390,8 @@ app.post('/api/admin/admins', authMiddleware, [
 
   try {
     const { name, email, password, phone } = req.body;
+    const pwError = validatePasswordStrength(password);
+    if (pwError) return res.status(400).json({ error: pwError });
     const existing = await getUserByEmail(email);
     if (existing) return res.status(409).json({ error: 'Email already registered' });
 
@@ -1355,6 +1409,41 @@ app.post('/api/admin/admins', authMiddleware, [
   }
 });
 
+/* Per-device rate limiting for telemetry — each deviceId gets its own
+   budget so one noisy or compromised device can't starve others. Uses a
+   simple in-memory sliding window. Cleaned up periodically to prevent
+   unbounded map growth. */
+const _deviceRateLimits = new Map();
+const DEVICE_RATE_LIMIT    = 20;      // max requests per window per device
+const DEVICE_RATE_WINDOW   = 60_000;  // 1-minute sliding window
+
+function checkDeviceRateLimit(deviceId) {
+  const now = Date.now();
+  let entries = _deviceRateLimits.get(deviceId);
+  if (!entries) {
+    entries = [];
+    _deviceRateLimits.set(deviceId, entries);
+  }
+  /* Prune entries outside the sliding window */
+  while (entries.length > 0 && entries[0] < now - DEVICE_RATE_WINDOW) {
+    entries.shift();
+  }
+  if (entries.length >= DEVICE_RATE_LIMIT) {
+    return false;
+  }
+  entries.push(now);
+  return true;
+}
+
+/* Periodic cleanup of stale rate-limit entries to prevent unbounded Map growth */
+setInterval(() => {
+  const cutoff = Date.now() - DEVICE_RATE_WINDOW;
+  for (const [deviceId, entries] of _deviceRateLimits) {
+    while (entries.length > 0 && entries[0] < cutoff) entries.shift();
+    if (entries.length === 0) _deviceRateLimits.delete(deviceId);
+  }
+}, 300_000);
+
 /* ── Telemetry ingest — called directly by ESP32 firmware ─────────────────
    No JWT here (a device can't easily hold a user session). Auth is by
    X-Device-Key header, checked against (in order):
@@ -1368,15 +1457,33 @@ app.post('/api/admin/admins', authMiddleware, [
    commands TO the device only works if it's reachable on the same network —
    most real deployments (behind a router, or on GSM) are not, so the device
    polls its state via this response instead. ── */
-app.post('/api/telemetry', apiLimiter, async (req, res) => {
+app.post('/api/telemetry', apiLimiter, [
+  body('deviceId').isString().trim().notEmpty().withMessage('deviceId is required and must be a string'),
+  body('voltage').optional().isFloat({ min: 0 }).toFloat(),
+  body('current').optional().isFloat({ min: 0 }).toFloat(),
+  body('generation').optional().isFloat({ min: 0 }).toFloat(),
+  body('battery').optional().isFloat({ min: 0, max: 100 }).toFloat(),
+  body('consumption').optional().isFloat({ min: 0 }).toFloat()
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
   try {
     const { deviceId, voltage, current, generation, battery, consumption } = req.body;
-    if (!deviceId) return res.status(400).json({ error: 'deviceId is required' });
 
     const existingDevice = await getDevice(deviceId);
     const expectedKey = existingDevice?.api_key || process.env.DEVICE_API_KEY;
     if (expectedKey && req.headers['x-device-key'] !== expectedKey) {
       return res.status(401).json({ error: 'Invalid or missing device key' });
+    }
+
+    /* Per-device rate limiting — protects the database and other devices
+       from a single noisy or misconfigured unit. Deliberately AFTER the
+       key check: deviceId is attacker-guessable, and limiting before auth
+       would let an unauthenticated caller spoof a victim's deviceId and
+       burn its budget, starving the legitimate device. */
+    if (!checkDeviceRateLimit(deviceId)) {
+      return res.status(429).json({ error: 'Too many telemetry requests for this device — slow down' });
     }
 
     await upsertDeviceHeartbeat({ deviceId, ip: req.ip });
@@ -1786,4 +1893,7 @@ app.use((err, req, res, _next) => {
   });
 });
 
-module.exports = app;
+/* Nothing requires this module today (production runs `node server.js`
+   directly, and the test suites spawn it as a child process), but export the
+   app plus the per-device rate limiter for any future in-process consumer. */
+module.exports = { app, checkDeviceRateLimit, _deviceRateLimits };

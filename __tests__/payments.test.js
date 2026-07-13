@@ -3,12 +3,13 @@
  * Exercises completePayment/failPayment directly against the real Postgres
  * connection configured in .env — no HTTP server needed.
  */
-const { test, describe, after } = require('node:test');
+const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 
 const {
   pool,
+  runMigrations,
   createUser,
   createPayment,
   completePayment,
@@ -16,6 +17,22 @@ const {
   getPaymentByCheckoutId,
   getUserById
 } = require('../db');
+
+/* Ensure the test database has the latest schema (including widened pin
+   column for bcrypt hashes) before any tests run. Run as part of the first
+   describe block's setup because top-level await is not available in this
+   version of node --test. */
+let _migrated = false;
+
+async function ensureMigrated() {
+  if (_migrated) return;
+  _migrated = true;
+  await runMigrations();
+}
+
+before(async () => {
+  await ensureMigrated();
+});
 
 after(async () => {
   await pool.end();

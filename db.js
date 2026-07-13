@@ -41,6 +41,12 @@ pool.on('error', (err) => {
   console.error('PostgreSQL pool error:', err.message);
 });
 
+if (!isLocal) {
+  console.warn('[SECURITY] Database SSL certificate validation is disabled (rejectUnauthorized: false). '
+    + 'In production, configure proper CA certificates and set rejectUnauthorized: true. '
+    + 'Without this, a MITM attacker on the network path could read or modify all database traffic.');
+}
+
 /** Thin wrapper — always returns the pg Result object. */
 async function q(text, params) {
   return pool.query(text, params);
@@ -75,6 +81,8 @@ async function runMigrations() {
     -- so a database leak doesn't hand out working reset links.
     ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_hash    VARCHAR(64);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ;
+    -- Widen pin column to accommodate bcrypt hashes (was VARCHAR(20), too small for 60-char hashes)
+    ALTER TABLE users ALTER COLUMN pin TYPE VARCHAR(255);
 
     -- ── Devices ────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS devices (
@@ -214,7 +222,10 @@ async function runMigrations() {
 
 /* Upsert a named demo user by device_id, tolerating leftover rows from
  * earlier seed runs that may already hold the target email under a
- * different device_id (which would otherwise violate users_email_key). */
+ * different device_id (which would otherwise violate users_email_key).
+ *
+ * IMPORTANT: `pin` must be a bcrypt hash, not a plaintext value.
+ * See seedDemoData() for the hashing call sites. */
 async function upsertDemoUser({ deviceId, pin, email, passwordHash, role, name, phone, walletBalance, relayUnlocked }) {
   const { rows: byEmail } = await q('SELECT id FROM users WHERE email = $1', [email]);
   const { rows: byDevice } = await q('SELECT id FROM users WHERE device_id = $1', [deviceId]);
@@ -228,6 +239,7 @@ async function upsertDemoUser({ deviceId, pin, email, passwordHash, role, name, 
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      ON CONFLICT (device_id) DO UPDATE
        SET email         = EXCLUDED.email,
+           pin           = EXCLUDED.pin,
            password_hash = EXCLUDED.password_hash,
            role          = EXCLUDED.role`,
     [deviceId, pin, email, passwordHash, role, name, phone, walletBalance, relayUnlocked]
@@ -236,12 +248,26 @@ async function upsertDemoUser({ deviceId, pin, email, passwordHash, role, name, 
 
 /* ── Demo data seed ─────────────────────────────────────────────────────── */
 async function seedDemoData() {
+  /* ── Migrate any existing plaintext PINs to bcrypt hashes ── */
+  const { rows: plainPinUsers } = await q(
+    `SELECT id, pin FROM users WHERE pin IS NOT NULL AND pin !~ '^\\$2'`
+  );
+  for (const u of plainPinUsers) {
+    const hashedPin = await bcrypt.hash(u.pin, 10);
+    await q('UPDATE users SET pin = $1 WHERE id = $2', [hashedPin, u.id]);
+  }
+  if (plainPinUsers.length > 0) {
+    console.log(`[DB] Migrated ${plainPinUsers.length} plaintext PIN(s) to bcrypt hashes`);
+  }
+
   /* ── Always ensure named demo accounts exist (safe to re-run) ── */
   const adminHash    = await bcrypt.hash(process.env.ADMIN_PASSWORD    || 'Admin@12345',    10);
   const customerHash = await bcrypt.hash(process.env.CUSTOMER_PASSWORD || 'Customer@12345', 10);
+  const adminPinHash   = await bcrypt.hash('0000', 10);
+  const customerPinHash = await bcrypt.hash('1234', 10);
 
   await upsertDemoUser({
-    deviceId: 'ADMIN-001', pin: '0000',
+    deviceId: 'ADMIN-001', pin: adminPinHash,
     email: process.env.ADMIN_EMAIL || 'admin@solarpayg.com',
     passwordHash: adminHash, role: 'admin', name: 'System Admin',
     phone: '+254700000000', walletBalance: 0, relayUnlocked: false
@@ -250,7 +276,7 @@ async function seedDemoData() {
   // DEMO-001 is the demo customer's device, so the email/password login
   // and the device-ID/PIN login share the same account.
   await upsertDemoUser({
-    deviceId: 'DEMO-001', pin: '1234',
+    deviceId: 'DEMO-001', pin: customerPinHash,
     email: process.env.CUSTOMER_EMAIL || 'customer@example.com',
     passwordHash: customerHash, role: 'customer', name: 'Demo Customer',
     phone: '+254722222222', walletBalance: 75, relayUnlocked: true
@@ -309,7 +335,7 @@ async function seedDemoData() {
     }
   }
 
-  console.log('[DB] Demo data seeded  (deviceId: DEMO-001  pin: 1234)');
+  console.log('[DB] Demo data seeded  (deviceId: DEMO-001)');
 }
 
 /* ── Product catalogue seed ─────────────────────────────────────────────── */
@@ -389,11 +415,18 @@ async function getUserByEmail(email) {
 }
 
 async function createUser({ deviceId, name, email, passwordHash, phone, pin, role = 'customer' }) {
+  /* Always bcrypt-hash the PIN — callers pass plaintext only. There is
+     deliberately no pass-through for values that already "look like a hash"
+     ($2...): if a caller-controlled string reached storage verbatim, the
+     caller would get to choose the stored digest. (Pre-hashed demo PINs go
+     through upsertDemoUser, which does not call this.) */
+  const finalPin = await bcrypt.hash(String(pin ?? '0000'), 10);
+
   const { rows } = await q(
     `INSERT INTO users (device_id, name, email, password_hash, phone, pin, role)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
-    [deviceId, name || null, email?.toLowerCase() || null, passwordHash || null, phone || null, pin || '0000', role]
+    [deviceId, name || null, email?.toLowerCase() || null, passwordHash || null, phone || null, finalPin, role]
   );
   return rows[0];
 }
