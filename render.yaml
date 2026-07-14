@@ -39,8 +39,6 @@ services:
       # DEVICE_API_KEY
       # ALLOWED_ORIGINS
       # ADMIN_EMAIL, ADMIN_PASSWORD, CUSTOMER_EMAIL  (demo account overrides)
-      # DEMO_GATE_PASSWORD  (site-wide Basic Auth gate over the UI — set this to
-      #   stop the demo being browsed/cloned by anyone who finds the URL)
       # RESEND_API_KEY, RESEND_FROM_EMAIL  (login alerts + signup confirmation)
       # SENTRY_DSN  (error monitoring)
       # WEATHER_LAT, WEATHER_LON  (dashboard weather location; defaults to Nairobi)

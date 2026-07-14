@@ -46,7 +46,6 @@ const {
   getPaymentByCheckoutId,
   failPayment,
   getPaymentStats,
-  getEnergyHistory,
   getEnergyHistoryAsc,
   getEnergyHourly,
   getEnergyDaily,
@@ -350,52 +349,6 @@ app.use(compression());
    request just falls through to whichever mount actually has the file. */
 const publicDir = path.join(__dirname, 'public');
 
-/* ── Demo access gate ──────────────────────────────────────────────────────
-   When DEMO_GATE_PASSWORD is set, every page and static asset (login page
-   included) sits behind HTTP Basic Auth, so the UI can't be browsed or
-   cloned by anyone who merely finds the URL — access codes are handed out
-   personally by the founder. /api/* stays exempt: those routes carry their
-   own JWT / PIN / callback-secret auth and must remain reachable for IoT
-   devices and M-Pesa callbacks, as do Render's /health probes. Leaving the
-   variable unset (local dev, tests) disables the gate entirely. */
-const DEMO_GATE_PASSWORD = process.env.DEMO_GATE_PASSWORD;
-if (DEMO_GATE_PASSWORD) {
-  const gateHash = crypto.createHash('sha256').update(DEMO_GATE_PASSWORD).digest();
-  app.use((req, res, next) => {
-    if (req.path.startsWith('/api/') || req.path === '/health' || req.path === '/healthz') {
-      return next();
-    }
-    const header = req.headers.authorization || '';
-    if (header.startsWith('Basic ')) {
-      /* password = everything after the first colon, so it may contain colons;
-         the username half is ignored ("any username" keeps the prompt simple) */
-      const supplied = Buffer.from(header.slice(6), 'base64').toString()
-        .split(':').slice(1).join(':');
-      const suppliedHash = crypto.createHash('sha256').update(supplied).digest();
-      if (crypto.timingSafeEqual(gateHash, suppliedHash)) return next();
-    }
-    res.set('WWW-Authenticate', 'Basic realm="SolGrid private demo", charset="UTF-8"');
-    return res.status(401).type('html').send(
-      '<!doctype html><html lang="en"><meta charset="utf-8">' +
-      '<meta name="viewport" content="width=device-width, initial-scale=1">' +
-      '<title>SolGrid — private demo</title>' +
-      '<body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#0A0A0A;color:#fff;font-family:system-ui,sans-serif">' +
-      '<div style="max-width:420px;padding:32px;text-align:center">' +
-      '<div style="font-size:34px">☀️</div>' +
-      '<h1 style="font-size:20px;margin:14px 0 8px">This demo is private</h1>' +
-      '<p style="color:#9CA3AF;font-size:14px;line-height:1.6;margin:0 0 18px">' +
-      'SolGrid demos are guided personally by the founder. Ask for an access code, ' +
-      'then reload and enter it as the <b style="color:#fff">password</b> (any username works).</p>' +
-      '<p style="font-size:14px;line-height:1.9">' +
-      '<a href="https://wa.me/254140329585" style="color:#FDB44B;text-decoration:none">WhatsApp · 0140 329 585</a><br>' +
-      '<a href="mailto:larrythuku18@gmail.com" style="color:#FDB44B;text-decoration:none">larrythuku18@gmail.com</a></p>' +
-      '</div></body></html>'
-    );
-  });
-} else if (process.env.NODE_ENV === 'production') {
-  console.warn('⚠️  DEMO_GATE_PASSWORD is not set — the dashboard UI is publicly browsable.');
-}
-
 app.get('/', (req, res) => res.redirect('/login.html'));
 
 app.use('/nav.html',    (req, res) => res.setHeader('Cache-Control', 'public, max-age=300').sendFile(path.join(publicDir, 'shared', 'nav.html')));
@@ -649,7 +602,7 @@ app.get('/api/weather', async (req, res) => {
       if (decoded.role !== 'admin' && decoded.deviceId !== 'ADMIN') {
         return res.status(403).json({ error: 'Admin access required for debug mode' });
       }
-    } catch (_err) {
+    } catch {
       return res.status(401).json({ error: 'Invalid token' });
     }
     const upstreamError = upstreamErrors.join(' ').slice(0, 120);
@@ -1844,7 +1797,7 @@ startup().catch(async err => {
   console.error('[FATAL] startup error:', err?.stack || err);
   if (sentryConfigured()) {
     Sentry.captureException(err);
-    await Sentry.flush(2000).catch(() => {});
+    await Sentry.flush(2000).catch(e => console.warn('[Sentry] flush failed during startup error:', e));
   }
   process.exit(1);
 });
@@ -1861,7 +1814,7 @@ process.on('uncaughtException', async (err) => {
   console.error('[FATAL] uncaughtException:', err.stack || err.message);
   if (sentryConfigured()) {
     Sentry.captureException(err);
-    await Sentry.flush(2000).catch(() => {});
+    await Sentry.flush(2000).catch(e => console.warn('[Sentry] flush failed during uncaughtException:', e));
   }
   process.exit(1);
 });
@@ -1871,7 +1824,7 @@ process.on('unhandledRejection', async (reason) => {
   console.error('[FATAL] unhandledRejection:', err.stack);
   if (sentryConfigured()) {
     Sentry.captureException(err);
-    await Sentry.flush(2000).catch(() => {});
+    await Sentry.flush(2000).catch(e => console.warn('[Sentry] flush failed during unhandledRejection:', e));
   }
   process.exit(1);
 });

@@ -347,16 +347,21 @@ Tests were updated in `__tests__/payments.test.js` to run `runMigrations()` befo
 These require access to the Render / Neon / GitHub dashboards and are **not**
 resolved by the code changes in this report:
 
-1. **Rotate `DEVICE_API_KEY`** — the pre-2026-07-13 value is in git history
-   and still active in Render's Environment tab. Set a new random value there
-   (and update any flashed device that used the shared key), or provision
-   per-device keys via `POST /api/admin/devices`.
-2. **Set `DEMO_GATE_PASSWORD`** in Render's Environment tab — the Basic Auth
-   gate shipped 2026-07-08 is inert without it, leaving the demo UI publicly
-   browsable.
-3. **Rotate `JWT_SECRET`** if it matches the value that appeared in the old
+1. **Telemetry ingest is currently unauthenticated in production.**
+   Verified 2026-07-14: `POST /api/telemetry` returns 200 for any deviceId
+   with no key and even with a wrong key, because `DEVICE_API_KEY` is not
+   set in Render and the demo devices have no per-device key — so
+   `expectedKey` is falsy and the check is skipped. Anyone who reaches the
+   URL can inject readings for any device (corrupting dashboards/analytics/
+   AI data) and create phantom device rows. Fix: provision per-device keys
+   via `POST /api/admin/devices` and flash them into units, OR set a shared
+   `DEVICE_API_KEY` in Render AND flash the same value into every device
+   (note the current firmware sends no key when blank, so setting the env
+   key alone would 401-reject those devices). The old shared value
+   `8039c15a…` also remains in git history.
+2. **Rotate `JWT_SECRET`** if it matches the value that appeared in the old
    `.env.example` (see P3 table above).
-4. **Consider resetting the Neon database password** — the connection string
+3. **Consider resetting the Neon database password** — the connection string
    has passed through chat/shell sessions (tracked since 2026-07-06); update
    Render's `DATABASE_URL` and the `BACKUP_DATABASE_URL` GitHub Actions
    secret together if you do.
