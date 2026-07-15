@@ -9,7 +9,11 @@
  * old SQLite helpers so server.js / relay.js call-sites only need `await`).
  */
 
-require('dotenv').config();
+/* override: true ensures the .env file (local Postgres) wins over any
+   system-level DATABASE_URL (e.g. a Neon remote set in the shell profile).
+   In production (Render / Docker) there is no .env file, so dotenv is a
+   no-op regardless of the override flag — only the system env var is used. */
+require('dotenv').config({ override: true });
 const { Pool, types } = require('pg');
 const bcrypt = require('bcrypt');
 const crypto = require('node:crypto');
@@ -174,6 +178,14 @@ async function runMigrations() {
       next_retry_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    -- ── Migration tracking ────────────────────────────────────────────────
+    -- Records which one-time data migrations have been applied so
+    -- destructive or expensive data fixes run exactly once, not every boot.
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name       VARCHAR(255) PRIMARY KEY,
+      applied_at TIMESTAMPTZ   DEFAULT NOW()
+    );
+
     -- ── Product catalogue ─────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS product_categories (
       id          SERIAL       PRIMARY KEY,
@@ -202,8 +214,18 @@ async function runMigrations() {
     -- Data fix: category icons were originally seeded as emojis; the UI no
     -- longer renders them and the product style is text-only. seedProducts()
     -- only runs on an empty catalogue, so existing databases keep the old
-    -- emoji values unless cleared here (idempotent).
-    UPDATE product_categories SET icon = NULL WHERE icon IS NOT NULL;
+    -- emoji values. Guarded by schema_migrations to run exactly once — the
+    -- UPDATE only fires when the migration row was JUST inserted (applied_at
+    -- matches the current transaction timestamp), not on subsequent restarts,
+    -- so admin-set custom icons are never silently destroyed.
+    INSERT INTO schema_migrations (name)
+    SELECT 'clear_category_icons'
+    WHERE NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = 'clear_category_icons');
+
+    UPDATE product_categories SET icon = NULL
+    WHERE icon IS NOT NULL
+      AND EXISTS (SELECT 1 FROM schema_migrations
+                  WHERE name = 'clear_category_icons' AND applied_at = NOW());
 
     -- ── Indexes ────────────────────────────────────────────────────────────
     CREATE INDEX IF NOT EXISTS idx_energy_device_ts  ON energy_readings(device_id, recorded_at DESC);
@@ -215,6 +237,12 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS idx_users_email       ON users(email);
     CREATE INDEX IF NOT EXISTS idx_users_device      ON users(device_id);
     CREATE INDEX IF NOT EXISTS idx_users_role        ON users(role);
+    -- Index for getDeviceByUserId() — runs on every customer portal visit
+    CREATE INDEX IF NOT EXISTS idx_devices_user      ON devices(user_id);
+    -- Index for fleet-wide time-range queries (e.g. getEnergyHistory48hAllDevices)
+    CREATE INDEX IF NOT EXISTS idx_energy_recorded   ON energy_readings(recorded_at);
+    -- Index for getAlertsByUserId() — customer alert lookups
+    CREATE INDEX IF NOT EXISTS idx_alerts_user       ON maintenance_alerts(user_id);
   `);
 
   console.log('[DB] PostgreSQL migrations complete');
@@ -489,6 +517,44 @@ async function getExpiredWalletUsers() {
   return rows;
 }
 
+/* Customers approaching a power cut: positive balance at or under the warning
+   threshold, power still on. The NOT EXISTS clause is the warning dedup — the
+   cron writes a low_balance alert for every user it warns, so nobody is
+   re-warned (or re-SMSed) until 24 hours have passed. */
+async function getLowBalanceUsers(threshold) {
+  const { rows } = await q(`
+    SELECT u.*, d.device_id AS linked_device_id
+    FROM   users   u
+    LEFT JOIN devices d ON d.user_id = u.id
+    WHERE  u.role = 'customer'
+    AND    u.wallet_balance > 0
+    AND    u.wallet_balance <= $1
+    AND    u.relay_unlocked = TRUE
+    AND    NOT EXISTS (
+             SELECT 1 FROM maintenance_alerts a
+             WHERE  a.user_id = u.id
+             AND    a.type = 'low_balance'
+             AND    a.created_at > NOW() - INTERVAL '24 hours'
+           )
+  `, [threshold]);
+  return rows;
+}
+
+/* True if this user already has an alert of `type` newer than `hours` ago.
+   The wallet-expiry cron re-sees the same user every run until the relay lock
+   is acked by the device (relay_unlocked only flips FALSE on ack), so its
+   alert + SMS must dedup on the alert trail, not on relay state. */
+async function hasRecentAlert(userId, type, hours) {
+  const { rows } = await q(
+    `SELECT 1 FROM maintenance_alerts
+     WHERE user_id = $1 AND type = $2
+     AND   created_at > NOW() - make_interval(hours => $3::int)
+     LIMIT 1`,
+    [userId, type, hours]
+  );
+  return rows.length > 0;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    DEVICE QUERIES
 ══════════════════════════════════════════════════════════════════════════ */
@@ -660,7 +726,7 @@ async function getEnergyHourly(deviceId, hours = 24) {
             AVG(current_amps)::numeric(6,2)        AS current_amps
      FROM   energy_readings
      WHERE  device_id  = $1
-     AND    recorded_at > NOW() - ($2 || ' hours')::interval
+     AND    recorded_at > NOW() - make_interval(hours => $2)
      GROUP  BY hour
      ORDER  BY hour ASC`,
     [deviceId, hours]
@@ -680,7 +746,7 @@ async function getEnergyDaily(deviceId, days = 7) {
             AVG(consumption_watts)::numeric(10,2) AS consumption_watts
      FROM   energy_readings
      WHERE  device_id  = $1
-     AND    recorded_at > NOW() - ($2 || ' days')::interval
+     AND    recorded_at > NOW() - make_interval(days => $2)
      GROUP  BY recorded_at::date
      ORDER  BY day ASC`,
     [deviceId, days]
@@ -1027,7 +1093,7 @@ async function getAdminSummary() {
     // (is_active only reflects manual enable/disable, not liveness).
     q(
       `SELECT COUNT(*)::int AS n FROM devices
-       WHERE last_seen IS NULL OR last_seen < NOW() - ($1 || ' milliseconds')::interval`,
+       WHERE last_seen IS NULL OR last_seen < NOW() - make_interval(secs => $1 / 1000.0)`,
       [deviceOfflineTimeoutMs()]
     ),
     getPaymentStats()
@@ -1085,6 +1151,8 @@ module.exports = {
   updateWallet,
   setWalletBalance,
   getExpiredWalletUsers,
+  getLowBalanceUsers,
+  hasRecentAlert,
   setPasswordResetToken,
   getUserByValidResetToken,
   completePasswordReset,

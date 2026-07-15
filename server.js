@@ -6,7 +6,11 @@
  * Payments:      M-Pesa STK Push via Safaricom Daraja API (or simulation mode)
  */
 
-require('dotenv').config();
+/* override: true lets the .env file's DATABASE_URL (local Postgres) take
+   precedence over system-level env vars. When the server is spawned as a
+   child process by the test runner, this ensures it connects to the local
+   Postgres instead of a remote Neon URL inherited from the parent shell. */
+require('dotenv').config({ override: true });
 
 /* Error monitoring (optional — leave SENTRY_DSN blank to disable).
    Initialized before other requires per Sentry's setup guidance. */
@@ -28,6 +32,7 @@ const rateLimit   = require('express-rate-limit');
 const compression = require('compression');
 const { body, validationResult } = require('express-validator');
 const { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, resendConfigured } = require('./mailer');
+const { sendLowBalanceSms, sendPowerCutSms, smsConfigured } = require('./sms');
 const jwt = require('jsonwebtoken');
 
 const {
@@ -65,6 +70,8 @@ const {
   getLatestEnergy,
   savePrediction,
   getExpiredWalletUsers,
+  getLowBalanceUsers,
+  hasRecentAlert,
   setPasswordResetToken,
   getUserByValidResetToken,
   completePasswordReset,
@@ -1643,7 +1650,7 @@ app.get('/api/analytics/summary', authMiddleware, async (req, res) => {
    CRON JOBS
 ══════════════════════════════════════════════════════════════════════════ */
 
-// Wallet expiry check — runs every 15 minutes
+// Wallet expiry + low-balance warning check — runs every 15 minutes
 cron.schedule('*/15 * * * *', async () => {
   console.log('[CRON] Running wallet expiry check…');
   try {
@@ -1651,6 +1658,11 @@ cron.schedule('*/15 * * * *', async () => {
     for (const user of expiredUsers) {
       const deviceId = user.linked_device_id || user.device_id;
       await lockRelay(deviceId);
+      console.log(`[RELAY] Locked for ${deviceId} (wallet expired)`);
+      /* An unreachable device keeps this user in expiredUsers every run
+         (relay_unlocked only flips FALSE once the device acks the lock), so
+         the alert + SMS dedup on the alert trail, not on relay state. */
+      if (await hasRecentAlert(user.id, 'wallet_expired', 24)) continue;
       await createAlert({
         userId:   user.id,
         deviceId,
@@ -1658,7 +1670,26 @@ cron.schedule('*/15 * * * *', async () => {
         severity: 'high',
         message:  'Wallet balance depleted — power cut applied'
       });
-      console.log(`[RELAY] Locked for ${deviceId} (wallet expired)`);
+      /* Fire-and-forget power-cut notice — sms.js no-ops when unconfigured
+         and swallows send failures, so this can never break the cron loop */
+      sendPowerCutSms(user.phone, { name: user.name });
+    }
+
+    /* Warn customers *before* the cut — dedup lives in the query itself
+       (no user is returned again within 24h of their low_balance alert). */
+    const threshold = Number(process.env.LOW_BALANCE_THRESHOLD_KES) || 20;
+    const lowBalanceUsers = await getLowBalanceUsers(threshold);
+    for (const user of lowBalanceUsers) {
+      const deviceId = user.linked_device_id || user.device_id;
+      await createAlert({
+        userId:   user.id,
+        deviceId,
+        type:     'low_balance',
+        severity: 'medium',
+        message:  `Wallet balance low (KES ${Number(user.wallet_balance).toFixed(2)}) — top up to avoid a power cut`
+      });
+      sendLowBalanceSms(user.phone, { name: user.name, balance: user.wallet_balance });
+      console.log(`[CRON] Low-balance warning for ${deviceId} (KES ${user.wallet_balance})`);
     }
   } catch (err) {
     console.error('Wallet expiry cron error:', err.message);
@@ -1781,6 +1812,7 @@ async function startup() {
     console.log(`  M-Pesa:            ${mpesaConfigured() ? 'live (sandbox/production)' : 'simulation — MPESA_CONSUMER_KEY/SECRET not set'}`);
     console.log(`  Device telemetry:  ${process.env.DEVICE_API_KEY ? 'key required' : 'OPEN — DEVICE_API_KEY not set, any deviceId accepted unauthenticated'}`);
     console.log(`  Email (Resend):    ${resendConfigured() ? 'configured' : 'disabled — RESEND_API_KEY not set, login alerts/signup emails skipped'}`);
+    console.log(`  SMS alerts:        ${smsConfigured() ? `Africa's Talking (${process.env.AT_USERNAME === 'sandbox' ? 'sandbox — simulator only, no real phones' : process.env.AT_USERNAME})` : 'disabled — AT_USERNAME/AT_API_KEY not set, low-balance & power-cut SMS skipped'}`);
     console.log(`  Error monitoring:  ${sentryConfigured() ? 'Sentry active' : 'disabled — SENTRY_DSN not set'}`);
     console.log(`  Admin email:       ${process.env.ADMIN_EMAIL || 'admin@solarpayg.com (default)'}`);
     console.log(`  Customer email:    ${process.env.CUSTOMER_EMAIL || 'customer@example.com (default)'}`);

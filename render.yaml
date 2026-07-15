@@ -40,6 +40,8 @@ services:
       # ALLOWED_ORIGINS
       # ADMIN_EMAIL, ADMIN_PASSWORD, CUSTOMER_EMAIL  (demo account overrides)
       # RESEND_API_KEY, RESEND_FROM_EMAIL  (login alerts + signup confirmation)
+      # AT_USERNAME, AT_API_KEY, AT_SENDER_ID, LOW_BALANCE_THRESHOLD_KES
+      #   (low-balance + power-cut SMS via Africa's Talking; blank = disabled)
       # SENTRY_DSN  (error monitoring)
       # WEATHER_LAT, WEATHER_LON  (dashboard weather location; defaults to Nairobi)
 

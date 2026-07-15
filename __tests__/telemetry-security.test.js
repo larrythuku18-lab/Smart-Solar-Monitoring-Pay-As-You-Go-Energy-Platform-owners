@@ -10,8 +10,10 @@ const path = require('node:path');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
-/* Suppress email sends — same rationale as api.test.js */
+/* Suppress email + SMS sends — same rationale as api.test.js */
 process.env.RESEND_API_KEY = '';
+process.env.AT_USERNAME = '';
+process.env.AT_API_KEY = '';
 
 const PORT = process.env.TEST_PORT_TELEMETRY || 3922;
 const BASE = `http://localhost:${PORT}`;

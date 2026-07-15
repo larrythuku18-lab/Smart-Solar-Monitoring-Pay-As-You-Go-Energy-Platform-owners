@@ -23,6 +23,12 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 // keeping resendConfigured() false in the child too.
 process.env.RESEND_API_KEY = '';
 
+// Same guard for SMS — the spawned server's 15-min wallet cron could cross a
+// quarter-hour boundary mid-run and fire real Africa's Talking sends if a
+// developer's .env has live keys.
+process.env.AT_USERNAME = '';
+process.env.AT_API_KEY = '';
+
 const PORT = process.env.TEST_PORT || 3911;
 const BASE = `http://localhost:${PORT}`;
 
