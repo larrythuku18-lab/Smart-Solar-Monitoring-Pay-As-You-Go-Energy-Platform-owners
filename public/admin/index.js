@@ -29,7 +29,7 @@ const cache = {
   set(key, value) {
     this.data[key] = value;
     this.timestamps[key] = Date.now();
-    try { localStorage.setItem(`cache_${key}`, JSON.stringify({ value, time: Date.now() })); } catch (e) {}
+    try { localStorage.setItem(`cache_${key}`, JSON.stringify({ value, time: Date.now() })); } catch (e) { console.warn('[Cache] localStorage write failed:', e); }
   },
   get(key, maxAge = CACHE_DURATION) {
     const now = Date.now();
@@ -44,7 +44,7 @@ const cache = {
           return value;
         }
       }
-    } catch (e) {}
+    } catch (e) { console.warn('[Cache] localStorage read/parse error:', e); }
     return null;
   }
 };
@@ -188,9 +188,9 @@ const aiModelsConfig = [
     color: 'var(--green)',
     run: async () => {
       const alerts = maintenanceMonitor.detectAnomalies(
-        state.batteryLevel || 48,
-        state.generation || 10,
-        state.batteryLevel || 0.92
+        state.voltage || 48,
+        state.current || 10,
+        (state.generation > 0 ? state.consumption / state.generation : 0) || 0.92
       );
       return {
         alerts: alerts.map(a => `[${a.severity.toUpperCase()}] ${a.message}`).join('\n'),
@@ -244,8 +244,7 @@ const aiModelsConfig = [
 
 function updateAIStatusBar() {
   const { completed, total } = state.aiModels;
-  const percentage = Math.round((completed / total) * 100);
-  
+
   if (elements.aiStatusBar) {
     if (completed === 0) {
       elements.aiStatusBar.textContent = 'Initializing AI models...';

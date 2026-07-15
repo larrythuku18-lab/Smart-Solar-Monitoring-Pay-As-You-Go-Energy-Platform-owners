@@ -1720,9 +1720,13 @@ function compileJsx() {
     const Babel = require('@babel/standalone');
     const fs    = require('node:fs');
     const pub   = path.join(__dirname, 'public', 'admin');
+    /* Paths are built from a hardcoded name list + __dirname (no user input),
+       so security/detect-non-literal-fs-filename is a false positive here. */
     for (const name of ['dashboard', 'analytics']) {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
       const src  = fs.readFileSync(path.join(pub, `${name}.jsx`), 'utf8');
       const out  = Babel.transform(src, { presets: ['react'], filename: `${name}.jsx` }).code;
+      // eslint-disable-next-line security/detect-non-literal-fs-filename
       fs.writeFileSync(path.join(pub, `${name}.js`), out, 'utf8');
     }
     console.log('[JSX] dashboard.js + analytics.js compiled');

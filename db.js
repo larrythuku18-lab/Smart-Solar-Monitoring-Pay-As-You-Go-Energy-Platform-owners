@@ -249,8 +249,12 @@ async function upsertDemoUser({ deviceId, pin, email, passwordHash, role, name, 
 /* ── Demo data seed ─────────────────────────────────────────────────────── */
 async function seedDemoData() {
   /* ── Migrate any existing plaintext PINs to bcrypt hashes ── */
+  /* Uses NOT LIKE instead of regex to avoid PostgreSQL backslash-escape
+     ambiguity across different standard_conforming_strings settings.
+     bcrypt hashes always start with $2a$, $2b$, or $2y$, so PINs that
+     do NOT begin with '$2' are plaintext and need migration. */
   const { rows: plainPinUsers } = await q(
-    `SELECT id, pin FROM users WHERE pin IS NOT NULL AND pin !~ '^\\$2'`
+    `SELECT id, pin FROM users WHERE pin IS NOT NULL AND pin NOT LIKE '$2%'`
   );
   for (const u of plainPinUsers) {
     const hashedPin = await bcrypt.hash(u.pin, 10);

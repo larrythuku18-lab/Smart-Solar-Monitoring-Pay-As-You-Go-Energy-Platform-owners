@@ -982,10 +982,10 @@ async function loadEnergy() {
 /* ══ PAYMENT ══ */
 const RATE_PER_KWH = 25;
 
-function setAmount(amt) {
+function setAmount(amt, el) {
   document.getElementById('pay-amount').value = amt;
   document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  if (el) el.classList.add('active');
   onAmountChange();
 }
 
@@ -1207,7 +1207,7 @@ async function boot() {
   });
   /* Wire up quick-amount presets */
   document.querySelectorAll('[data-amount]').forEach(el => {
-    el.addEventListener('click', () => setAmount(Number(el.dataset.amount)));
+    el.addEventListener('click', () => setAmount(Number(el.dataset.amount), el));
   });
   document.getElementById('pay-amount')?.addEventListener('input', onAmountChange);
   document.getElementById('pay-btn')?.addEventListener('click', submitPayment);

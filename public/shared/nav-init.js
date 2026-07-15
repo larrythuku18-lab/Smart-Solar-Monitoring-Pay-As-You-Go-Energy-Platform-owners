@@ -15,7 +15,7 @@
     ? Promise.resolve(cachedHtml)
     : fetch('/nav.html')
         .then(r => r.ok ? r.text() : Promise.reject(new Error('nav fetch failed')))
-        .then(html => { try { sessionStorage.setItem(NAV_CACHE_KEY, html); } catch (_) {} return html; });
+        .then(html => { try { sessionStorage.setItem(NAV_CACHE_KEY, html); } catch (e) { console.warn('[Nav] sessionStorage write failed:', e); } return html; });
 
   async function initNav() {
     /* ── Insert nav from cache or network ── */
@@ -98,7 +98,7 @@
       try {
         const href = new URL(a.href, window.location.origin).pathname;
         a.classList.toggle('active', href === current || (current === '/' && href === '/index.html'));
-      } catch (_) {}
+      } catch (e) { console.warn('[Nav] Invalid link href:', e); }
     });
   }
 
