@@ -32,7 +32,7 @@ const rateLimit   = require('express-rate-limit');
 const compression = require('compression');
 const { body, validationResult } = require('express-validator');
 const { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, resendConfigured } = require('./mailer');
-const { sendLowBalanceSms, sendPowerCutSms, smsConfigured } = require('./sms');
+const { sendLowBalanceSms, sendPowerCutSms, sendSms, smsConfigured } = require('./sms');
 const jwt = require('jsonwebtoken');
 
 const {
@@ -1325,6 +1325,65 @@ app.post('/api/admin/devices/:deviceId/rotate-key', authMiddleware, async (req, 
     console.error('Device key rotation error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to rotate device key', message: err.message });
+  }
+});
+
+/* ── SMS configuration status (admin-only) ────────────────────────────────
+   Returns whether SMS is configured and which AT credentials are active.
+   Lets the admin dashboard show the integration status on page load without
+   requiring a test send first. */
+app.get('/api/admin/sms-status', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  res.json({
+    configured: smsConfigured(),
+    username:   process.env.AT_USERNAME || null,
+    sandbox:    process.env.AT_USERNAME === 'sandbox',
+    senderId:   process.env.AT_SENDER_ID || null
+  });
+});
+
+/* ── Test SMS (admin-only) ────────────────────────────────────────────────
+   Sends a single SMS to the given phone number. Useful for verifying the
+   Africa's Talking integration is working without waiting for a 15-min cron
+   tick. Phone must be in international format (+2547…). If no message is
+   supplied a default test message is used. */
+app.post('/api/admin/test-sms', authMiddleware, [
+  body('phone').isString().trim().notEmpty().withMessage('phone is required (e.g. +254712345678)'),
+  body('message').optional().isString().trim()
+], async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  try {
+    if (!smsConfigured()) {
+      return res.status(400).json({
+        error: 'SMS is not configured',
+        detail: 'Set AT_USERNAME and AT_API_KEY in .env to enable SMS',
+        configured: false
+      });
+    }
+
+    const { phone, message } = req.body;
+    const msg = message || 'SolGrid: This is a test SMS from your SolGrid admin panel. SMS alerts are working correctly.';
+
+    const sent = await sendSms(phone, msg);
+    if (sent) {
+      res.json({ success: true, message: 'Test SMS sent successfully', phone });
+    } else {
+      res.status(502).json({
+        error: 'Failed to send SMS',
+        detail: 'Africa\'s Talking rejected the send. Check the phone format (+2547…) and the AT sandbox simulator (sandbox messages never reach real phones).',
+        phone
+      });
+    }
+  } catch (err) {
+    console.error('Test SMS error:', err.message);
+    res.status(500).json({ error: 'Failed to send test SMS', message: err.message });
   }
 });
 

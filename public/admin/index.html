@@ -435,6 +435,30 @@
           <div style="font-size:10px;color:var(--muted)">Expiry check every 15 min · SMS on low balance &amp; power cut</div>
         </div>
       </div>
+
+      <!-- Test SMS Panel -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">Test SMS</span>
+          <span class="badge badge-amber" style="font-size:9px" id="sms-status-badge">Checking…</span>
+        </div>
+        <div style="padding:14px 18px">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <input id="test-sms-phone" type="text" placeholder="Phone (e.g. +254712345678)"
+              style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--text);font-family:inherit;outline:none">
+            <textarea id="test-sms-message" rows="2" placeholder="Message (optional — a default test message is used if blank)"
+              style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:11px;color:var(--text);font-family:inherit;outline:none;resize:vertical"></textarea>
+            <div style="display:flex;gap:8px;align-items:center">
+              <button id="test-sms-btn"
+                style="background:var(--teal);color:#04231f;border:none;border-radius:8px;padding:8px 18px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">
+                Send Test SMS
+              </button>
+              <span id="test-sms-status" style="font-size:10px;color:var(--muted)"></span>
+            </div>
+            <div id="test-sms-result" style="display:none;font-size:10px;padding:8px 12px;border-radius:8px;line-height:1.5"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Full Transactions Table -->
@@ -1071,6 +1095,135 @@
       btn.textContent = '+ Provision Device';
     }
   });
+
+  /* ── Test SMS ── */
+  async function updateSmsStatus() {
+    const badge = document.getElementById('sms-status-badge');
+    if (!badge) return;
+
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      badge.textContent = 'Not logged in';
+      badge.className = 'badge badge-red';
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/admin/sms-status', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        badge.textContent = 'No access';
+        badge.className = 'badge badge-red';
+        return;
+      }
+
+      const status = await res.json();
+      if (status.configured) {
+        const label = status.sandbox
+          ? `Sandbox (${status.username})`
+          : (status.username || 'Live');
+        badge.textContent = label;
+        badge.className = 'badge badge-green';
+      } else {
+        badge.textContent = 'Not configured';
+        badge.className = 'badge badge-red';
+      }
+    } catch (e) {
+      badge.textContent = 'Offline';
+      badge.className = 'badge badge-red';
+    }
+  }
+
+  document.getElementById('test-sms-btn')?.addEventListener('click', async () => {
+    const phoneInput = document.getElementById('test-sms-phone');
+    const msgInput   = document.getElementById('test-sms-message');
+    const btn        = document.getElementById('test-sms-btn');
+    const status     = document.getElementById('test-sms-status');
+    const result     = document.getElementById('test-sms-result');
+    const badge      = document.getElementById('sms-status-badge');
+
+    const phone = phoneInput?.value.trim();
+    if (!phone) {
+      if (result) {
+        result.style.display = 'block';
+        result.style.color = 'var(--red)';
+        result.style.background = 'rgba(239,68,68,.08)';
+        result.style.border = '1px solid rgba(239,68,68,.2)';
+        result.textContent = 'Please enter a phone number in international format (e.g. +254712345678)';
+      }
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    if (status) status.textContent = 'Sending…';
+    if (result) result.style.display = 'none';
+
+    const token = localStorage.getItem('authToken');
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    try {
+      const res = await fetch('/api/admin/test-sms', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          phone,
+          message: msgInput?.value.trim() || undefined
+        })
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        if (result) {
+          result.style.display = 'block';
+          result.style.color = 'var(--green)';
+          result.style.background = 'rgba(16,185,129,.08)';
+          result.style.border = '1px solid rgba(16,185,129,.2)';
+          result.innerHTML = `<strong>SMS sent successfully</strong> to ${escapeHtml(phone)}. Check the Africa's Talking simulator to see it.`;
+        }
+        if (badge) {
+          badge.textContent = 'Working';
+          badge.className = 'badge badge-green';
+        }
+      } else if (res.status === 400 && data.detail?.includes('not configured')) {
+        if (result) {
+          result.style.display = 'block';
+          result.style.color = 'var(--amber)';
+          result.style.background = 'rgba(245,158,11,.08)';
+          result.style.border = '1px solid rgba(245,158,11,.2)';
+          result.innerHTML = 'SMS is <strong>not configured</strong>. Set <code style="background:rgba(0,0,0,.2);padding:1px 5px;border-radius:3px">AT_USERNAME</code> and <code style="background:rgba(0,0,0,.2);padding:1px 5px;border-radius:3px">AT_API_KEY</code> in your .env file, then restart the server.';
+        }
+        if (badge) {
+          badge.textContent = 'Not configured';
+          badge.className = 'badge badge-red';
+        }
+      } else {
+        if (result) {
+          result.style.display = 'block';
+          result.style.color = 'var(--red)';
+          result.style.background = 'rgba(239,68,68,.08)';
+          result.style.border = '1px solid rgba(239,68,68,.2)';
+          result.textContent = data.detail || data.error || 'Failed to send SMS';
+        }
+      }
+    } catch (e) {
+      if (result) {
+        result.style.display = 'block';
+        result.style.color = 'var(--red)';
+        result.style.background = 'rgba(239,68,68,.08)';
+        result.style.border = '1px solid rgba(239,68,68,.2)';
+        result.textContent = 'Network error — is the server running?';
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Send Test SMS';
+      if (status) status.textContent = '';
+    }
+  });
+
+  setTimeout(updateSmsStatus, 500);
 
   setTimeout(loadDeviceFleet, 1200);
   setInterval(loadDeviceFleet, 30000);
