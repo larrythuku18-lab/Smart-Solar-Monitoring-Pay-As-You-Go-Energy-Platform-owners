@@ -53,7 +53,9 @@ before(async () => {
     const timeout = setTimeout(() => {
       settled = true;
       reject(new Error(`Server did not become healthy in time. Child output:\n${childOutput}`));
-    }, 20_000);
+      /* 60s, not 20s — same rationale as telemetry-security.test.js: concurrent
+         test files + @babel/standalone boot cost starve 20s on a loaded machine */
+    }, 60_000);
     const tryHealth = async () => {
       if (settled) return; // stop polling once we've timed out — otherwise this
                             // setTimeout chain runs forever and the test process

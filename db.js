@@ -9,11 +9,15 @@
  * old SQLite helpers so server.js / relay.js call-sites only need `await`).
  */
 
-/* override: true ensures the .env file (local Postgres) wins over any
-   system-level DATABASE_URL (e.g. a Neon remote set in the shell profile).
-   In production (Render / Docker) there is no .env file, so dotenv is a
-   no-op regardless of the override flag — only the system env var is used. */
-require('dotenv').config({ override: true });
+/* The .env file (local Postgres) must win over any system-level DATABASE_URL
+   (e.g. a Neon remote set in the shell profile) — but ONLY DATABASE_URL.
+   A blanket { override: true } would also clobber env vars callers set
+   deliberately: the test suites blank RESEND_API_KEY/AT_API_KEY in the
+   servers they spawn so login tests can't fire real emails/SMS, and they
+   pass custom PORTs the same way. In production (Render / Docker) there is
+   no .env file, so this is a no-op — only the system env var is used. */
+const { parsed: dotenvParsed } = require('dotenv').config();
+if (dotenvParsed?.DATABASE_URL) process.env.DATABASE_URL = dotenvParsed.DATABASE_URL;
 const { Pool, types } = require('pg');
 const bcrypt = require('bcrypt');
 const crypto = require('node:crypto');

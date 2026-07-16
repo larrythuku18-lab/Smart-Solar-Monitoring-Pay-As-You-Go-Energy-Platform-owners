@@ -36,7 +36,12 @@ before(async () => {
     const timeout = setTimeout(() => {
       settled = true;
       reject(new Error(`Server did not become healthy in time. Output:\n${childOutput}`));
-    }, 20_000);
+      /* 60s, not 20s: all test files run concurrently and each spawned server
+         spends seconds of pure CPU in @babel/standalone before its first log
+         line — under a loaded machine the 20s window starved (empty Output:
+         above means exactly that). Polling exits early when healthy, so the
+         extra headroom costs nothing on a quiet box. */
+    }, 60_000);
     const tryHealth = async () => {
       if (settled) return;
       try {

@@ -1716,8 +1716,10 @@ cron.schedule('*/15 * * * *', async () => {
     const expiredUsers = await getExpiredWalletUsers();
     for (const user of expiredUsers) {
       const deviceId = user.linked_device_id || user.device_id;
-      await lockRelay(deviceId);
-      console.log(`[RELAY] Locked for ${deviceId} (wallet expired)`);
+      const lock = await lockRelay(deviceId);
+      console.log(lock.success
+        ? `[RELAY] Locked for ${deviceId} (wallet expired)`
+        : `[RELAY] Lock for ${deviceId} queued for retry (wallet expired, device unreachable)`);
       /* An unreachable device keeps this user in expiredUsers every run
          (relay_unlocked only flips FALSE once the device acks the lock), so
          the alert + SMS dedup on the alert trail, not on relay state. */
@@ -1831,7 +1833,7 @@ async function startup() {
      succeeded" callbacks from anyone who has seen a checkoutRequestId.
      Refuse to start rather than silently run with that door open. */
   if (process.env.NODE_ENV === 'production' && mpesaConfigured() && !process.env.MPESA_CALLBACK_SECRET) {
-    console.error('[FATAL] MPESA_CALLBACK_SECRET is required in production when M-Pesa is configured — '
+    logFatalSync('MPESA_CALLBACK_SECRET is required in production when M-Pesa is configured — '
       + 'refusing to start with an unauthenticated payment-callback endpoint.');
     process.exit(1);
   }
@@ -1888,8 +1890,20 @@ async function startup() {
   });
 }
 
+/* console.error to a pipe (Render's log stream, `node app.js > file`) is
+   asynchronous, and process.exit() drops whatever hasn't flushed — so the one
+   line explaining a crash could vanish exactly when Sentry is disabled (with
+   Sentry on, the awaited flush() incidentally buys the pipe time to drain).
+   fs.writeSync to fd 2 is synchronous everywhere and can't be lost. */
+function logFatalSync(label, err) {
+  try {
+    const detail = err ? `: ${err.stack || err}` : '';
+    require('node:fs').writeSync(2, `[FATAL] ${label}${detail}\n`);
+  } catch { /* stderr itself is gone — nothing left to do */ }
+}
+
 startup().catch(async err => {
-  console.error('[FATAL] startup error:', err?.stack || err);
+  logFatalSync('startup error', err);
   if (sentryConfigured()) {
     Sentry.captureException(err);
     await Sentry.flush(2000).catch(e => console.warn('[Sentry] flush failed during startup error:', e));
@@ -1906,7 +1920,7 @@ startup().catch(async err => {
    Sentry.flush() before exit — process.exit() would otherwise cut off the
    in-flight HTTP request Sentry makes to report the error. */
 process.on('uncaughtException', async (err) => {
-  console.error('[FATAL] uncaughtException:', err.stack || err.message);
+  logFatalSync('uncaughtException', err);
   if (sentryConfigured()) {
     Sentry.captureException(err);
     await Sentry.flush(2000).catch(e => console.warn('[Sentry] flush failed during uncaughtException:', e));
@@ -1915,8 +1929,10 @@ process.on('uncaughtException', async (err) => {
 });
 
 process.on('unhandledRejection', async (reason) => {
-  const err = reason instanceof Error ? reason : new Error(String(reason));
-  console.error('[FATAL] unhandledRejection:', err.stack);
+  /* util.inspect, not String(): a non-Error rejection value (e.g. an axios
+     response object) would otherwise stringify to "[object Object]" */
+  const err = reason instanceof Error ? reason : new Error(require('node:util').inspect(reason));
+  logFatalSync('unhandledRejection', err);
   if (sentryConfigured()) {
     Sentry.captureException(err);
     await Sentry.flush(2000).catch(e => console.warn('[Sentry] flush failed during unhandledRejection:', e));
