@@ -61,24 +61,30 @@ describe('smsConfigured', () => {
 });
 
 describe('send paths that must no-op', () => {
-  test('sendSms returns false when unconfigured', async () => {
-    assert.equal(await sendSms('+254700000000', 'hello'), false);
+  test('sendSms fails with a config reason when unconfigured', async () => {
+    const res = await sendSms('+254700000000', 'hello');
+    assert.equal(res.ok, false);
+    assert.match(res.reason, /not configured/i);
   });
 
-  test('sendSms returns false for an unusable phone even when configured', async () => {
+  test('sendSms fails with a phone-format reason for an unusable phone even when configured', async () => {
     try {
       process.env.AT_USERNAME = 'sandbox';
       process.env.AT_API_KEY  = 'atsk_test';
-      assert.equal(await sendSms('not-a-phone', 'hello'), false);
-      assert.equal(await sendSms(null, 'hello'), false);
+      const bad = await sendSms('not-a-phone', 'hello');
+      assert.equal(bad.ok, false);
+      assert.match(bad.reason, /not a usable phone number/i);
+      const nil = await sendSms(null, 'hello');
+      assert.equal(nil.ok, false);
+      assert.match(nil.reason, /not a usable phone number/i);
     } finally {
       process.env.AT_USERNAME = '';
       process.env.AT_API_KEY  = '';
     }
   });
 
-  test('message builders return false when unconfigured', async () => {
-    assert.equal(await sendLowBalanceSms('+254700000000', { name: 'Ada', balance: 15 }), false);
-    assert.equal(await sendPowerCutSms('+254700000000', { name: 'Ada' }), false);
+  test('message builders pass the failure result through when unconfigured', async () => {
+    assert.equal((await sendLowBalanceSms('+254700000000', { name: 'Ada', balance: 15 })).ok, false);
+    assert.equal((await sendPowerCutSms('+254700000000', { name: 'Ada' })).ok, false);
   });
 });

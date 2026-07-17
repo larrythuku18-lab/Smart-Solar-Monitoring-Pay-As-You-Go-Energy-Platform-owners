@@ -1372,12 +1372,15 @@ app.post('/api/admin/test-sms', authMiddleware, [
     const msg = message || 'SolGrid: This is a test SMS from your SolGrid admin panel. SMS alerts are working correctly.';
 
     const sent = await sendSms(phone, msg);
-    if (sent) {
+    if (sent.ok) {
       res.json({ success: true, message: 'Test SMS sent successfully', phone });
     } else {
+      /* sent.reason is the actual cause (AT's "InvalidPhoneNumber", a bad
+         key, an unusable format) — the admin panel renders `detail`, so the
+         admin sees why instead of a generic failure. */
       res.status(502).json({
         error: 'Failed to send SMS',
-        detail: 'Africa\'s Talking rejected the send. Check the phone format (+2547…) and the AT sandbox simulator (sandbox messages never reach real phones).',
+        detail: `${sent.reason}. Note: sandbox sends only appear in the Africa's Talking simulator, and only for numbers registered there.`,
         phone
       });
     }

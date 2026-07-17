@@ -39,13 +39,20 @@ function normalizePhone(phone) {
 }
 
 /* Fire-and-forget — a failed send must never break the cron loop that
-   called it. Returns true only when Africa's Talking accepted the message
-   (statusCode 100 Processed / 101 Sent / 102 Queued). */
+   called it, so this never throws. Returns { ok, reason }: ok is true only
+   when Africa's Talking accepted the message (statusCode 100 Processed /
+   101 Sent / 102 Queued); on failure, reason carries a human-readable cause
+   (e.g. AT's "InvalidPhoneNumber") so callers like the admin test-SMS panel
+   can show *why* instead of a generic failure. */
 async function sendSms(phone, message) {
   try {
-    if (!smsConfigured()) return false;
+    if (!smsConfigured()) {
+      return { ok: false, reason: 'SMS is not configured — set AT_USERNAME and AT_API_KEY' };
+    }
     const to = normalizePhone(phone);
-    if (!to) return false;
+    if (!to) {
+      return { ok: false, reason: `"${phone}" is not a usable phone number — use international format like +254712345678` };
+    }
 
     const body = new URLSearchParams({
       username: process.env.AT_USERNAME,
@@ -65,14 +72,20 @@ async function sendSms(phone, message) {
 
     const recipient = data?.SMSMessageData?.Recipients?.[0];
     if (!recipient || ![100, 101, 102].includes(recipient.statusCode)) {
-      console.warn(`[SMS] Africa's Talking rejected send to ${to}:`,
-        recipient?.status || data?.SMSMessageData?.Message || 'no recipient in response');
-      return false;
+      const cause = recipient?.status || data?.SMSMessageData?.Message || 'no recipient in response';
+      console.warn(`[SMS] Africa's Talking rejected send to ${to}:`, cause);
+      return { ok: false, reason: `Africa's Talking rejected the send to ${to}: ${cause}` };
     }
-    return true;
+    return { ok: true };
   } catch (err) {
-    console.warn('[SMS] Failed to send:', err.message);
-    return false;
+    /* 401 here usually means a wrong/not-yet-active API key (fresh keys can
+       take ~3 minutes) — say so, since "status code 401" alone sends people
+       hunting through the wrong config. */
+    const hint = err.response?.status === 401
+      ? 'Africa\'s Talking returned 401 — API key is wrong or not yet active (new keys take ~3 min)'
+      : err.message;
+    console.warn('[SMS] Failed to send:', hint);
+    return { ok: false, reason: hint };
   }
 }
 
