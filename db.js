@@ -1002,6 +1002,24 @@ async function savePrediction(deviceId, predictionType, payload, confidence) {
   );
 }
 
+/**
+ * Retention: energy_readings and ai_predictions are append-only time series
+ * with no other pruning path (the simulator inserts 4 rows / 30 s, and every
+ * dashboard forecast poll adds a prediction row) — without a cutoff they grow
+ * until the Neon storage limit. Returns deleted counts for the caller's log.
+ */
+async function pruneOldRows(energyDays, predictionDays) {
+  const energy = await q(
+    'DELETE FROM energy_readings WHERE recorded_at < NOW() - make_interval(days => $1)',
+    [energyDays]
+  );
+  const predictions = await q(
+    'DELETE FROM ai_predictions WHERE created_at < NOW() - make_interval(days => $1)',
+    [predictionDays]
+  );
+  return { energyDeleted: energy.rowCount, predictionsDeleted: predictions.rowCount };
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    AUDIT TIMELINE
 ══════════════════════════════════════════════════════════════════════════ */
@@ -1195,6 +1213,7 @@ module.exports = {
   getAlertsByUserId,
   /* ai */
   savePrediction,
+  pruneOldRows,
   /* audit */
   getAuditTimeline,
   /* relay queue */

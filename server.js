@@ -69,6 +69,7 @@ const {
   getAlertsByUserId,
   getLatestEnergy,
   savePrediction,
+  pruneOldRows,
   getExpiredWalletUsers,
   getLowBalanceUsers,
   hasRecentAlert,
@@ -1466,6 +1467,28 @@ setInterval(() => {
   }
 }, 300_000);
 
+/* ── Data retention ───────────────────────────────────────────────────────
+   Runs once at startup and then every 12 h. The startup run is the one that
+   matters on Render's free tier — the process usually sleeps before a long
+   timer fires. Windows are env-tunable so the backfilled Neon demo history
+   can be kept longer than the defaults if a pitch needs it. */
+const ENERGY_RETENTION_DAYS     = Number(process.env.ENERGY_RETENTION_DAYS)     || 90;
+const PREDICTION_RETENTION_DAYS = Number(process.env.PREDICTION_RETENTION_DAYS) || 30;
+
+async function pruneOldData() {
+  try {
+    const { energyDeleted, predictionsDeleted } =
+      await pruneOldRows(ENERGY_RETENTION_DAYS, PREDICTION_RETENTION_DAYS);
+    if (energyDeleted || predictionsDeleted) {
+      console.log(`[Retention] pruned ${energyDeleted} energy readings (>${ENERGY_RETENTION_DAYS} d) `
+        + `and ${predictionsDeleted} AI predictions (>${PREDICTION_RETENTION_DAYS} d)`);
+    }
+  } catch (err) {
+    console.warn('Retention prune warning (non-fatal):', err.message);
+  }
+}
+setInterval(pruneOldData, 12 * 60 * 60 * 1000);
+
 /* ── Telemetry ingest — called directly by ESP32 firmware ─────────────────
    No JWT here (a device can't easily hold a user session). Auth is by
    X-Device-Key header, checked against (in order):
@@ -1859,6 +1882,10 @@ async function startup() {
   } catch (err) {
     console.warn('AI warm-up warning (non-fatal):', err.message);
   }
+
+  // Prune expired time-series rows now rather than waiting for the 12 h
+  // timer — on Render's free tier the process rarely lives that long.
+  await pruneOldData();
 
   app.listen(PORT, () => {
     console.log(`[START] SolGrid server running on http://localhost:${PORT}`);

@@ -217,11 +217,16 @@ class FraudDetector {
     pattern.transactions++;
     pattern.totalAmount += amount;
     pattern.timestamps.push(timestamp);
+    // The velocity check only looks 5 minutes back — a bounded tail is enough,
+    // and without the cap this array grows by one entry per payment forever.
+    if (pattern.timestamps.length > 50) pattern.timestamps.shift();
 
     const fraud = this._detectFraud(userId, deviceId, amount, timestamp);
     if (fraud) {
       transaction.flagged = true;
       this.suspiciousPatterns.push(fraud);
+      // getFlags() only ever reads the last 10 — keep a bounded history.
+      if (this.suspiciousPatterns.length > 100) this.suspiciousPatterns.shift();
     }
     return fraud;
   }
