@@ -1864,6 +1864,17 @@ async function startup() {
     process.exit(1);
   }
 
+  /* seedDemoData() falls back to a hardcoded admin password ('Admin@12345')
+     and PIN ('0000') when ADMIN_PASSWORD isn't set — fine for local demos,
+     but that fallback is sitting in source control. Refuse to boot in
+     production rather than silently create a full-privilege admin account
+     with a password anyone with repo access already knows. */
+  if (process.env.NODE_ENV === 'production' && !process.env.ADMIN_PASSWORD) {
+    logFatalSync('ADMIN_PASSWORD is required in production — refusing to start with the default '
+      + 'admin password from source control.');
+    process.exit(1);
+  }
+
   compileJsx();
   console.log('[DB] Connecting to PostgreSQL…');
   await runMigrations();
