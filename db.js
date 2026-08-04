@@ -835,6 +835,28 @@ async function failPayment(checkoutRequestId, resultCode, resultDesc) {
   );
 }
 
+/** Persists the FraudDetector's confidence for a completed payment onto its
+ *  own row — fraud_score defaults to 0 (not flagged), so unflagged payments
+ *  never need a write. Durable alternative to reading in-memory detector
+ *  state, which is per-process and wiped on every restart. */
+async function setPaymentFraudScore(paymentId, score) {
+  await q('UPDATE payments SET fraud_score = $1 WHERE id = $2', [score, paymentId]);
+}
+
+/** Recent completed payments with their fraud score, for the admin Fraud
+ *  Risk chart — real amount/score pairs instead of the old mock data. */
+async function getFraudRiskPayments(limit = 60) {
+  const { rows } = await q(
+    `SELECT amount, fraud_score, created_at
+     FROM   payments
+     WHERE  status = 'completed'
+     ORDER  BY created_at DESC
+     LIMIT  $1`,
+    [limit]
+  );
+  return rows;
+}
+
 async function getPaymentStats() {
   const { rows: [s] } = await q(`
     SELECT
@@ -1206,6 +1228,8 @@ module.exports = {
   getPaymentsByUserId,
   getPaymentTrend,
   getCustomerCreditScoreTrend,
+  setPaymentFraudScore,
+  getFraudRiskPayments,
   /* alerts */
   createAlert,
   getAlerts,

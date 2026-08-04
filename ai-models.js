@@ -241,7 +241,7 @@ class FraudDetector {
       return {
         type:      'rapid_fire_payments',
         severity:  'high',
-        userId, deviceId,
+        userId, deviceId, amount, timestamp,
         message:   `${recent.length} payments in 5 min — possible fake STK push`,
         action:    'auto_lock_relay',
         confidence: 0.85
@@ -255,7 +255,7 @@ class FraudDetector {
         return {
           type:      'unusual_amount',
           severity:  'medium',
-          userId, deviceId,
+          userId, deviceId, amount, timestamp,
           message:   `Payment KES ${amount} is 5× normal (avg KES ${avg.toFixed(0)})`,
           action:    'review',
           confidence: 0.7
@@ -343,6 +343,7 @@ function getFraudDetector(userId) {
   if (!fraudDetectors.has(id)) fraudDetectors.set(id, new FraudDetector());
   return fraudDetectors.get(id);
 }
+
 
 /* ── Fallback responses (returned when models aren't ready) ──────────────── */
 const FALLBACK_FORECAST = Array.from({ length: 6 }, (_, i) => ({

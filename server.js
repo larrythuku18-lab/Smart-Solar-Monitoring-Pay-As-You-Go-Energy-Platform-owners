@@ -60,6 +60,8 @@ const {
   getAlertSeverityCounts,
   getPaymentTrend,
   getCustomerCreditScoreTrend,
+  setPaymentFraudScore,
+  getFraudRiskPayments,
   insertEnergyReading,
   getDashboardState,
   getAdminSummary,
@@ -1045,6 +1047,38 @@ app.post('/api/fraud-check', authMiddleware, [
   }
 });
 
+/* Runs the fraud heuristics against a just-completed payment — called from
+   both the simulated-STK path and the real M-Pesa callback, since that's
+   the point where money has actually moved and a burst of fake
+   confirmations (or a genuine amount spike) is meaningful. The payment
+   already succeeded by the time this runs, so a flag can only restrict
+   what happens next (lock the relay, alert an admin); it never undoes the
+   payment itself. Never throws — a fraud-check failure must not break
+   payment completion. */
+async function checkPaymentFraud(payment) {
+  try {
+    const result = safeFraudCheck(payment.user_id, payment.device_id, Number(payment.amount), payment.processed_at);
+    if (!result.success || !result.data.flagged) return;
+
+    const { fraud } = result.data;
+    await setPaymentFraudScore(payment.id, fraud.confidence ?? 0);
+    console.warn(`[Fraud] ${fraud.type} on payment #${payment.id} (device ${payment.device_id}): ${fraud.message}`);
+    await createAlert({
+      userId:   payment.user_id,
+      deviceId: payment.device_id,
+      type:     'fraud_flag',
+      severity: fraud.severity || 'medium',
+      message:  fraud.message
+    });
+    if (fraud.action === 'auto_lock_relay') {
+      await lockRelay(payment.device_id);
+    }
+  } catch (err) {
+    console.error('Payment fraud check error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+  }
+}
+
 app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
   try {
     const { amount, phoneNumber, productId } = req.body;
@@ -1096,6 +1130,7 @@ app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
           if (payment && payment.payment_type !== 'product') {
             await unlockRelay(payment.device_id || user.device_id);
           }
+          if (payment) await checkPaymentFraud(payment);
         } catch (err) {
           console.error('Simulated payment completion error:', err.message);
         }
@@ -1178,6 +1213,7 @@ app.post('/api/mpesa/callback', async (req, res) => {
             ? `Order received: ${payment.product_name} (KES ${payment.amount}). We'll be in touch to arrange delivery.`
             : `Payment of KES ${payment.amount} received. Power restored.`
         });
+        await checkPaymentFraud(payment);
       }
     } else {
       await failPayment(parsed.checkoutRequestId, parsed.resultCode, parsed.resultDesc);
@@ -1226,6 +1262,29 @@ app.get('/api/payments/stats', authMiddleware, async (req, res) => {
     console.error('Payment stats error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load stats', message: err.message });
+  }
+});
+
+/* Real fraud-risk points for the admin dashboard's scatter chart — replaces
+   the old Math.random() mock. fraud_score is written by checkPaymentFraud()
+   at payment-completion time and defaults to 0, so unflagged payments are
+   real "no rule fired" points, not fabricated risk values. */
+app.get('/api/admin/fraud-risk', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  try {
+    const payments = await getFraudRiskPayments(60);
+    const points = payments.map(p => ({
+      x:       Number(p.amount),
+      y:       Number(p.fraud_score) || 0,
+      flagged: Number(p.fraud_score) > 0
+    }));
+    res.json({ points, flaggedCount: points.filter(p => p.flagged).length, checked: points.length });
+  } catch (err) {
+    console.error('Fraud risk error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load fraud risk data', message: err.message });
   }
 });
 
