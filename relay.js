@@ -45,9 +45,9 @@ async function unlockRelay(deviceId) {
     return { success: true };
   } catch (err) {
     console.error(`Failed to unlock relay for ${deviceId}:`, err.message);
-    // Fire-and-forget: queue the command for retry; don't block the payment response.
+    await setRelayState(deviceId, true);
     queuePendingCommand(deviceId, 'unlock', err.message).catch(console.error);
-    return { success: false, error: err.message, queued: true };
+    return { success: false, error: err.message, queued: true, stateUpdated: true };
   }
 }
 
@@ -58,8 +58,9 @@ async function lockRelay(deviceId) {
     return { success: true };
   } catch (err) {
     console.error(`Failed to lock relay for ${deviceId}:`, err.message);
+    await setRelayState(deviceId, false);
     queuePendingCommand(deviceId, 'lock', err.message).catch(console.error);
-    return { success: false, error: err.message, queued: true };
+    return { success: false, error: err.message, queued: true, stateUpdated: true };
   }
 }
 

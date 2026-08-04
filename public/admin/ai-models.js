@@ -164,7 +164,7 @@ class MaintenanceMonitor {
       alerts.push({
         type: 'current_spike',
         severity: 'medium',
-        message: `Unusual current draw: ${current}A (threshold: 20A)`,
+        message: `Unusual current draw: ${current}A (threshold: 25A)`,
         device: 'Load Circuit',
         recommendation: 'Check for short circuits or overload'
       });
@@ -174,7 +174,7 @@ class MaintenanceMonitor {
       alerts.push({
         type: 'efficiency_drop',
         severity: 'medium',
-        message: `Panel efficiency degraded to ${(efficiency * 100).toFixed(1)}% (normal: >90%)`,
+        message: `Panel efficiency degraded to ${(efficiency * 100).toFixed(1)}% (normal: >75%)`,
         device: 'Solar Panels',
         recommendation: 'Clean panels, check for dust/shading, inspect connections'
       });
