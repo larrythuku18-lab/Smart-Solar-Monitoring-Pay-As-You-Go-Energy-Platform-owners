@@ -47,6 +47,10 @@ temp/
 secrets.json
 config/secrets.js
 
+# Arduino IDE's working sketch copy — flashed with real WiFi credentials and
+# a real per-device API key, never the git-tracked template.
+firmware/esp32-firmware/
+
 # Other
 uploads/
 tmp/
