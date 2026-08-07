@@ -872,8 +872,16 @@ const SolarDashboard = () => {
       const online = labels.map(l => regionMap[l].online);
       const lowBattery = labels.map(l => regionMap[l].lowBattery);
       const offline = labels.map(l => regionMap[l].offline);
+      /* Keep the same shape createDeviceHealthData() returns — the render
+         below reads .offline (and the KPI footer sums it), so dropping the
+         three count arrays here crashed the whole dashboard with a
+         'Cannot read properties of undefined (reading reduce)' the moment
+         real device data arrived and the page went blank. */
       const newDeviceHealth = {
         labels,
+        online,
+        lowBattery,
+        offline,
         datasets: [{
           label: 'Online',
           data: online,
@@ -988,14 +996,21 @@ const SolarDashboard = () => {
           const data = await res.json();
           devices = data.devices || [];
         } else if (res.status === 403) {
-          // Fallback for customer role: get their device from customer summary
+          // Fallback for customer role: get their device from customer summary.
+          // NOTE: /api/customer/summary returns the device as { deviceId, ... }
+          // (camelCase), while the fleet list uses { device_id, ... } — normalize
+          // so the selector's d.device_id reads work for both roles.
           const custRes = await fetch('/api/customer/summary', {
             headers
           });
           if (custRes.ok) {
             const custData = await custRes.json();
             if (custData.device) {
-              devices = [custData.device];
+              devices = [{
+                device_id: custData.device.deviceId,
+                name: custData.device.name,
+                location: custData.device.location
+              }];
             }
           }
         }
