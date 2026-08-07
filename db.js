@@ -41,7 +41,12 @@ const pool = new Pool({
   max: parseInt(process.env.DB_POOL_MAX  || '20', 10),
   min: parseInt(process.env.DB_POOL_MIN  ||  '2', 10),
   idleTimeoutMillis:    30_000,
-  connectionTimeoutMillis: 5_000,
+  /* Neon free tier autosuspends the compute after ~5 min idle; waking it
+     can take 3-30 s (cold start). 5 s here meant pg abandoned the very
+     connection that would have woken the DB — boot-time migrations and the
+     first simulator ticks failed with "Connection terminated due to
+     connection timeout". 30 s matches Neon's documented recommendation. */
+  connectionTimeoutMillis: 30_000,
   allowExitOnIdle: true
 });
 
