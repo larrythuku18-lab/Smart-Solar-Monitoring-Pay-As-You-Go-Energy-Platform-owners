@@ -931,19 +931,32 @@ const SolarDashboard = () => {
     })();
   }, []);
 
-  /* Fetch device list for the device selector. */
+  /* Fetch device list for the device selector. Works for both admin and customer roles. */
   useEffect(() => {
     (async () => {
       try {
         const token = localStorage.getItem('authToken');
-        const res = await fetch('/api/admin/devices', { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        // Try admin devices endpoint first
+        let res = await fetch('/api/admin/devices', { headers });
+        let devices = [];
         if (res.ok) {
-          const { devices } = await res.json();
-          if (devices?.length) {
-            setDevicesList(devices);
-            // Keep current selection if it exists in the new list, else default to first
-            setSelectedDeviceId(prev => devices.some(d => d.device_id === prev) ? prev : devices[0].device_id);
+          const data = await res.json();
+          devices = data.devices || [];
+        } else if (res.status === 403) {
+          // Fallback for customer role: get their device from customer summary
+          const custRes = await fetch('/api/customer/summary', { headers });
+          if (custRes.ok) {
+            const custData = await custRes.json();
+            if (custData.device) {
+              devices = [custData.device];
+            }
           }
+        }
+        if (devices.length) {
+          setDevicesList(devices);
+          // Keep current selection if it exists in the new list, else default to first
+          setSelectedDeviceId(prev => devices.some(d => d.device_id === prev) ? prev : devices[0].device_id);
         }
       } catch { /* keep default */ }
     })();
