@@ -9,8 +9,16 @@
 /* override: true lets the .env file's DATABASE_URL (local Postgres) take
    precedence over system-level env vars. When the server is spawned as a
    child process by the test runner, this ensures it connects to the local
-   Postgres instead of a remote Neon URL inherited from the parent shell. */
-require('dotenv').config({ override: true });
+   Postgres instead of a remote Neon URL inherited from the parent shell.
+
+   The .env path is resolved relative to THIS file (__dirname), not the
+   process cwd — otherwise launching the server from anywhere but the
+   project root (IDE launchers, `node /abs/path/server.js` from another
+   folder) silently skips the whole .env and every optional integration
+   (SMS via AT_USERNAME/AT_API_KEY, Resend, M-Pesa) reports "not
+   configured" despite the values being set. The tests already load dotenv
+   by absolute path for the same reason. */
+require('dotenv').config({ path: require('node:path').join(__dirname, '.env'), override: true });
 
 /* Error monitoring (optional — leave SENTRY_DSN blank to disable).
    Initialized before other requires per Sentry's setup guidance. */

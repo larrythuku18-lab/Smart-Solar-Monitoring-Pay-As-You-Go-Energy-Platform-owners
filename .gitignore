@@ -57,3 +57,6 @@ tmp/
 *.pem
 *.key
 *.cert
+
+# Local editor state
+.kilo/
