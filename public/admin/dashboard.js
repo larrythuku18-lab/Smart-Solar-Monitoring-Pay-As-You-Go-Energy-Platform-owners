@@ -995,6 +995,11 @@ const SolarDashboard = () => {
     })();
   }, []);
 
+  /* Refresh charts when selected device changes. */
+  useEffect(() => {
+    refreshAllCharts();
+  }, [selectedDeviceId, refreshAllCharts]);
+
   /* Load the version list lazily the first time the Firmware tab is opened. */
   useEffect(() => {
     if (!otaEnabled || activeTab !== 'firmware') return;
