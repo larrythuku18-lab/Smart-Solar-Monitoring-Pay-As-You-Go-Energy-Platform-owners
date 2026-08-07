@@ -8,7 +8,7 @@
     "dev": "nodemon server.js",
     "generate-icons": "node scripts/generate-icons.js",
     "compile-firmware": "bash scripts/compile-firmware.sh",
-    "test": "node --test __tests__/*.test.js",
+    "test": "node --test --test-concurrency=1 __tests__/*.test.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },

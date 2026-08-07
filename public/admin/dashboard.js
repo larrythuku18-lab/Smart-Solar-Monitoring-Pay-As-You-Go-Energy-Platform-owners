@@ -563,6 +563,8 @@ const SolarDashboard = () => {
   const isDark = usePrefersDarkMode();
   const [activeTab, setActiveTab] = useState('energy');
   const [refresh, setRefresh] = useState(0);
+  const [selectedDeviceId, setSelectedDeviceId] = useState('DEMO-001');
+  const [devicesList, setDevicesList] = useState([]);
   const chartRefs = useRef({});
   const [globalStats, setGlobalStats] = useState({
     devicesOnline: 1247,
@@ -664,7 +666,7 @@ const SolarDashboard = () => {
     const {
       hourly,
       daily
-    } = await fetchEnergyTabData();
+    } = await fetchEnergyTabData(selectedDeviceId);
     if (hourly && hourly.labels?.length) {
       const newSolar = buildSolarGenerationData(hourly.labels, hourly.generation.map(w => Number((w / 1000).toFixed(2))));
       solarGenerationData.current = newSolar;
@@ -701,7 +703,7 @@ const SolarDashboard = () => {
         data.datasets[1].data = newGenVsCons.datasets[1].data;
       });
     }
-    const [paymentStats, paymentTrend, forecast, maintenanceAlerts, devices] = await Promise.all([fetchPaymentStats(), fetchPaymentTrend(), fetchForecast(), fetchMaintenanceAlerts(), fetchDevices()]);
+    const [paymentStats, paymentTrend, forecast, maintenanceAlerts, devices] = await Promise.all([fetchPaymentStats(), fetchPaymentTrend(), fetchForecast(selectedDeviceId), fetchMaintenanceAlerts(selectedDeviceId), fetchDevices()]);
     if (paymentStats) {
       const total = paymentStats.count || 892;
       const paid = paymentStats.cleared || paymentStats.completed || 0;
@@ -927,7 +929,7 @@ const SolarDashboard = () => {
       data.datasets[0].pointBorderColor = newPanelEfficiency.datasets[0].pointBorderColor;
     });
     setRefresh(r => r + 1);
-  }, []);
+  }, [selectedDeviceId]);
   useEffect(() => {
     const stats = setInterval(() => {
       if (document.hidden) return;
@@ -966,6 +968,30 @@ const SolarDashboard = () => {
           setOtaEnabled(!!state.otaEnabled);
         }
       } catch {/* flag stays off */}
+    })();
+  }, []);
+
+  /* Fetch device list for the device selector. */
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = localStorage.getItem('authToken');
+        const res = await fetch('/api/admin/devices', {
+          headers: token ? {
+            Authorization: `Bearer ${token}`
+          } : {}
+        });
+        if (res.ok) {
+          const {
+            devices
+          } = await res.json();
+          if (devices?.length) {
+            setDevicesList(devices);
+            // Keep current selection if it exists in the new list, else default to first
+            setSelectedDeviceId(prev => devices.some(d => d.device_id === prev) ? prev : devices[0].device_id);
+          }
+        }
+      } catch {/* keep default */}
     })();
   }, []);
 
@@ -1186,7 +1212,18 @@ const SolarDashboard = () => {
     className: "mt-1 text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50"
   }, "Analysis Board")), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-3 shadow-sm"
-  }, /*#__PURE__*/React.createElement("span", {
+  }, devicesList.length > 1 && /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "text-sm text-slate-500 dark:text-slate-400"
+  }, "Device:"), /*#__PURE__*/React.createElement("select", {
+    value: selectedDeviceId,
+    onChange: e => setSelectedDeviceId(e.target.value),
+    className: "px-3 py-1.5 text-sm border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+  }, devicesList.map(d => /*#__PURE__*/React.createElement("option", {
+    key: d.device_id,
+    value: d.device_id
+  }, d.device_id, " ", d.location ? `(${d.location})` : '')))), /*#__PURE__*/React.createElement("span", {
     className: "flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"
   }), /*#__PURE__*/React.createElement("span", {
     className: "text-sm font-medium text-slate-500 dark:text-slate-400"

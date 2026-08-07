@@ -533,6 +533,8 @@ const SolarDashboard = () => {
   const isDark = usePrefersDarkMode();
   const [activeTab, setActiveTab] = useState('energy');
   const [refresh, setRefresh] = useState(0);
+  const [selectedDeviceId, setSelectedDeviceId] = useState('DEMO-001');
+  const [devicesList, setDevicesList] = useState([]);
   const chartRefs = useRef({});
   const [globalStats, setGlobalStats] = useState({ devicesOnline: 1247, todayRevenue: 45680, activeCustomers: 892 });
   /* OTA feature flag — surfaced by the server on /api/state; when false the
@@ -611,7 +613,7 @@ const SolarDashboard = () => {
   const makeNumbers = (values) => values.map((value) => Number(value.toFixed(2)));
 
   const refreshAllCharts = useCallback(async () => {
-    const { hourly, daily } = await fetchEnergyTabData();
+    const { hourly, daily } = await fetchEnergyTabData(selectedDeviceId);
 
     if (hourly && hourly.labels?.length) {
       const newSolar = buildSolarGenerationData(hourly.labels, hourly.generation.map((w) => Number((w / 1000).toFixed(2))));
@@ -656,8 +658,8 @@ const SolarDashboard = () => {
     const [paymentStats, paymentTrend, forecast, maintenanceAlerts, devices] = await Promise.all([
       fetchPaymentStats(),
       fetchPaymentTrend(),
-      fetchForecast(),
-      fetchMaintenanceAlerts(),
+      fetchForecast(selectedDeviceId),
+      fetchMaintenanceAlerts(selectedDeviceId),
       fetchDevices()
     ]);
 
@@ -889,7 +891,7 @@ const SolarDashboard = () => {
     });
 
     setRefresh((r) => r + 1);
-  }, []);
+  }, [selectedDeviceId]);
 
   useEffect(() => {
     const stats = setInterval(() => {
@@ -928,6 +930,29 @@ const SolarDashboard = () => {
       } catch { /* flag stays off */ }
     })();
   }, []);
+
+  /* Fetch device list for the device selector. */
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = localStorage.getItem('authToken');
+        const res = await fetch('/api/admin/devices', { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (res.ok) {
+          const { devices } = await res.json();
+          if (devices?.length) {
+            setDevicesList(devices);
+            // Keep current selection if it exists in the new list, else default to first
+            setSelectedDeviceId(prev => devices.some(d => d.device_id === prev) ? prev : devices[0].device_id);
+          }
+        }
+      } catch { /* keep default */ }
+    })();
+  }, []);
+
+  /* Refresh charts when selected device changes. */
+  useEffect(() => {
+    refreshAllCharts();
+  }, [selectedDeviceId, refreshAllCharts]);
 
   /* Load the version list lazily the first time the Firmware tab is opened. */
   useEffect(() => {
@@ -1087,6 +1112,22 @@ const SolarDashboard = () => {
             <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50">Analysis Board</h1>
           </div>
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-3 shadow-sm">
+            {devicesList.length > 1 && (
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-slate-500 dark:text-slate-400">Device:</label>
+                <select
+                  value={selectedDeviceId}
+                  onChange={(e) => setSelectedDeviceId(e.target.value)}
+                  className="px-3 py-1.5 text-sm border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                >
+                  {devicesList.map((d) => (
+                    <option key={d.device_id} value={d.device_id}>
+                      {d.device_id} {d.location ? `(${d.location})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <span className="text-sm font-medium text-slate-500 dark:text-slate-400">Live —</span>
             <LiveClock />
