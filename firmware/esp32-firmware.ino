@@ -23,6 +23,8 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <Update.h>          // OTA partition flashing (only used when OTA_ENABLED=1)
+#include <mbedtls/md.h>      // SHA-256 digest while streaming the download
 
 // ===== CONFIGURATION =====
 #define BACKEND_URL "https://smart-solar-monitoring-pay-as-you-go.onrender.com/api/telemetry"
@@ -48,6 +50,21 @@
 #define DEVICE_ID "SOLAR_DEVICE_001"  // Give each physical device a unique ID before flashing
 #define PANEL_TYPE "Monocrystalline_400W"  // Panel configuration
 #define UPDATE_INTERVAL 5000  // Send data every 5 seconds
+
+// ===== OTA UPDATE CONFIGURATION (compile-time opt-in, default OFF) =====
+// The backend only serves /api/firmware/* when its OTA_ENABLED env flag is
+// true. On the device side this is a *compile-time* switch: set to 1 only on
+// a build you intend to self-update. Stock firmware keeps it 0, so nothing
+// in the field changes behavior until a deliberately OTA-enabled build is
+// flashed — the safe default for a fleet you can't remotely recover.
+#define OTA_ENABLED 0
+
+// Version of THIS firmware build. The backend compares against it and only
+// offers an update when the published version is strictly newer.
+#define FIRMWARE_VERSION "1.0.0"
+
+// Origin of the OTA API (same host as BACKEND_URL). Unused while OTA_ENABLED=0.
+#define OTA_SERVER_BASE "https://smart-solar-monitoring-pay-as-you-go.onrender.com"
 
 // Local safety cutoff: power is forced off below this battery % regardless
 // of what the backend says, to protect the battery from over-discharge.
@@ -83,6 +100,11 @@ bool gsmReady = false;  // Set true once initializeGSM() completes — used inst
                         // bytes right now, not whether the module is actually usable.
 unsigned long lastWifiRetry = 0;
 const unsigned long WIFI_RETRY_INTERVAL = 30000;  // try a reconnect at most every 30 s
+
+#if OTA_ENABLED
+unsigned long lastOtaCheck = 0;
+const unsigned long OTA_CHECK_INTERVAL = 86400000UL;  // 24 h
+#endif
 
 // Panel configuration database
 struct PanelConfig {
@@ -124,7 +146,13 @@ void setup() {
     Serial.println("WiFi failed, falling back to GSM...");
     initializeGSM();
   }
-  
+
+#if OTA_ENABLED
+  // OTA needs a TLS socket — only attempt it over WiFi. GSM units skip the
+  // check this boot and pick it up on a later WiFi-connected loop tick.
+  if (WiFi.status() == WL_CONNECTED) checkForOTA();
+#endif
+
   Serial.println("Setup complete. Starting telemetry...");
 }
 
@@ -134,7 +162,15 @@ void loop() {
     collectAndSendTelemetry();
     lastSendTime = millis();
   }
-  
+
+#if OTA_ENABLED
+  // Periodic update check — unsigned millis() arithmetic wraps safely.
+  if (WiFi.status() == WL_CONNECTED && millis() - lastOtaCheck >= OTA_CHECK_INTERVAL) {
+    lastOtaCheck = millis();
+    checkForOTA();
+  }
+#endif
+
   delay(100);
 }
 
@@ -194,7 +230,9 @@ void loadPanelConfig(const char* panelType) {
   for (int i = 0; i < 5; i++) {
     if (strcmp(panelConfigs[i].name, panelType) == 0) {
       currentPanelConfig = panelConfigs[i];
-      Serial.printf("Panel config loaded: %s (%.1fA max, %.0fW nom)\n",
+      /* nominalPower is an int — %.0f would read it as double and print
+         garbage; %d is the correct format. */
+      Serial.printf("Panel config loaded: %s (%.1fA max, %dW nom)\n",
         currentPanelConfig.name, currentPanelConfig.maxCurrent, currentPanelConfig.nominalPower);
       return;
     }
@@ -294,6 +332,10 @@ String buildTelemetryJSON(float voltage, float current, int generation,
   String json = "{";
   json += "\"deviceId\":\"" + String(DEVICE_ID) + "\",";
   json += "\"panelType\":\"" + String(PANEL_TYPE) + "\",";
+  // Lets the admin fleet panel show what each device actually runs (as
+  // opposed to the OTA target the backend last offered). Sent on every
+  // heartbeat so the server can flag devices stuck on an old build.
+  json += "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\",";
   json += "\"voltage\":" + String(voltage, 1) + ",";
   json += "\"current\":" + String(current, 2) + ",";
   json += "\"generation\":" + String(generation) + ",";
@@ -431,6 +473,197 @@ void sendGSMCommand(const char* command, unsigned long timeout) {
     }
   }
 }
+
+// ===== OTA UPDATES (only compiled when OTA_ENABLED=1) =====
+
+#if OTA_ENABLED
+// Compare dotted version strings like "1.2.3". Returns <0 if a<b, 0 if equal,
+// >0 if a>b. Missing segments count as 0 ("1.2" == "1.2.0").
+int compareVersionStrings(String a, String b) {
+  int idxA = 0, idxB = 0;
+  while (idxA < a.length() || idxB < b.length()) {
+    int nextA = a.indexOf('.', idxA);
+    int nextB = b.indexOf('.', idxB);
+    int segA = a.substring(idxA, nextA < 0 ? a.length() : nextA).toInt();
+    int segB = b.substring(idxB, nextB < 0 ? b.length() : nextB).toInt();
+    if (segA != segB) return segA < segB ? -1 : 1;
+    idxA = nextA < 0 ? a.length() : nextA + 1;
+    idxB = nextB < 0 ? b.length() : nextB + 1;
+  }
+  return 0;
+}
+
+// Pulls "key":"value" out of the JSON-ish /latest response with a substring
+// scan — same style as applyRelayStateFromResponse (no JSON library).
+String extractJsonString(String json, String key) {
+  String needle = "\"" + key + "\":\"";
+  int start = json.indexOf(needle);
+  if (start < 0) return "";
+  start += needle.length();
+  int end = json.indexOf('"', start);
+  if (end < 0) return "";
+  return json.substring(start, end);
+}
+
+/* Download the binary over HTTPS, stream it into the OTA partition while
+   computing its SHA-256, and only commit (Update.end) when the digest matches
+   the one the backend published. On any failure the OTA partition is aborted
+   and the currently-running firmware is left untouched — the device keeps
+   operating and retries on the next check. */
+bool otaDownloadAndApply(String url, String expectedSha256) {
+  HTTPClient http;
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure();  // same TLS tradeoff as sendViaHTTP()
+  if (!http.begin(secureClient, url)) {
+    Serial.println("OTA: could not open connection");
+    return false;
+  }
+
+  http.addHeader("X-Device-Id", DEVICE_ID);
+  if (strlen(DEVICE_API_KEY) > 0) http.addHeader("X-Device-Key", DEVICE_API_KEY);
+  http.setTimeout(15000);
+
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("OTA: server responded %d\n", code);
+    http.end();
+    return false;
+  }
+
+  int contentLength = http.getSize();
+  if (contentLength <= 0) {
+    Serial.println("OTA: missing content length in response");
+    http.end();
+    return false;
+  }
+
+  if (!Update.begin(contentLength)) {
+    Serial.printf("OTA: Update.begin failed (error %d)\n", Update.getError());
+    http.end();
+    return false;
+  }
+
+  mbedtls_md_context_t mdCtx;
+  mbedtls_md_init(&mdCtx);
+  mbedtls_md_setup(&mdCtx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 0);
+  mbedtls_md_starts(&mdCtx);
+
+  WiFiClient* stream = http.getStreamPtr();
+  uint8_t buf[1024];
+  size_t written = 0;
+  unsigned long lastDataAt = millis();
+  unsigned long lastProgress = 0;
+
+  while (stream->connected() && written < (size_t)contentLength) {
+    size_t avail = stream->available();
+    if (avail == 0) {
+      // Stall guard — a dead connection must abort, not hang the loop forever.
+      if (millis() - lastDataAt > 15000) {
+        Serial.println("OTA: connection stalled — aborting");
+        break;
+      }
+      delay(1);
+      continue;
+    }
+    lastDataAt = millis();
+    if (avail > sizeof(buf)) avail = sizeof(buf);
+    size_t n = stream->readBytes(buf, avail);
+    if (n == 0) continue;
+
+    mbedtls_md_update(&mdCtx, buf, n);
+    if (Update.write(buf, n) != n) {
+      Serial.println("OTA: flash write short — aborting");
+      written = 0;
+      break;
+    }
+    written += n;
+    if (millis() - lastProgress > 5000) {
+      Serial.printf("OTA: %d / %d bytes\n", written, contentLength);
+      lastProgress = millis();
+    }
+  }
+
+  uint8_t digest[32];
+  mbedtls_md_finish(&mdCtx, digest);
+  mbedtls_md_free(&mdCtx);
+  http.end();
+
+  if (written != (size_t)contentLength) {
+    Serial.printf("OTA: incomplete download (%d of %d) — aborting\n", written, contentLength);
+    Update.abort();
+    return false;
+  }
+
+  String actualSha256 = "";
+  for (int i = 0; i < 32; i++) {
+    char hex[3];
+    /* (unsigned) cast: %02x expects unsigned int; digest[i] is unsigned
+       char which promotes to (signed) int — avoids a -Wformat warning. */
+    snprintf(hex, sizeof(hex), "%02x", (unsigned)digest[i]);
+    actualSha256 += hex;
+  }
+  /* Fail CLOSED: a missing/malformed published checksum must abort the same
+     as a mismatch — never flash an unverified binary. */
+  if (expectedSha256.length() != 64 || actualSha256 != expectedSha256) {
+    Serial.println("OTA: checksum missing or SHA-256 mismatch — keeping current firmware");
+    Update.abort();
+    return false;
+  }
+
+  if (!Update.end()) {
+    Serial.printf("OTA: Update.end failed (error %d)\n", Update.getError());
+    return false;
+  }
+
+  Serial.println("OTA: success — rebooting into new firmware");
+  ESP.restart();
+  return true;  // unreachable
+}
+
+/* Ask the backend for the latest firmware and apply it if it's newer.
+   Safe when no update exists or the backend is unreachable — both are
+   logged and ignored. */
+void checkForOTA() {
+  Serial.println("OTA: checking for updates...");
+  String url = String(OTA_SERVER_BASE) + "/api/firmware/latest";
+
+  HTTPClient http;
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure();
+  if (!http.begin(secureClient, url)) {
+    Serial.println("OTA: could not reach update server");
+    return;
+  }
+
+  http.addHeader("X-Device-Id", DEVICE_ID);
+  if (strlen(DEVICE_API_KEY) > 0) http.addHeader("X-Device-Key", DEVICE_API_KEY);
+  http.setTimeout(10000);
+
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("OTA: check failed (%d)\n", code);
+    http.end();
+    return;
+  }
+  String body = http.getString();
+  http.end();
+
+  String remoteVersion = extractJsonString(body, "version");
+  String urlPath       = extractJsonString(body, "url");
+  String checksum      = extractJsonString(body, "checksum");
+
+  if (remoteVersion.length() == 0 || urlPath.length() == 0) {
+    Serial.println("OTA: no update available");
+    return;
+  }
+
+  Serial.printf("OTA: server has %s, this unit runs %s\n", remoteVersion.c_str(), FIRMWARE_VERSION);
+  if (compareVersionStrings(remoteVersion, FIRMWARE_VERSION) <= 0) return;
+
+  Serial.printf("OTA: applying %s...\n", remoteVersion.c_str());
+  otaDownloadAndApply(String(OTA_SERVER_BASE) + urlPath, checksum);
+}
+#endif  // OTA_ENABLED
 
 // ===== SENSOR INITIALIZATION =====
 void initializeSensors() {

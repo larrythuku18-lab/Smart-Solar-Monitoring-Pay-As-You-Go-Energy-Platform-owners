@@ -14,6 +14,10 @@ services:
       # reach the postgres service by its Docker network hostname.
       - DATABASE_URL=postgresql://solarpayg:solarpayg_password@postgres:5432/solarpayg
       - JWT_SECRET=${JWT_SECRET:-change-me-in-production-min-32-chars}
+      # OTA firmware updates — OFF by default. Flip to true (canary first) to
+      # mount /api/firmware/*; setting it back to false + `docker compose
+      # restart app` is the documented rollback for the whole feature.
+      - OTA_ENABLED=${OTA_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy

@@ -140,6 +140,26 @@ describe('telemetry input validation', () => {
     const r = await telemetry({ deviceId: 'TEST-STR-001', voltage: 'abc', current: 'xyz' });
     assert.equal(r.status, 400);
   });
+
+  test('accepts telemetry with a valid firmwareVersion string', async () => {
+    const r = await telemetry({
+      deviceId: 'VALID-FW-001',
+      voltage: 48, current: 3, generation: 144, battery: 80,
+      firmwareVersion: '1.2.3'
+    });
+    assert.ok(r.status === 200 || r.status === 401,
+      `expected 200 or 401, got ${r.status}`);
+  });
+
+  test('rejects telemetry with a non-string firmwareVersion', async () => {
+    const r = await telemetry({ deviceId: 'TEST-FW-001', firmwareVersion: 123 });
+    assert.equal(r.status, 400);
+  });
+
+  test('rejects telemetry with an oversized firmwareVersion (>32 chars)', async () => {
+    const r = await telemetry({ deviceId: 'TEST-FW-002', firmwareVersion: 'v'.repeat(40) });
+    assert.equal(r.status, 400);
+  });
 });
 
 describe('per-device rate limiting', () => {

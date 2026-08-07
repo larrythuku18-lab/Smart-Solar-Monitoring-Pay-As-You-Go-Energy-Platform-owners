@@ -54,6 +54,10 @@ firmware/esp32-firmware/
 # Other
 uploads/
 tmp/
+# OTA firmware binaries (server-stored, never committed)
+firmware-store/
+# Locally-downloaded toolchains (see scripts/compile-firmware.sh)
+.tools/
 *.pem
 *.key
 *.cert

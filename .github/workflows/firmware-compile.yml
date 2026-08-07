@@ -1,0 +1,46 @@
+# Firmware Compile Check
+#
+# Compiles firmware/esp32-firmware.ino against the real ESP32 Arduino
+# toolchain (arduino-cli + esp32:esp32 core) in BOTH configurations —
+# default (OTA_ENABLED=0) and OTA-enabled (OTA_ENABLED=1) — so firmware
+# changes are validated before anything reaches hardware. Runs only when
+# firmware, the compile script, or this workflow changes.
+#
+# Reuses scripts/compile-firmware.sh as the single source of truth: the same
+# command a developer runs locally is what CI runs.
+
+name: Firmware Compile Check
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'firmware/**'
+      - 'scripts/compile-firmware.sh'
+      - '.github/workflows/firmware-compile.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'firmware/**'
+      - 'scripts/compile-firmware.sh'
+      - '.github/workflows/firmware-compile.yml'
+  workflow_dispatch:
+
+jobs:
+  firmware-compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Compile firmware (default + OTA-enabled)
+        run: bash scripts/compile-firmware.sh
+
+      - name: Upload firmware binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-firmware-binaries
+          path: build/firmware/
+          if-no-files-found: error

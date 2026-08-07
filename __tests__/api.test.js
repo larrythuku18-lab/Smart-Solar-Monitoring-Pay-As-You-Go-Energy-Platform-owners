@@ -547,3 +547,95 @@ describe('fleet management (regions + battery)', () => {
     assert.equal(r.status, 403);
   });
 });
+
+describe('firmware version reporting', () => {
+  test('telemetry firmwareVersion is stored on the device and shown in the fleet list', async () => {
+    const adminToken = await loginAdmin();
+    const deviceId = `FW-${Date.now()}`;
+
+    // Provision the device so it has its own key (mirrors the other device tests)
+    const prov = await fetch(`${BASE}/api/admin/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ deviceId })
+    });
+    assert.equal(prov.status, 200);
+    const { device } = await prov.json();
+
+    // Device reports telemetry carrying its running firmware version
+    const tele = await fetch(`${BASE}/api/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Device-Key': device.api_key },
+      body: JSON.stringify({
+        deviceId, voltage: 48, current: 2, generation: 96, battery: 70,
+        firmwareVersion: '1.2.3'
+      })
+    });
+    assert.equal(tele.status, 200);
+
+    // The fleet list must surface it
+    const list = await fetch(`${BASE}/api/admin/devices`, { headers: { Authorization: `Bearer ${adminToken}` } });
+    const { devices } = await list.json();
+    const mine = devices.find(d => d.device_id === deviceId);
+    assert.ok(mine, 'provisioned device missing from fleet list');
+    assert.equal(mine.firmware_version, '1.2.3');
+  });
+
+  test('a device that never reports firmwareVersion keeps it NULL in the fleet list', async () => {
+    const adminToken = await loginAdmin();
+    const deviceId = `FW-NULL-${Date.now()}`;
+    const prov = await fetch(`${BASE}/api/admin/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ deviceId })
+    });
+    assert.equal(prov.status, 200);
+
+    // Telemetry WITHOUT firmwareVersion (e.g. an older build)
+    const tele = await fetch(`${BASE}/api/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId, voltage: 48, current: 2, generation: 96, battery: 70 })
+    });
+    assert.ok(tele.status === 200 || tele.status === 401,
+      `expected 200 or 401, got ${tele.status}`);
+
+    const list = await fetch(`${BASE}/api/admin/devices`, { headers: { Authorization: `Bearer ${adminToken}` } });
+    const { devices } = await list.json();
+    const mine = devices.find(d => d.device_id === deviceId);
+    assert.ok(mine, 'provisioned device missing from fleet list');
+    assert.equal(mine.firmware_version, null);
+  });
+
+  test('a later telemetry without firmwareVersion does not wipe the stored version', async () => {
+    const adminToken = await loginAdmin();
+    const deviceId = `FW-KEEP-${Date.now()}`;
+    const prov = await fetch(`${BASE}/api/admin/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ deviceId })
+    });
+    const { device } = await prov.json();
+    const headers = { 'Content-Type': 'application/json', 'X-Device-Key': device.api_key };
+
+    // First reports 1.2.3
+    const first = await fetch(`${BASE}/api/telemetry`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ deviceId, voltage: 48, firmwareVersion: '1.2.3' })
+    });
+    assert.equal(first.status, 200);
+
+    // Later telemetry omits it entirely (build stopped sending it)
+    const second = await fetch(`${BASE}/api/telemetry`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ deviceId, voltage: 48 })
+    });
+    assert.equal(second.status, 200);
+
+    const list = await fetch(`${BASE}/api/admin/devices`, { headers: { Authorization: `Bearer ${adminToken}` } });
+    const { devices } = await list.json();
+    const mine = devices.find(d => d.device_id === deviceId);
+    assert.equal(mine.firmware_version, '1.2.3',
+      'omitting firmwareVersion on a later heartbeat must not clear the stored version');
+  });
+});

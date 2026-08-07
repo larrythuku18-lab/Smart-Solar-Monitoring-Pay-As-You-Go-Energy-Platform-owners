@@ -531,6 +531,7 @@
               <th>Name</th>
               <th>Owner</th>
               <th>Battery</th>
+              <th>Firmware</th>
               <th>Status</th>
               <th>Last Seen</th>
               <th>API Key</th>
@@ -538,7 +539,7 @@
             </tr>
           </thead>
           <tbody id="device-fleet-body">
-            <tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted)">Loading devices…</td></tr>
+            <tr><td colspan="9" style="text-align:center;padding:24px;color:var(--muted)">Loading devices…</td></tr>
           </tbody>
         </table>
       </div>
@@ -829,7 +830,7 @@
     const tbody = document.getElementById('device-fleet-body');
     if (!tbody) return;
     if (!devices || !devices.length) {
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted)">No devices provisioned yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--muted)">No devices provisioned yet</td></tr>';
       return;
     }
 
@@ -842,12 +843,20 @@
       const owner = d.owner_email
         ? `${escapeHtml(d.owner_name || '')}${d.owner_name ? '<br>' : ''}<span style="color:var(--muted)">${escapeHtml(d.owner_email)}</span>`
         : '<span style="color:var(--muted)">unassigned</span>';
+      /* firmware_version is what the device itself reported via telemetry —
+         NULL/empty means it hasn't reported in (or runs a build older than
+         this column). Show a hint for the stale-build case via the version
+         badge below, not here. */
+      const fw = d.firmware_version
+        ? `<span class="badge badge-blue" style="font-family:monospace;font-size:9px">${escapeHtml(d.firmware_version)}</span>`
+        : '<span style="color:var(--muted)">—</span>';
       return `
       <tr>
         <td class="tx-device">${id}</td>
         <td style="font-size:11px;color:var(--sub)">${escapeHtml(d.name) || '—'}</td>
         <td style="font-size:10px">${owner}</td>
         <td style="font-size:11px">${fmtBattery(d)}</td>
+        <td style="font-size:11px">${fw}</td>
         <td><span class="badge ${statusClass}" style="font-size:9px">${escapeHtml(statusText)}</span></td>
         <td style="font-size:10px;color:var(--muted)">${fmtDate(d.last_seen)}</td>
         <td style="font-family:monospace;font-size:10px;color:var(--muted)">${escapeHtml(maskKey(d.api_key))}</td>
@@ -884,7 +893,7 @@
       const lowStr = low ? ` · <span style="color:var(--red);font-weight:700">${low} low battery</span>` : '';
       return `
       <tr style="background:rgba(255,255,255,.03)">
-        <td colspan="8" style="padding:8px 12px;font-size:10px;letter-spacing:.05em;text-transform:uppercase;font-weight:700;color:var(--sub)">
+        <td colspan="9" style="padding:8px 12px;font-size:10px;letter-spacing:.05em;text-transform:uppercase;font-weight:700;color:var(--sub)">
           ${escapeHtml(region)}
           <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">
             · ${list.length} device${list.length !== 1 ? 's' : ''} · ${online} online · ${list.length - online} offline${lowStr}

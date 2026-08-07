@@ -96,6 +96,11 @@ const {
 
 const { authMiddleware, signToken } = require('./authMiddleware');
 
+/* OTA firmware updates — feature-flagged (OTA_ENABLED=true). The module is
+   required unconditionally so its exports are available, but its routes are
+   only mounted when the flag is on (see the mount just above startup()). */
+const { router: firmwareRouter, otaEnabled } = require('./firmware');
+
 /* ── Password strength validation ─────────────────────────────────────────
    Reused across registration and password reset. Eight+ characters with at
    least one uppercase, one lowercase, one digit, and one special character.
@@ -426,7 +431,9 @@ app.get('/api/state', authMiddleware, async (req, res) => {
   }
   try {
     const [state, stats] = await Promise.all([getDashboardState(), getPaymentStats()]);
-    res.json({ ...state, paymentStats: stats });
+    /* otaEnabled lets the admin dashboard conditionally show the Firmware
+       tab without hardcoding env knowledge into the browser. */
+    res.json({ ...state, paymentStats: stats, otaEnabled: otaEnabled() });
   } catch (err) {
     console.error('Dashboard state error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
@@ -1569,19 +1576,28 @@ setInterval(pruneOldData, 12 * 60 * 60 * 1000);
    commands TO the device only works if it's reachable on the same network —
    most real deployments (behind a router, or on GSM) are not, so the device
    polls its state via this response instead. ── */
-app.post('/api/telemetry', apiLimiter, [
+/* The global app.use('/api/', apiLimiter) above already rate-limits this
+   route per IP — passing the SAME apiLimiter instance again here would
+   double-count every telemetry request (2 slots each), silently halving
+   the documented 120/min ceiling to 60. Per-device throttling is handled
+   separately by checkDeviceRateLimit() inside the handler. */
+app.post('/api/telemetry', [
   body('deviceId').isString().trim().notEmpty().withMessage('deviceId is required and must be a string'),
   body('voltage').optional().isFloat({ min: 0 }).toFloat(),
   body('current').optional().isFloat({ min: 0 }).toFloat(),
   body('generation').optional().isFloat({ min: 0 }).toFloat(),
   body('battery').optional().isFloat({ min: 0, max: 100 }).toFloat(),
-  body('consumption').optional().isFloat({ min: 0 }).toFloat()
+  body('consumption').optional().isFloat({ min: 0 }).toFloat(),
+  /* Firmware version string reported by the device itself (e.g. "1.0.0").
+     Optional and length-capped — a device stuck on a malicious/oversized
+     value must not poison the fleet panel's firmware column. */
+  body('firmwareVersion').optional().isString().trim().isLength({ max: 32 }).withMessage('firmwareVersion must be a short string')
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
   try {
-    const { deviceId, voltage, current, generation, battery, consumption } = req.body;
+    const { deviceId, voltage, current, generation, battery, consumption, firmwareVersion } = req.body;
 
     const existingDevice = await getDevice(deviceId);
     const expectedKey = existingDevice?.api_key || process.env.DEVICE_API_KEY;
@@ -1598,7 +1614,7 @@ app.post('/api/telemetry', apiLimiter, [
       return res.status(429).json({ error: 'Too many telemetry requests for this device — slow down' });
     }
 
-    await upsertDeviceHeartbeat({ deviceId, ip: req.ip });
+    await upsertDeviceHeartbeat({ deviceId, ip: req.ip, firmwareVersion });
 
     const reading = {
       deviceId,
@@ -1863,10 +1879,10 @@ cron.schedule('*/5 * * * *', async () => {
    fleet view's "problem unit" example. The heartbeat marks driven devices
    online, mirroring what real firmware posting /api/telemetry would do. */
 const SIM_FLEET = {
-  'DEMO-001': { battBase: 62, battSwing: 28, genScale: 1.0  },
-  'DEMO-002': { battBase: 78, battSwing: 16, genScale: 0.9  },
-  'DEMO-003': { battBase: 55, battSwing: 24, genScale: 1.1  },
-  'DEMO-004': { battBase: 13, battSwing: 6,  genScale: 0.35 }
+  'DEMO-001': { battBase: 62, battSwing: 28, genScale: 1.0,  fw: '1.0.0' },
+  'DEMO-002': { battBase: 78, battSwing: 16, genScale: 0.9,  fw: '1.0.0' },
+  'DEMO-003': { battBase: 55, battSwing: 24, genScale: 1.1,  fw: '1.1.0' },
+  'DEMO-004': { battBase: 13, battSwing: 6,  genScale: 0.35, fw: '1.0.0' }
 };
 setInterval(() => {
   const hour     = new Date().getHours();
@@ -1881,7 +1897,7 @@ setInterval(() => {
       current:      Math.round((8  + Math.random() * 6) * 10) / 10
     };
     insertEnergyReading(reading).catch(err => console.error('Energy insert error:', err.message));
-    upsertDeviceHeartbeat({ deviceId }).catch(err => console.error('Sim heartbeat error:', err.message));
+    upsertDeviceHeartbeat({ deviceId, ip: null, firmwareVersion: p.fw }).catch(err => console.error('Sim heartbeat error:', err.message));
 
     // Feed the live forecaster/maintenance models too, so they keep retraining
     // throughout the session instead of only warming up once at startup.
@@ -1996,6 +2012,15 @@ async function startup() {
         + 'readings for any deviceId. Fine for demos, not for real hardware in the field.');
     }
   });
+}
+
+/* ── OTA firmware updates (feature-flagged, default OFF) ─────────────────
+   The routes don't exist at all unless OTA_ENABLED=true — a request to
+   /api/firmware/* falls through to the static handler (404), which is also
+   the rollback mechanism: set OTA_ENABLED=false and restart. */
+if (otaEnabled()) {
+  app.use('/api/firmware', firmwareRouter);
+  console.log('[OTA] Firmware update endpoints enabled (OTA_ENABLED=true)');
 }
 
 /* console.error to a pipe (Render's log stream, `node app.js > file`) is

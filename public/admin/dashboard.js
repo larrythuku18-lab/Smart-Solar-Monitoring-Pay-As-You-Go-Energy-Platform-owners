@@ -261,6 +261,24 @@ const fetchFraudRiskData = async () => {
     return null;
   }
 };
+
+/* Firmware (OTA) — only wired up when the backend runs with OTA_ENABLED=true
+   (the server exposes it via /api/state; the routes 404 otherwise). */
+const fetchFirmwareVersions = async () => {
+  try {
+    const token = localStorage.getItem('authToken');
+    const headers = token ? {
+      Authorization: `Bearer ${token}`
+    } : {};
+    const res = await fetch('/api/firmware', {
+      headers
+    });
+    return res.ok ? (await res.json()).versions || [] : [];
+  } catch (err) {
+    console.warn('Firmware list fetch failed:', err.message);
+    return [];
+  }
+};
 const fetchDevices = async () => {
   try {
     const token = localStorage.getItem('authToken');
@@ -550,6 +568,19 @@ const SolarDashboard = () => {
     devicesOnline: 1247,
     todayRevenue: 45680,
     activeCustomers: 892
+  });
+  /* OTA feature flag — surfaced by the server on /api/state; when false the
+     Firmware tab is never rendered and the tab bar matches the old layout. */
+  const [otaEnabled, setOtaEnabled] = useState(false);
+  const [firmwareVersions, setFirmwareVersions] = useState([]);
+  const [uploadState, setUploadState] = useState({
+    busy: false,
+    message: null,
+    error: null
+  });
+  const [activateState, setActivateState] = useState({
+    busyId: null,
+    error: null
   });
   const solarGenerationData = useRef(buildSolarGenerationData([], []));
   const batteryStateData = useRef(buildBatteryStateData([], []));
@@ -918,6 +949,31 @@ const SolarDashboard = () => {
   useEffect(() => {
     refreshAllCharts();
   }, [refreshAllCharts]);
+
+  /* Read the OTA feature flag from the server; without it the Firmware tab
+     stays hidden even if the dashboard is served by an OTA-enabled build. */
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = localStorage.getItem('authToken');
+        const res = await fetch('/api/state', {
+          headers: token ? {
+            Authorization: `Bearer ${token}`
+          } : {}
+        });
+        if (res.ok) {
+          const state = await res.json();
+          setOtaEnabled(!!state.otaEnabled);
+        }
+      } catch {/* flag stays off */}
+    })();
+  }, []);
+
+  /* Load the version list lazily the first time the Firmware tab is opened. */
+  useEffect(() => {
+    if (!otaEnabled || activeTab !== 'firmware') return;
+    fetchFirmwareVersions().then(setFirmwareVersions);
+  }, [otaEnabled, activeTab]);
   const card = 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm p-5';
   const tabs = [{
     id: 'energy',
@@ -931,7 +987,99 @@ const SolarDashboard = () => {
   }, {
     id: 'operations',
     label: 'Operations'
-  }];
+  }, ...(otaEnabled ? [{
+    id: 'firmware',
+    label: 'Firmware'
+  }] : [])];
+  const handleFirmwareUpload = async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const file = form.file.files[0];
+    const version = form.version.value.trim();
+    const changelog = form.changelog.value.trim();
+    if (!file) {
+      setUploadState({
+        busy: false,
+        message: null,
+        error: 'Choose a .bin file first'
+      });
+      return;
+    }
+    if (!version) {
+      setUploadState({
+        busy: false,
+        message: null,
+        error: 'Enter a version like 1.2.0'
+      });
+      return;
+    }
+    setUploadState({
+      busy: true,
+      message: null,
+      error: null
+    });
+    try {
+      const token = localStorage.getItem('authToken');
+      const params = new URLSearchParams({
+        version,
+        changelog
+      });
+      const res = await fetch(`/api/firmware/upload?${params.toString()}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/octet-stream'
+        },
+        body: await file.arrayBuffer()
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Upload failed (HTTP ${res.status})`);
+      setUploadState({
+        busy: false,
+        message: `Uploaded ${body.version} — staged. Activate it when you're ready. SHA-256 ${body.checksum.slice(0, 12)}…`,
+        error: null
+      });
+      form.reset();
+      setFirmwareVersions(await fetchFirmwareVersions());
+    } catch (err) {
+      setUploadState({
+        busy: false,
+        message: null,
+        error: err.message
+      });
+    }
+  };
+
+  /* Promote a staged version to the active OTA target — the fleet only
+     receives the active version on its next check, so upload alone never
+     targets devices. */
+  const handleActivateFirmware = async id => {
+    setActivateState({
+      busyId: id,
+      error: null
+    });
+    try {
+      const token = localStorage.getItem('authToken');
+      const res = await fetch(`/api/firmware/activate/${id}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Activation failed (HTTP ${res.status})`);
+      setActivateState({
+        busyId: null,
+        error: null
+      });
+      setFirmwareVersions(await fetchFirmwareVersions());
+    } catch (err) {
+      setActivateState({
+        busyId: null,
+        error: err.message
+      });
+    }
+  };
   const mkRef = key => c => {
     if (c) chartRefs.current[key] = c.chartInstance || c;
   };
@@ -1454,7 +1602,78 @@ const SolarDashboard = () => {
         }
       }
     }
-  })))));
+  }))), activeTab === 'firmware' && otaEnabled && /*#__PURE__*/React.createElement("div", {
+    className: "mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2"
+  }, /*#__PURE__*/React.createElement(ChartCard, {
+    title: "Upload Firmware",
+    badge: "OTA",
+    badgeColor: "amber",
+    subtitle: "Upload stages the .bin \u2014 nothing is sent to devices until you activate it."
+  }, /*#__PURE__*/React.createElement("form", {
+    onSubmit: handleFirmwareUpload,
+    className: "space-y-4"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1"
+  }, "Firmware binary (.bin)"), /*#__PURE__*/React.createElement("input", {
+    name: "file",
+    type: "file",
+    accept: ".bin,application/octet-stream",
+    className: "w-full text-sm text-slate-600 dark:text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-amber-500 file:px-3 file:py-1.5 file:text-white file:font-semibold hover:file:bg-amber-600 transition-colors cursor-pointer"
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1"
+  }, "Version"), /*#__PURE__*/React.createElement("input", {
+    name: "version",
+    placeholder: "1.2.0",
+    required: true,
+    pattern: "\\d{1,4}(\\.\\d{1,4}){1,3}",
+    className: "w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-amber-400"
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    className: "block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1"
+  }, "Changelog"), /*#__PURE__*/React.createElement("textarea", {
+    name: "changelog",
+    rows: 3,
+    placeholder: "What changed in this release?",
+    className: "w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-amber-400"
+  })), /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    disabled: uploadState.busy,
+    className: "w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-amber-500/30 transition-all hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+  }, uploadState.busy ? 'Uploading…' : 'Upload & Activate'), uploadState.error && /*#__PURE__*/React.createElement("p", {
+    className: "text-sm text-rose-600 dark:text-rose-400"
+  }, uploadState.error), uploadState.message && /*#__PURE__*/React.createElement("p", {
+    className: "text-sm text-emerald-600 dark:text-emerald-400"
+  }, uploadState.message))), /*#__PURE__*/React.createElement(ChartCard, {
+    title: "Published Versions",
+    badge: `${firmwareVersions.length} total`,
+    badgeColor: "sky",
+    subtitle: "Uploads are staged \u2014 activate a version to make it the fleet target."
+  }, firmwareVersions.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-center h-48 text-sm text-slate-400"
+  }, "No firmware published yet.") : /*#__PURE__*/React.createElement("ul", {
+    className: "divide-y divide-slate-100 dark:divide-slate-800"
+  }, firmwareVersions.map(v => /*#__PURE__*/React.createElement("li", {
+    key: v.id,
+    className: "py-3 flex items-start justify-between gap-4"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("p", {
+    className: "text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2"
+  }, v.version, v.is_active && /*#__PURE__*/React.createElement(Badge, {
+    label: "Active",
+    color: "emerald"
+  })), /*#__PURE__*/React.createElement("p", {
+    className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400 font-mono"
+  }, v.checksum.slice(0, 16), "\u2026"), v.changelog && /*#__PURE__*/React.createElement("p", {
+    className: "mt-1 text-xs text-slate-500 dark:text-slate-400"
+  }, v.changelog)), /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-col items-end gap-1 shrink-0"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "text-xs text-slate-400"
+  }, (v.size_bytes / 1024).toFixed(1), " KB"), !v.is_active && /*#__PURE__*/React.createElement("button", {
+    onClick: () => handleActivateFirmware(v.id),
+    disabled: activateState.busyId !== null,
+    className: "rounded-lg bg-emerald-500 px-3 py-1 text-xs font-semibold text-white transition-all hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
+  }, activateState.busyId === v.id ? 'Activating…' : 'Activate'))))), activateState.error && /*#__PURE__*/React.createElement("p", {
+    className: "mt-3 text-sm text-rose-600 dark:text-rose-400"
+  }, activateState.error)))));
 };
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(/*#__PURE__*/React.createElement(SolarDashboard, null));

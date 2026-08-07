@@ -113,6 +113,10 @@ async function runMigrations() {
     -- online/offline status shown on the admin dashboard (see isDeviceOnline
     -- below). NULL means it has never reported in.
     ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ;
+    -- Firmware version reported by the device's own telemetry (e.g. "1.0.0").
+    -- Lets the admin fleet panel show what each unit actually runs, not just
+    -- the OTA target the backend offered. NULL until the device reports in.
+    ALTER TABLE devices ADD COLUMN IF NOT EXISTS firmware_version VARCHAR(32);
 
     -- ── Energy readings (IoT telemetry from ESP32) ─────────────────────────
     CREATE TABLE IF NOT EXISTS energy_readings (
@@ -215,6 +219,21 @@ async function runMigrations() {
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_id   INTEGER REFERENCES products(id) ON DELETE SET NULL;
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_name VARCHAR(255);
 
+    -- ── Firmware versions (OTA updates) ────────────────────────────────────
+    -- One row per published binary; exactly one row may be active at a time
+    -- (enforced by insertFirmwareVersion's transaction). Checksum is the
+    -- SHA-256 hex of the binary — devices refuse to apply on mismatch.
+    CREATE TABLE IF NOT EXISTS firmware_versions (
+      id         BIGSERIAL    PRIMARY KEY,
+      version    VARCHAR(32)  NOT NULL UNIQUE,
+      filename   VARCHAR(128) NOT NULL,          -- server-generated UUID .bin name on disk
+      checksum   CHAR(64)     NOT NULL,          -- SHA-256 hex
+      changelog  TEXT,
+      size_bytes BIGINT       DEFAULT 0,
+      is_active  BOOLEAN      DEFAULT FALSE,
+      created_at TIMESTAMPTZ  DEFAULT NOW()
+    );
+
     -- Data fix: category icons were originally seeded as emojis; the UI no
     -- longer renders them and the product style is text-only. seedProducts()
     -- only runs on an empty catalogue, so existing databases keep the old
@@ -247,6 +266,8 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS idx_energy_recorded   ON energy_readings(recorded_at);
     -- Index for getAlertsByUserId() — customer alert lookups
     CREATE INDEX IF NOT EXISTS idx_alerts_user       ON maintenance_alerts(user_id);
+    -- Active-firmware lookup (GET /api/firmware/latest) — one active row max
+    CREATE INDEX IF NOT EXISTS idx_firmware_active   ON firmware_versions (is_active) WHERE is_active;
   `);
 
   console.log('[DB] PostgreSQL migrations complete');
@@ -572,8 +593,13 @@ async function getDevice(deviceId) {
  * Auto-register a device the first time it reports telemetry, or refresh
  * its last-known IP/status on every subsequent report. This is what lets
  * a real ESP32 show up without a separate manual provisioning step.
+ *
+ * firmwareVersion is the version string the device reported in its own
+ * telemetry (see buildTelemetryJSON in the firmware). It's stored only when
+ * non-empty — a device that stops sending it (or an older build without the
+ * field) must not wipe out the last known version.
  */
-async function upsertDeviceHeartbeat({ deviceId, ip, name }) {
+async function upsertDeviceHeartbeat({ deviceId, ip, name, firmwareVersion }) {
   await q(
     `INSERT INTO devices (device_id, device_ip, name, status, is_active, relay_state, last_seen)
      VALUES ($1,$2,$3,'active',TRUE,'on',NOW())
@@ -581,8 +607,12 @@ async function upsertDeviceHeartbeat({ deviceId, ip, name }) {
        SET device_ip = COALESCE(EXCLUDED.device_ip, devices.device_ip),
            status    = 'active',
            is_active = TRUE,
-           last_seen = NOW()`,
-    [deviceId, ip || null, name || deviceId]
+           last_seen = NOW(),
+           /* NULLIF('', …) -> NULL, so an empty/missing version never
+              overwrites the last known good value. Explicit ::VARCHAR cast
+              so Postgres can pin the parameter type. */
+           firmware_version = COALESCE(NULLIF($4::VARCHAR, ''), devices.firmware_version)`,
+    [deviceId, ip || null, name || deviceId, firmwareVersion || null]
   );
 }
 
@@ -1181,6 +1211,81 @@ async function getProductById(id) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   FIRMWARE (OTA) QUERIES
+══════════════════════════════════════════════════════════════════════════ */
+
+/** Stage a new firmware version WITHOUT activating it. Uploads land with
+ *  is_active = FALSE and only reach devices after an admin explicitly
+ *  activates the row (activateFirmwareVersion) — a broken binary can be
+ *  uploaded and discarded without ever targeting the fleet. Duplicate
+ *  `version` violates the UNIQUE constraint (pg error 23505) and is surfaced
+ *  by the caller as a 409. */
+async function insertFirmwareVersion({ version, filename, checksum, changelog = null, sizeBytes = 0 }) {
+  const { rows } = await q(
+    `INSERT INTO firmware_versions (version, filename, checksum, changelog, size_bytes, is_active)
+     VALUES ($1,$2,$3,$4,$5,FALSE)
+     RETURNING *`,
+    [version, filename, checksum, changelog, sizeBytes]
+  );
+  return rows[0];
+}
+
+/** Activate a staged firmware version — the only way a version becomes the
+ *  OTA target. Atomic: deactivates whatever is currently active, then marks
+ *  this row active. Returns null when the id doesn't exist.
+ *
+ *  The advisory lock serializes concurrent activations: without it, two
+ *  activations could interleave their deactivate/update steps and whichever
+ *  COMMIT lands last would win, leaving an older version active after a
+ *  newer one was acknowledged. */
+async function activateFirmwareVersion(id) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('firmware_publish'))");
+    const { rows: target } = await client.query(
+      'SELECT id FROM firmware_versions WHERE id = $1', [id]
+    );
+    if (target.length === 0) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    await client.query('UPDATE firmware_versions SET is_active = FALSE WHERE is_active = TRUE');
+    const { rows } = await client.query(
+      'UPDATE firmware_versions SET is_active = TRUE WHERE id = $1 RETURNING *',
+      [id]
+    );
+    await client.query('COMMIT');
+    return rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function getLatestFirmware() {
+  const { rows } = await q(
+    'SELECT * FROM firmware_versions WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1'
+  );
+  return rows[0] ?? null;
+}
+
+async function getFirmwareById(id) {
+  const { rows } = await q('SELECT * FROM firmware_versions WHERE id = $1', [id]);
+  return rows[0] ?? null;
+}
+
+async function listFirmwareVersions(limit = 20) {
+  const { rows } = await q(
+    'SELECT * FROM firmware_versions ORDER BY created_at DESC LIMIT $1',
+    [limit]
+  );
+  return rows;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    EXPORTS  (same surface as the old SQLite db.js)
 ══════════════════════════════════════════════════════════════════════════ */
 module.exports = {
@@ -1251,5 +1356,11 @@ module.exports = {
   /* products */
   seedProducts,
   getProductCatalogueWithCategories,
-  getProductById
+  getProductById,
+  /* firmware (OTA) */
+  insertFirmwareVersion,
+  activateFirmwareVersion,
+  getLatestFirmware,
+  getFirmwareById,
+  listFirmwareVersions
 };
