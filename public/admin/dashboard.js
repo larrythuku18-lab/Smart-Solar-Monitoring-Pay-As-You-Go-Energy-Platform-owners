@@ -279,6 +279,25 @@ const fetchFirmwareVersions = async () => {
     return [];
   }
 };
+
+/* Rollout status — the current target (even when paused), its rollout
+   envelope, and the last 24h of boot-fail reports driving the auto-pause
+   decision. Only meaningful when the Firmware tab is open. */
+const fetchRolloutStatus = async () => {
+  try {
+    const token = localStorage.getItem('authToken');
+    const headers = token ? {
+      Authorization: `Bearer ${token}`
+    } : {};
+    const res = await fetch('/api/firmware/rollout', {
+      headers
+    });
+    return res.ok ? res.json() : null;
+  } catch (err) {
+    console.warn('Rollout status fetch failed:', err.message);
+    return null;
+  }
+};
 const fetchDevices = async () => {
   try {
     const token = localStorage.getItem('authToken');
@@ -575,6 +594,7 @@ const SolarDashboard = () => {
      Firmware tab is never rendered and the tab bar matches the old layout. */
   const [otaEnabled, setOtaEnabled] = useState(false);
   const [firmwareVersions, setFirmwareVersions] = useState([]);
+  const [rolloutStatus, setRolloutStatus] = useState(null);
   const [uploadState, setUploadState] = useState({
     busy: false,
     message: null,
@@ -584,6 +604,16 @@ const SolarDashboard = () => {
     busyId: null,
     error: null
   });
+  /* Per-version staged-rollout drafts (rollout % + region) filled in next to
+     each Activate button — default 100% / no region = fleet-wide. */
+  const [rolloutDrafts, setRolloutDrafts] = useState({});
+  const setRolloutDraft = (id, field, value) => setRolloutDrafts(prev => ({
+    ...prev,
+    [id]: {
+      ...(prev[id] || {}),
+      [field]: value
+    }
+  }));
   const solarGenerationData = useRef(buildSolarGenerationData([], []));
   const batteryStateData = useRef(buildBatteryStateData([], []));
   const generationVsConsumptionData = useRef(buildGenerationVsConsumptionData([], [], []));
@@ -1028,10 +1058,12 @@ const SolarDashboard = () => {
     refreshAllCharts();
   }, [selectedDeviceId, refreshAllCharts]);
 
-  /* Load the version list lazily the first time the Firmware tab is opened. */
+  /* Load the version list + rollout status the first time the Firmware tab
+     is opened, and refresh every time the tab is re-selected. */
   useEffect(() => {
     if (!otaEnabled || activeTab !== 'firmware') return;
     fetchFirmwareVersions().then(setFirmwareVersions);
+    fetchRolloutStatus().then(setRolloutStatus);
   }, [otaEnabled, activeTab]);
   const card = 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm p-5';
   const tabs = [{
@@ -1111,15 +1143,22 @@ const SolarDashboard = () => {
 
   /* Promote a staged version to the active OTA target — the fleet only
      receives the active version on its next check, so upload alone never
-     targets devices. */
-  const handleActivateFirmware = async id => {
+     targets devices. Optional staged-rollout knobs: pct (0-100, clamped
+     server-side too) and region (case-insensitive location filter). */
+  const handleActivateFirmware = async (id, pct, region) => {
     setActivateState({
       busyId: id,
       error: null
     });
     try {
       const token = localStorage.getItem('authToken');
-      const res = await fetch(`/api/firmware/activate/${id}`, {
+      const params = new URLSearchParams();
+      if (pct !== undefined && pct !== '') {
+        params.set('rollout_pct', String(Math.max(0, Math.min(100, Number(pct) || 100))));
+      }
+      if (region && region.trim()) params.set('region', region.trim());
+      const qs = params.toString();
+      const res = await fetch(`/api/firmware/activate/${id}${qs ? `?${qs}` : ''}`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`
@@ -1674,7 +1713,56 @@ const SolarDashboard = () => {
     }
   }))), activeTab === 'firmware' && otaEnabled && /*#__PURE__*/React.createElement("div", {
     className: "mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2"
-  }, /*#__PURE__*/React.createElement(ChartCard, {
+  }, rolloutStatus && /*#__PURE__*/React.createElement("div", {
+    className: "col-span-1 lg:col-span-2"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: card
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-start justify-between gap-4 mb-4"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h2", {
+    className: "font-semibold text-slate-900 dark:text-slate-100"
+  }, "Rollout Status"), /*#__PURE__*/React.createElement("p", {
+    className: "mt-1 text-sm text-slate-500 dark:text-slate-400"
+  }, rolloutStatus.active ? `Active target: ${rolloutStatus.active.version}` : 'No active firmware')), /*#__PURE__*/React.createElement(Badge, {
+    label: rolloutStatus.active?.rollout_paused ? 'Paused' : 'Active',
+    color: rolloutStatus.active?.rollout_paused ? 'red' : 'emerald'
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "grid grid-cols-2 sm:grid-cols-4 gap-4"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide"
+  }, "Rollout"), /*#__PURE__*/React.createElement("p", {
+    className: "mt-1 text-lg font-bold text-slate-900 dark:text-slate-100"
+  }, rolloutStatus.active ? `${rolloutStatus.active.rollout_pct}%` : '—'), /*#__PURE__*/React.createElement("p", {
+    className: "text-xs text-slate-400"
+  }, rolloutStatus.active?.rollout_region || 'all regions')), /*#__PURE__*/React.createElement("div", {
+    className: "rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide"
+  }, "Boot Failures"), /*#__PURE__*/React.createElement("p", {
+    className: "mt-1 text-lg font-bold text-slate-900 dark:text-slate-100"
+  }, rolloutStatus.bootFailures24h?.reports ?? 0), /*#__PURE__*/React.createElement("p", {
+    className: "text-xs text-slate-400"
+  }, "24h reports")), /*#__PURE__*/React.createElement("div", {
+    className: "rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide"
+  }, "Failing Devices"), /*#__PURE__*/React.createElement("p", {
+    className: `mt-1 text-lg font-bold ${(rolloutStatus.bootFailures24h?.distinctDevices ?? 0) >= (rolloutStatus.bootFailures24h?.pauseThreshold ?? 2) ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-slate-100'}`
+  }, rolloutStatus.bootFailures24h?.distinctDevices ?? 0, /*#__PURE__*/React.createElement("span", {
+    className: "text-xs font-normal text-slate-400 ml-1"
+  }, "/ ", rolloutStatus.bootFailures24h?.pauseThreshold ?? 2)), /*#__PURE__*/React.createElement("p", {
+    className: "text-xs text-slate-400"
+  }, "above threshold \u2192 auto-pause")), /*#__PURE__*/React.createElement("div", {
+    className: "rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide"
+  }, "Signature"), /*#__PURE__*/React.createElement("p", {
+    className: "mt-1 text-lg font-bold text-slate-900 dark:text-slate-100"
+  }, rolloutStatus.active?.signed ? 'Signed' : 'Unsigned'), /*#__PURE__*/React.createElement("p", {
+    className: "text-xs text-slate-400"
+  }, rolloutStatus.active ? `${(rolloutStatus.active.size_bytes / 1024).toFixed(1)} KB` : '—'))))), /*#__PURE__*/React.createElement(ChartCard, {
     title: "Upload Firmware",
     badge: "OTA",
     badgeColor: "amber",
@@ -1721,27 +1809,64 @@ const SolarDashboard = () => {
     className: "flex items-center justify-center h-48 text-sm text-slate-400"
   }, "No firmware published yet.") : /*#__PURE__*/React.createElement("ul", {
     className: "divide-y divide-slate-100 dark:divide-slate-800"
-  }, firmwareVersions.map(v => /*#__PURE__*/React.createElement("li", {
-    key: v.id,
-    className: "py-3 flex items-start justify-between gap-4"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("p", {
-    className: "text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2"
-  }, v.version, v.is_active && /*#__PURE__*/React.createElement(Badge, {
-    label: "Active",
-    color: "emerald"
-  })), /*#__PURE__*/React.createElement("p", {
-    className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400 font-mono"
-  }, v.checksum.slice(0, 16), "\u2026"), v.changelog && /*#__PURE__*/React.createElement("p", {
-    className: "mt-1 text-xs text-slate-500 dark:text-slate-400"
-  }, v.changelog)), /*#__PURE__*/React.createElement("div", {
-    className: "flex flex-col items-end gap-1 shrink-0"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "text-xs text-slate-400"
-  }, (v.size_bytes / 1024).toFixed(1), " KB"), !v.is_active && /*#__PURE__*/React.createElement("button", {
-    onClick: () => handleActivateFirmware(v.id),
-    disabled: activateState.busyId !== null,
-    className: "rounded-lg bg-emerald-500 px-3 py-1 text-xs font-semibold text-white transition-all hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
-  }, activateState.busyId === v.id ? 'Activating…' : 'Activate'))))), activateState.error && /*#__PURE__*/React.createElement("p", {
+  }, firmwareVersions.map(v => {
+    const draft = rolloutDrafts[v.id] || {
+      pct: '100',
+      region: ''
+    };
+    return /*#__PURE__*/React.createElement("li", {
+      key: v.id,
+      className: "py-3 flex items-start justify-between gap-4"
+    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("p", {
+      className: "text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2 flex-wrap"
+    }, v.version, v.is_active && /*#__PURE__*/React.createElement(Badge, {
+      label: "Active",
+      color: "emerald"
+    }), v.rollout_paused && /*#__PURE__*/React.createElement(Badge, {
+      label: "Paused",
+      color: "red"
+    }), /*#__PURE__*/React.createElement(Badge, {
+      label: v.signed ? 'Signed' : 'Unsigned',
+      color: v.signed ? 'blue' : 'amber'
+    })), /*#__PURE__*/React.createElement("p", {
+      className: "mt-0.5 text-xs text-slate-500 dark:text-slate-400 font-mono"
+    }, v.checksum.slice(0, 16), "\u2026"), v.is_active && /*#__PURE__*/React.createElement("p", {
+      className: "mt-1 text-xs text-slate-500 dark:text-slate-400"
+    }, "Rollout: ", /*#__PURE__*/React.createElement("span", {
+      className: "font-medium"
+    }, v.rollout_pct, "%"), v.rollout_region ? ` · ${v.rollout_region}` : ' · all regions'), v.changelog && /*#__PURE__*/React.createElement("p", {
+      className: "mt-1 text-xs text-slate-500 dark:text-slate-400"
+    }, v.changelog)), /*#__PURE__*/React.createElement("div", {
+      className: "flex flex-col items-end gap-1 shrink-0"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "text-xs text-slate-400"
+    }, (v.size_bytes / 1024).toFixed(1), " KB"), !v.is_active && /*#__PURE__*/React.createElement("div", {
+      className: "flex flex-col items-end gap-1.5"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "flex items-center gap-1.5"
+    }, /*#__PURE__*/React.createElement("input", {
+      type: "number",
+      min: "0",
+      max: "100",
+      value: draft.pct,
+      onChange: e => setRolloutDraft(v.id, 'pct', e.target.value),
+      title: "Rollout % \u2014 0 keeps it off every device, 100 is fleet-wide",
+      "aria-label": `rollout percentage for ${v.version}`,
+      className: "w-16 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 py-1 text-xs outline-none focus:border-amber-400"
+    }), /*#__PURE__*/React.createElement("input", {
+      type: "text",
+      value: draft.region,
+      onChange: e => setRolloutDraft(v.id, 'region', e.target.value),
+      placeholder: "Region (all)",
+      title: "Restrict the rollout to a region (optional, case-insensitive)",
+      "aria-label": `rollout region for ${v.version}`,
+      className: "w-24 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 py-1 text-xs outline-none focus:border-amber-400"
+    })), /*#__PURE__*/React.createElement("button", {
+      onClick: () => handleActivateFirmware(v.id, draft.pct, draft.region),
+      disabled: activateState.busyId !== null,
+      className: "rounded-lg bg-emerald-500 px-3 py-1 text-xs font-semibold text-white transition-all hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
+    }, activateState.busyId === v.id ? 'Activating…' : 'Activate'))));
+  })), activateState.error && /*#__PURE__*/React.createElement("p", {
     className: "mt-3 text-sm text-rose-600 dark:text-rose-400"
   }, activateState.error)))));
 };

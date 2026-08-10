@@ -37,12 +37,24 @@ services:
       # MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET, MPESA_SHORTCODE, MPESA_PASSKEY,
       #   MPESA_CALLBACK_URL, MPESA_CALLBACK_SECRET
       # DEVICE_API_KEY
+      # OTA_ENABLED=true mounts /api/firmware/* (OFF by default; setting it
+      #   back to false + redeploy is the whole-feature rollback).
+      # FIRMWARE_SIGNING_KEY=<PEM> signs every uploaded firmware binary with
+      #   ECDSA P-256 — devices with the matching root key refuse unsigned
+      #   builds (generate via `node scripts/generate-ota-keys.js`; NEVER
+      #   commit this; an HSM/key-vault holds it in the full design)
       # ALLOWED_ORIGINS
       # ADMIN_EMAIL, ADMIN_PASSWORD, CUSTOMER_EMAIL  (demo account overrides)
       # RESEND_API_KEY, RESEND_FROM_EMAIL  (login alerts + signup confirmation)
       # AT_USERNAME, AT_API_KEY, AT_SENDER_ID, LOW_BALANCE_THRESHOLD_KES
       #   (low-balance + power-cut SMS via Africa's Talking; blank = disabled)
       # SENTRY_DSN  (error monitoring)
+      # METRICS_ENABLED=true mounts /metrics (Prometheus). Set METRICS_TOKEN
+      #   to a strong random value so the scrape endpoint isn't public — the
+      #   Prometheus job sends it as a Bearer token (see
+      #   observability/prometheus-alerts.yml for the scrape + alert config).
+      # LOG_FORMAT=json emits structured one-line JSON logs (timestamp,
+      #   level, msg, fields) instead of the human-readable console format.
       # WEATHER_LAT, WEATHER_LON  (dashboard weather location; defaults to Nairobi)
 
 # No databases: section — the Render free Postgres expired 2026-06 and was

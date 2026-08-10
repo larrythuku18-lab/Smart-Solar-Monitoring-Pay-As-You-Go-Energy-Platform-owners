@@ -96,6 +96,17 @@ const {
 
 const { authMiddleware, signToken } = require('./authMiddleware');
 
+/* Observability — Prometheus metrics + structured JSON logging (Section 8
+   of the production-hardening spec). All optional: METRICS_ENABLED=true
+   turns on /metrics, LOG_FORMAT=json switches to structured logs. */
+const obs = require('./observability');
+const METRICS_ENABLED = process.env.METRICS_ENABLED === 'true';
+if (METRICS_ENABLED) {
+  obs.startDefaultMetrics();
+  console.log('[OBS] Metrics enabled — /metrics available (scrape token: '
+    + (process.env.METRICS_TOKEN ? 'set' : 'NOT SET — unauthenticated') + ')');
+}
+
 /* OTA firmware updates — feature-flagged (OTA_ENABLED=true). The module is
    required unconditionally so its exports are available, but its routes are
    only mounted when the flag is on (see the mount just above startup()). */
@@ -348,7 +359,9 @@ const payLimiter = rateLimit({
 
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 120,                  // 120 general API calls per IP per minute
+  /* Env-configurable so the test suites (which hammer localhost from one IP)
+     can raise it without touching the production default. */
+  max: parseInt(process.env.API_RATE_LIMIT_MAX || '120', 10),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Rate limit exceeded' }
@@ -356,8 +369,36 @@ const apiLimiter = rateLimit({
 
 app.use('/api/', apiLimiter);
 
+/* Request metrics — mounted here (after body parsing + rate limiting) so
+   the recorded route labels are meaningful and rejected requests still get
+   counted. Only active when METRICS_ENABLED=true. */
+if (METRICS_ENABLED) app.use(obs.metricsMiddleware);
+
 /* Gzip/Brotli compress all responses — cuts transfer size ~70% */
 app.use(compression());
+
+/* Prometheus scrape endpoint. Protected by a bearer token when
+   METRICS_TOKEN is set (recommended on public hosts); otherwise it is
+   open — fine on a private network / Render internal service. */
+if (METRICS_ENABLED) {
+  /* Timing-safe bearer-token check (lengths are fixed by the token format). */
+  function metricsTokenOk(authHeader) {
+    const expected = `Bearer ${process.env.METRICS_TOKEN}`;
+    const a = Buffer.from(String(authHeader || ''));
+    const b = Buffer.from(expected);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+  app.get('/metrics', async (req, res) => {
+    if (process.env.METRICS_TOKEN) {
+      if (!metricsTokenOk(req.get('authorization'))) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    }
+    res.setHeader('Content-Type', obs.contentType);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(await obs.metricsText());
+  });
+}
 
 /* Static files with cache headers:
    - nav files:    5 min  (change often enough that short TTL matters)
@@ -1131,6 +1172,8 @@ app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
       productId:         numericProductId,
       productName
     });
+    const paymentStartedAt = Date.now();
+    obs.recordPayment('initiated', { type: paymentType, simulated: stkResult.simulated });
 
     if (stkResult.simulated) {
       // Simulate M-Pesa callback after 3 s
@@ -1142,6 +1185,10 @@ app.post('/api/pay', authMiddleware, payLimiter, async (req, res) => {
             '0',
             'Simulated success'
           );
+          if (payment) {
+            obs.recordPayment('completed', { type: payment.payment_type, simulated: true });
+            obs.paymentSettleSeconds.observe((Date.now() - paymentStartedAt) / 1000);
+          }
           if (payment && payment.payment_type !== 'product') {
             await unlockRelay(payment.device_id || user.device_id);
           }
@@ -1192,13 +1239,26 @@ app.get('/api/pay/status/:checkoutRequestId', authMiddleware, async (req, res) =
   }
 });
 
+/* Timing-safe comparison of the callback secret. The plain `!==` string
+   compare lets an attacker measure how many leading characters they got
+   right (timing oracle) — over thousands of guesses that leaks the secret.
+   timingSafeEqual compares byte-by-byte in constant time; lengths are
+   compared first so mismatched lengths can't throw. */
+function callbackSecretMatches(supplied) {
+  const expected = process.env.MPESA_CALLBACK_SECRET;
+  if (!expected || typeof supplied !== 'string') return false;
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 app.post('/api/mpesa/callback', async (req, res) => {
   /* Reject callbacks that don't carry our shared secret (see initiateSTKPush) —
      without this, anyone who learns a checkoutRequestId (e.g. their own, from
      a payment they started but never paid for) could POST a forged "success"
      callback and get their wallet credited / device unlocked for free. */
-  if (process.env.MPESA_CALLBACK_SECRET && req.query.secret !== process.env.MPESA_CALLBACK_SECRET) {
-    console.warn('[M-Pesa] Rejected callback with missing/invalid secret from', req.ip);
+  if (process.env.MPESA_CALLBACK_SECRET && !callbackSecretMatches(req.query.secret)) {
+    obs.log.warn('[M-Pesa] Rejected callback with missing/invalid secret', { ip: req.ip });
     return res.status(401).json({ ResultCode: 1, ResultDesc: 'Rejected' });
   }
 
@@ -1217,6 +1277,36 @@ app.post('/api/mpesa/callback', async (req, res) => {
         parsed.resultDesc
       );
       if (payment) {
+        /* Amount-integrity check: Safaricom echoes the amount back in the
+           callback metadata. If it doesn't match what we initiated, flag it
+           loudly — it's either a genuine billing discrepancy (worth an
+           alert) or a sign of a manipulated callback. The payment still
+           completes (Safaricom is the source of truth for money moved), but
+           the fraud detector and admin alert surface it. */
+        if (parsed.amount != null && Number(payment.amount) !== Number(parsed.amount)) {
+          obs.log.error('[M-Pesa] Amount mismatch on callback', {
+            checkoutRequestId: parsed.checkoutRequestId,
+            initiated:         Number(payment.amount),
+            callback:          Number(parsed.amount),
+            receipt:           parsed.mpesaReceiptNumber
+          });
+          await createAlert({
+            userId:   payment.user_id,
+            deviceId: payment.device_id,
+            type:     'payment_amount_mismatch',
+            severity: 'high',
+            message:  `Callback amount KES ${Number(parsed.amount)} does not match initiated KES ${Number(payment.amount)} (receipt ${parsed.mpesaReceiptNumber})`
+          });
+        }
+        obs.recordPayment('completed', { type: payment.payment_type, simulated: false });
+        /* Real-callback settle time: created_at (STK initiation) → processed_at
+           (completion). Keeps the SolGridPaymentSettleSlow alert fed with real
+           data, not just the 3-second simulated payments. */
+        if (payment.created_at && payment.processed_at) {
+          obs.paymentSettleSeconds.observe(
+            (new Date(payment.processed_at) - new Date(payment.created_at)) / 1000
+          );
+        }
         const isProduct = payment.payment_type === 'product';
         if (!isProduct) await unlockRelay(payment.device_id);
         await createAlert({
@@ -1232,9 +1322,10 @@ app.post('/api/mpesa/callback', async (req, res) => {
       }
     } else {
       await failPayment(parsed.checkoutRequestId, parsed.resultCode, parsed.resultDesc);
+      obs.recordPayment('failed', { simulated: false });
     }
   } catch (err) {
-    console.error('M-Pesa callback error:', err.message);
+    obs.log.error('[M-Pesa] Callback processing error', { error: err.message });
     if (sentryConfigured()) Sentry.captureException(err);
   }
 });
@@ -1563,6 +1654,22 @@ async function pruneOldData() {
 }
 setInterval(pruneOldData, 12 * 60 * 60 * 1000);
 
+/* Fleet-online gauge — refreshes the device SLI metric once a minute.
+   getAllDevices() computes `online` from last_seen vs the offline timeout,
+   so this is a cheap COUNT of live devices, not a per-device gauge. */
+if (METRICS_ENABLED) {
+  async function refreshDevicesOnline() {
+    try {
+      const devices = await getAllDevices();
+      obs.devicesOnline.set(devices.filter(d => d.online).length);
+    } catch (err) {
+      console.warn('devices_online gauge refresh error:', err.message);
+    }
+  }
+  refreshDevicesOnline();
+  setInterval(refreshDevicesOnline, 60 * 1000);
+}
+
 /* ── Telemetry ingest — called directly by ESP32 firmware ─────────────────
    No JWT here (a device can't easily hold a user session). Auth is by
    X-Device-Key header, checked against (in order):
@@ -1594,14 +1701,25 @@ app.post('/api/telemetry', [
   body('firmwareVersion').optional().isString().trim().isLength({ max: 32 }).withMessage('firmwareVersion must be a short string')
 ], async (req, res) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+  if (!errors.isEmpty()) {
+    obs.recordTelemetry('invalid');
+    return res.status(400).json({ errors: errors.array() });
+  }
 
   try {
     const { deviceId, voltage, current, generation, battery, consumption, firmwareVersion } = req.body;
 
     const existingDevice = await getDevice(deviceId);
-    const expectedKey = existingDevice?.api_key || process.env.DEVICE_API_KEY;
+    /* When ENFORCE_PER_DEVICE_KEYS=true the shared DEVICE_API_KEY fallback
+       is removed — only a device's own provisioned api_key is accepted.
+       Devices without a key are rejected with a clear error. See the
+       migration guide in SECURITY.md to roll this out without downtime. */
+    const enforcePerDevice = process.env.ENFORCE_PER_DEVICE_KEYS === 'true';
+    const expectedKey = enforcePerDevice
+      ? existingDevice?.api_key
+      : existingDevice?.api_key || process.env.DEVICE_API_KEY;
     if (expectedKey && req.headers['x-device-key'] !== expectedKey) {
+      obs.recordTelemetry('unauth');
       return res.status(401).json({ error: 'Invalid or missing device key' });
     }
 
@@ -1611,10 +1729,12 @@ app.post('/api/telemetry', [
        would let an unauthenticated caller spoof a victim's deviceId and
        burn its budget, starving the legitimate device. */
     if (!checkDeviceRateLimit(deviceId)) {
+      obs.recordTelemetry('rate_limited');
       return res.status(429).json({ error: 'Too many telemetry requests for this device — slow down' });
     }
 
     await upsertDeviceHeartbeat({ deviceId, ip: req.ip, firmwareVersion });
+    obs.recordTelemetry('ok');
 
     const reading = {
       deviceId,
@@ -1633,6 +1753,7 @@ app.post('/api/telemetry', [
     const device = await getDevice(deviceId);
     res.json({ success: true, relayState: device?.relay_state || 'on' });
   } catch (err) {
+    obs.recordTelemetry('error');
     console.error('Telemetry ingest error:', err.message);
     res.status(500).json({ error: 'Failed to record telemetry', message: err.message });
   }
@@ -2007,9 +2128,16 @@ async function startup() {
         + '/api/mpesa/callback will accept unauthenticated requests. Set MPESA_CALLBACK_SECRET '
         + 'in .env before accepting real payments.');
     }
-    if (!process.env.DEVICE_API_KEY) {
+    if (process.env.ENFORCE_PER_DEVICE_KEYS === 'true') {
+      console.log('  Per-device keys:   ENFORCED — shared DEVICE_API_KEY fallback disabled');
+      if (!process.env.DEVICE_API_KEY) {
+        console.log('                     DEVICE_API_KEY is not set (expected in enforced mode)');
+      }
+    } else if (!process.env.DEVICE_API_KEY) {
       console.warn('[SECURITY] DEVICE_API_KEY is not set — /api/telemetry accepts unauthenticated '
         + 'readings for any deviceId. Fine for demos, not for real hardware in the field.');
+    } else {
+      console.log('  Per-device keys:   SHARED KEY fallback active (set ENFORCE_PER_DEVICE_KEYS=true once the fleet is migrated)');
     }
   });
 }

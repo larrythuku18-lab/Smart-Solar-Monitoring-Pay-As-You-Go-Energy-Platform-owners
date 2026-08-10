@@ -322,6 +322,120 @@ Tests were updated in `__tests__/payments.test.js` to run `runMigrations()` befo
 | `server.js` | PIN bcrypt login; password complexity; weather debug auth; telemetry validation; per-device rate limiting (behind device-key auth) |
 | `__tests__/payments.test.js` | Added `runMigrations()` before tests for new column width |
 | `__tests__/telemetry-security.test.js` | New: validation, rate-limit, and auth-ordering coverage |
+| `firmware.js` + `db.js` + `firmware/esp32-firmware.ino` | OTA hardening: ECDSA P-256 signed binaries, staged rollout, 2-strike boot-failure auto-pause + device rollback (see below) |
+
+---
+
+## 🔑 Per-Device Keys — Migration Guide
+
+### Why per-device keys?
+
+The original design shared a single `DEVICE_API_KEY` across the whole fleet.
+This is convenient for demos but has two security gaps:
+
+1. **Any attacker with the shared key can impersonate any device.**
+2. **The OTA 2-strike auto-pause is meaningless** — an attacker holding the
+   shared key can POST two `/firmware/report` calls with different `deviceId`
+   values and pause the entire fleet's rollout.
+
+Once **every device has its own `api_key`** and `ENFORCE_PER_DEVICE_KEYS=true`
+is set, neither attack works.  The 2-strike threshold becomes a genuine fleet
+safety valve.
+
+### Step-by-step migration (zero-downtime path)
+
+#### 1. Provision devices that lack keys
+
+```bash
+# Preview which devices would get keys:
+node scripts/migrate-device-keys.js --dry-run
+
+# Zero-downtime path: set every device's initial key to the current
+# DEVICE_API_KEY so existing hardware continues working immediately:
+node scripts/migrate-device-keys.js --apply-existing
+```
+
+This writes the shared key into every row.  Devices keep working because the
+server checks `device.api_key` before falling back to `DEVICE_API_KEY`, and
+now they have one — it just happens to be the same value.
+
+#### 2. Flash a real per-device key into each unit
+
+For every device you want to secure:
+
+```bash
+curl -X POST /api/admin/devices/${DEVICE_ID}/rotate-key \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}"
+# → returns { device: { device_id, api_key: "<new-random-key>" } }
+```
+
+Flash this `api_key` into the device's firmware (`#define DEVICE_API_KEY`)
+and re-deploy.  The device now authenticates with its own unique credential,
+and the shared key can no longer impersonate it.
+
+#### 3. Shrink the shared key's blast radius
+
+Once a majority of devices have real keys, remove `DEVICE_API_KEY` from your
+.Render environment or `.env` **for a few minutes** to catch any device that
+still depends on it — its next telemetry POST will 401, and its offline status
+will appear on the fleet dashboard.  Re-inject the shared key, flash those
+devices, and repeat until the fleet is clean.
+
+#### 4. Enforce per-device keys
+
+```bash
+# Set in the production environment:
+ENFORCE_PER_DEVICE_KEYS=true
+```
+
+When this is `true`:
+- The `|| process.env.DEVICE_API_KEY` fallback is removed from telemetry auth
+  AND from the OTA `/latest` / `/report` device auth.
+- Any device without a per-device key is rejected immediately.
+- The startup log shows: `Per-device keys: ENFORCED`.
+
+#### 5. (Optional) Set a fleet-aware OTA pause threshold
+
+With per-device keys enforced, the 2-strike threshold is no longer vulnerable
+to shared-key spoofing.  You can now set it as a **percentage of the fleet**:
+
+```bash
+# 1% of provisioned devices must fail before auto-pause fires
+# At 50k devices → 500 failures needed
+OTA_PAUSE_PCT=1
+
+# Or keep it as a fixed number (default 2):
+OTA_PAUSE_FAIL_DEVICES=5
+```
+
+When `ENFORCE_PER_DEVICE_KEYS=true` and `OTA_PAUSE_PCT` is set, the pause
+threshold is `max(2, ceil(provisioned_count * OTA_PAUSE_PCT / 100))`.
+Otherwise the absolute `OTA_PAUSE_FAIL_DEVICES` (default 2) is used.
+
+#### Rollback
+
+Unset `ENFORCE_PER_DEVICE_KEYS` or set it to `false` — the shared key
+fallback is immediately restored.  No data is lost; per-device keys remain
+in the database and are used on re-enforcement.
+
+---
+
+## 🔐 OTA Firmware Integrity (production hardening)
+
+The OTA pipeline now fails closed end-to-end:
+
+- **Authenticity** — every uploaded binary is signed with ECDSA P-256
+  (`FIRMWARE_SIGNING_KEY`); devices verify the signature over the SHA-256
+  digest against the root public key baked into the sketch
+  (`FIRMWARE_ROOT_PUBKEY`) before the OTA partition is committed. A device
+  with a root key refuses unsigned or forged builds. The private key never
+  ships to devices or the repo (generate: `node scripts/generate-ota-keys.js`).
+- **Targeting** — staged rollout (`rollout_pct` + `rollout_region`) means a
+  bad release reaches only the bucket it was scoped to.
+- **Recovery** — devices report boot outcomes; two consecutive failures of a
+  version auto-pause the rollout, and each affected device re-downloads its
+  last known-good build (via `/latest`'s `previous` pointer), so a broken
+  release cannot wedge the fleet.
 
 ---
 

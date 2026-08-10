@@ -263,9 +263,20 @@ JWT_EXPIRES_IN=24h
 MPESA_CONSUMER_KEY= I am Larry Thuku a Software Developer 
 MPESA_CONSUMER_SECRET= I'll be glad to partner with you
 MPESA_SHORTCODE=174379
-MPESA_PASSKEY= I'm here to upgrade from what tyou have with what I have 
+MPESA_PASSKEY= I'm here to upgrade from what you have with what I have 
 MPESA_CALLBACK_URL=https://yourdomain.com/api/mpesa/callback
 MPESA_ENVIRONMENT=sandbox          # or "production"
+
+# ── Observability (Section 8 — all optional) ─────────────────────────────
+# METRICS_ENABLED=true mounts GET /metrics (Prometheus text format).
+# Set METRICS_TOKEN to a strong random value to protect the scrape endpoint
+# (the Prometheus job sends it as `Authorization: Bearer <token>`).
+# LOG_FORMAT=json switches console output to structured one-line JSON logs.
+# See observability/prometheus-alerts.yml for ready-made alert rules covering
+# the payment / device / relay SLIs.
+METRICS_ENABLED=false
+# METRICS_TOKEN=
+# LOG_FORMAT=
 ```
 
 ---
@@ -370,6 +381,14 @@ VALUES ('ESP32-002', 1, 'Site B Panel', '192.168.1.102', 'Nakuru, Kenya');
 ### Firmware
 
 The Arduino sketch is at `firmware/esp32-firmware.ino`. It reports voltage, current, and battery level to the server and listens for relay on/off commands. Pin configuration and hardware requirements are documented in the file's header comment — set `BACKEND_URL`, `DEVICE_API_KEY`, `DEVICE_ID`, and your WiFi credentials before flashing.
+
+#### OTA updates (production-grade)
+
+When the backend runs with `OTA_ENABLED=true`, devices can self-update. The pipeline is hardened for production:
+
+- **Signed binaries** — every upload is signed with ECDSA P-256 using the `FIRMWARE_SIGNING_KEY` PEM; the device verifies the signature against a root public key baked into the sketch (`FIRMWARE_ROOT_PUBKEY`) before flashing, and rejects unsigned/forged builds (fail-closed). Generate a keypair with `node scripts/generate-ota-keys.js`.
+- **Staged rollout** — activation accepts `?rollout_pct=0..100&region=<location>`; devices outside the deterministic rollout bucket (or region) get no update, so 1% → 10% → 50% → 100% is just re-activating with a higher percentage.
+- **Boot-failure rollback (2 strikes)** — devices report boot success/failure (`POST /api/firmware/report`); two consecutive failures auto-pause the rollout fleet-wide, and the device re-downloads its last known-good build via `/latest`'s `previous` pointer.
 
 ---
 

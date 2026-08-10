@@ -18,6 +18,7 @@ const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
+const { generateKeyPairSync } = require('node:crypto');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
@@ -42,6 +43,18 @@ const OTA_PINNED_OFF = process.env.OTA_ENABLED === 'false';
 
 /* Binaries are written here, never into the repo. */
 const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'solgrid-ota-test-'));
+
+/* ECDSA P-256 keypair for the signing tests — generated here so the spawned
+   OTA server signs every upload (FIRMWARE_SIGNING_KEY) and we can verify the
+   signatures against the matching root public key, exactly as a device with
+   the baked-in key would. */
+const TEST_KEYS = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+const SIGNING_PRIVATE_PEM = TEST_KEYS.privateKey.export({ type: 'pkcs8', format: 'pem' });
+const SIGNING_PUBLIC_PEM  = TEST_KEYS.publicKey.export({ type: 'spki', format: 'pem' });
+
+/* Devices whose boot reports the after() hook must delete so repeated runs
+   don't accumulate firmware_boot_reports rows. */
+const createdBootReportDevices = [];
 
 let server;
 let offServer;
@@ -81,9 +94,12 @@ async function spawnAndWait(port, envOverrides, label) {
 }
 
 before(async () => {
-  server = await spawnAndWait(PORT, { OTA_ENABLED: 'true' }, 'OTA-enabled server');
+  /* API_RATE_LIMIT_MAX raised: every request in this suite comes from
+     localhost, and the suite now makes several hundred of them — the
+     production default of 120/min would 429 the later tests. */
+  server = await spawnAndWait(PORT, { OTA_ENABLED: 'true', FIRMWARE_SIGNING_KEY: SIGNING_PRIVATE_PEM, API_RATE_LIMIT_MAX: '20000' }, 'OTA-enabled server');
   if (!OTA_PINNED_ON) {
-    offServer = await spawnAndWait(OFF_PORT, {}, 'OTA-disabled server');
+    offServer = await spawnAndWait(OFF_PORT, { API_RATE_LIMIT_MAX: '20000' }, 'OTA-disabled server');
   }
 });
 
@@ -91,13 +107,16 @@ after(async () => {
   server?.kill('SIGKILL');
   offServer?.kill('SIGKILL');
   fs.rmSync(TMP_DIR, { recursive: true, force: true });
-  if (createdVersions.length > 0) {
-    try {
-      const db = require('../db');
+  try {
+    const db = require('../db');
+    if (createdVersions.length > 0) {
       await db.pool.query('DELETE FROM firmware_versions WHERE version = ANY($1)', [createdVersions]);
-    } catch (err) {
-      console.warn('OTA test cleanup warning:', err.message);
     }
+    if (createdBootReportDevices.length > 0) {
+      await db.pool.query('DELETE FROM firmware_boot_reports WHERE device_id = ANY($1)', [createdBootReportDevices]);
+    }
+  } catch (err) {
+    console.warn('OTA test cleanup warning:', err.message);
   }
 });
 
@@ -403,3 +422,576 @@ describe('OTA publish (stage) → activate → check → download', { skip: OTA_
     assert.equal(versions.find(v => v.id === ids[1]).is_active, true);
   });
 });
+
+describe('firmware signing (ECDSA P-256)', { skip: OTA_PINNED_OFF }, () => {
+  test('uploads are signed and the signature verifies against the root public key', async () => {
+    const adminToken = await loginAdmin();
+    const version = freshVersion();
+    const bytes = crypto.randomBytes(256);
+    const upload = await fetch(`${BASE}/api/firmware/upload?version=${version}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: bytes
+    });
+    assert.equal(upload.status, 201);
+    createdVersions.push(version);
+    const { signature, signed } = await upload.json();
+    assert.equal(signed, true);
+    assert.ok(signature, 'upload must carry an ECDSA signature when a signing key is configured');
+
+    /* Device-side check, reproduced with node crypto: signature over the
+       binary's SHA-256 must verify against the root public key. */
+    const { verifyFirmwareSignature } = require('../firmware');
+    assert.equal(verifyFirmwareSignature(bytes, signature, SIGNING_PUBLIC_PEM), true);
+    assert.equal(
+      verifyFirmwareSignature(Buffer.concat([bytes, Buffer.from([0])]), signature, SIGNING_PUBLIC_PEM),
+      false,
+      'a tampered binary must fail verification'
+    );
+  });
+
+  test('/latest offers the signature so a device can verify before flashing', async () => {
+    const adminToken = await loginAdmin();
+    const { deviceId, key } = await provisionTestDevice();
+    const version = freshVersion();
+    const upload = await fetch(`${BASE}/api/firmware/upload?version=${version}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(128)
+    });
+    assert.equal(upload.status, 201);
+    createdVersions.push(version);
+    const { id } = await upload.json();
+    const act = await fetch(`${BASE}/api/firmware/activate/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(act.status, 200);
+
+    const latest = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(deviceId, key) });
+    assert.equal(latest.status, 200);
+    const info = await latest.json();
+    assert.ok(info.signature, '/latest must include the signature');
+
+    /* The download stream carries it as a header too, for devices that fetch
+       the URL directly without hitting /latest first. */
+    const download = await fetch(`${BASE}${info.url}`, { headers: deviceHeaders(deviceId, key) });
+    assert.equal(download.status, 200);
+    assert.equal(download.headers.get('x-firmware-signature'), info.signature);
+  });
+
+  test('sign/:id re-signs an uploaded binary (idempotent)', async () => {
+    const adminToken = await loginAdmin();
+    const version = freshVersion();
+    const upload = await fetch(`${BASE}/api/firmware/upload?version=${version}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(64)
+    });
+    assert.equal(upload.status, 201);
+    createdVersions.push(version);
+    const { id } = await upload.json();
+
+    const signed = await fetch(`${BASE}/api/firmware/sign/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(signed.status, 200);
+    const body = await signed.json();
+    assert.equal(body.signed, true);
+    assert.ok(body.signature);
+
+    /* Non-admin can't sign. */
+    const customerToken = await loginCustomer();
+    const forbidden = await fetch(`${BASE}/api/firmware/sign/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${customerToken}` }
+    });
+    assert.equal(forbidden.status, 403);
+  });
+});
+
+describe('staged rollout (percentage + region)', { skip: OTA_PINNED_OFF }, () => {
+  /* Upload + activate with the given rollout knobs; returns the published
+     version + firmware id. */
+  async function publishAndActivate({ rolloutPct, region }) {
+    const adminToken = await loginAdmin();
+    const version = freshVersion();
+    const upload = await fetch(`${BASE}/api/firmware/upload?version=${version}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(32)
+    });
+    assert.equal(upload.status, 201);
+    createdVersions.push(version);
+    const { id } = await upload.json();
+    const qs = new URLSearchParams();
+    if (rolloutPct !== undefined) qs.set('rollout_pct', String(rolloutPct));
+    if (region) qs.set('region', region);
+    const act = await fetch(`${BASE}/api/firmware/activate/${id}${qs.size ? `?${qs}` : ''}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(act.status, 200);
+    return { version, id, adminToken };
+  }
+
+  test('rollout_pct=0 withholds the update from every device', async () => {
+    const { deviceId, key } = await provisionTestDevice();
+    await publishAndActivate({ rolloutPct: 0 });
+    const r = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(deviceId, key) });
+    assert.equal(r.status, 404, 'a 0% rollout must not be offered to anyone');
+  });
+
+  test('rollout_pct=100 offers it to every device (the default behavior)', async () => {
+    const { deviceId, key } = await provisionTestDevice();
+    await publishAndActivate({ rolloutPct: 100 });
+    const r = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(deviceId, key) });
+    assert.equal(r.status, 200);
+  });
+
+  test('the bucket is deterministic — raising the percentage is the only way a device joins', async () => {
+    const adminToken = await loginAdmin();
+    const { deviceId, key } = await provisionTestDevice();
+    const version = freshVersion();
+    const upload = await fetch(`${BASE}/api/firmware/upload?version=${version}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(32)
+    });
+    assert.equal(upload.status, 201);
+    createdVersions.push(version);
+    const { id } = await upload.json();
+
+    /* This device's exact bucket, computed with the same sha256(device:id)
+       first-byte-mod-100 hash the server uses. */
+    const bucket = crypto.createHash('sha256').update(`${deviceId}:${id}`).digest()[0] % 100;
+
+    /* At pct == bucket the device is excluded (bucket < bucket is false)… */
+    const actExcluded = await fetch(`${BASE}/api/firmware/activate/${id}?rollout_pct=${bucket}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(actExcluded.status, 200);
+    const excluded = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(deviceId, key) });
+    assert.equal(excluded.status, 404, `device bucket ${bucket} must be excluded at pct=${bucket}`);
+
+    /* …and at pct == bucket + 1 it is included (bucket < bucket+1 is true). */
+    const pctIncluded = Math.min(100, bucket + 1);
+    const actIncluded = await fetch(`${BASE}/api/firmware/activate/${id}?rollout_pct=${pctIncluded}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(actIncluded.status, 200);
+    const included = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(deviceId, key) });
+    assert.equal(included.status, 200, `device bucket ${bucket} must be included at pct=${pctIncluded}`);
+  });
+
+  test('a region-scoped rollout only reaches devices whose location matches', async () => {
+    const adminToken = await loginAdmin();
+    const { deviceId: nairobi, key: nairobiKey } = await provisionTestDevice();
+    const { deviceId: coast, key: coastKey } = await provisionTestDevice();
+
+    const setLoc = await fetch(`${BASE}/api/admin/devices/${encodeURIComponent(nairobi)}/location`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ location: 'Nairobi, Kenya' })
+    });
+    assert.equal(setLoc.status, 200, 'setting a device location must succeed');
+
+    await publishAndActivate({ rolloutPct: 100, region: 'Nairobi' });
+
+    const inRegion = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(nairobi, nairobiKey) });
+    assert.equal(inRegion.status, 200, 'a Nairobi device must be eligible for a Nairobi rollout');
+    const outRegion = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(coast, coastKey) });
+    assert.equal(outRegion.status, 404, 'a device outside the region must be excluded');
+  });
+
+  test('the admin list surfaces rollout metadata', async () => {
+    const adminToken = await loginAdmin();
+    await publishAndActivate({ rolloutPct: 25, region: 'Kisumu' });
+    const list = await fetch(`${BASE}/api/firmware`, { headers: { Authorization: `Bearer ${adminToken}` } });
+    assert.equal(list.status, 200);
+    const { versions } = await list.json();
+    const active = versions.find(v => v.is_active);
+    assert.ok(active, 'an active version must exist');
+    assert.equal(active.rollout_pct, 25);
+    assert.equal(active.rollout_region, 'Kisumu');
+    assert.equal(active.signed, true, 'signed flag must reflect the configured key');
+  });
+
+  test('a malformed rollout_pct is rejected, never treated as 100%', async () => {
+    const adminToken = await loginAdmin();
+    const version = freshVersion();
+    const upload = await fetch(`${BASE}/api/firmware/upload?version=${version}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(16)
+    });
+    assert.equal(upload.status, 201);
+    createdVersions.push(version);
+    const { id } = await upload.json();
+
+    for (const bad of ['abc', '50.5', '-1', '101', '']) {
+      const r = await fetch(`${BASE}/api/firmware/activate/${id}?rollout_pct=${encodeURIComponent(bad)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${adminToken}` }
+      });
+      assert.equal(r.status, 400, `rollout_pct=${JSON.stringify(bad)} must be rejected`);
+    }
+
+    /* And the version is still not active afterwards. */
+    const list = await fetch(`${BASE}/api/firmware`, { headers: { Authorization: `Bearer ${adminToken}` } });
+    const { versions } = await list.json();
+    assert.equal(versions.find(v => v.version === version).is_active, false,
+      'a rejected activation must not have touched the fleet');
+  });
+});
+
+describe('boot reports + 2-strike auto-pause', { skip: OTA_PINNED_OFF }, () => {
+  test('the fleet-wide auto-pause needs 2 distinct failing devices; reactivating resumes it', async () => {
+    const adminToken = await loginAdmin();
+    const { deviceId: devA, key: keyA } = await provisionTestDevice();
+    const { deviceId: devB, key: keyB } = await provisionTestDevice();
+    createdBootReportDevices.push(devA, devB);
+    const version = freshVersion();
+    const upload = await fetch(`${BASE}/api/firmware/upload?version=${version}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(32)
+    });
+    assert.equal(upload.status, 201);
+    createdVersions.push(version);
+    const { id } = await upload.json();
+    const act = await fetch(`${BASE}/api/firmware/activate/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(act.status, 200);
+
+    const report = (deviceId, key, status) => fetch(`${BASE}/api/firmware/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...deviceHeaders(deviceId, key) },
+      body: JSON.stringify({ version, status })
+    });
+
+    /* Offered before any reports. */
+    const before = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(devA, keyA) });
+    assert.equal(before.status, 200);
+
+    /* One device failing twice is NOT enough — it must not be able to pause
+       a fleet rollout on its own (it rolls itself back locally instead). */
+    const r1 = await report(devA, keyA, 'fail');
+    assert.equal(r1.status, 200);
+    assert.equal((await r1.json()).paused, false, 'one failing device must not pause the rollout');
+    const r2 = await report(devA, keyA, 'fail');
+    assert.equal((await r2.json()).paused, false, 'even two failures from the SAME device must not pause');
+    const still = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(devA, keyA) });
+    assert.equal(still.status, 200);
+
+    /* A second distinct device failing crosses the threshold → auto-pause. */
+    const r3 = await report(devB, keyB, 'fail');
+    assert.equal(r3.status, 200);
+    assert.equal((await r3.json()).paused, true, '2 distinct failing devices must auto-pause');
+
+    const pausedCheck = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(devA, keyA) });
+    assert.equal(pausedCheck.status, 404, 'a paused rollout must not be offered');
+
+    /* The pause is visible to admins. */
+    const list = await fetch(`${BASE}/api/firmware`, { headers: { Authorization: `Bearer ${adminToken}` } });
+    const { versions } = await list.json();
+    assert.equal(versions.find(v => v.version === version).rollout_paused, true);
+
+    /* A single ok report does NOT unpause (that is an admin decision): the
+       paused version must never reappear as an active `version` to chase.
+       (devA's ok makes the paused version its last-good, so /latest may hand
+       back a `previous` downgrade pointer — never a target.) */
+    const ok = await report(devA, keyA, 'ok');
+    assert.equal(ok.status, 200);
+    const stillPaused = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(devA, keyA) });
+    assert.equal((await stillPaused.json()).version, undefined, 'an ok report must not resume the paused rollout');
+
+    /* Re-activating resumes the rollout. */
+    const resume = await fetch(`${BASE}/api/firmware/activate/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(resume.status, 200);
+    const resumed = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(devA, keyA) });
+    assert.equal(resumed.status, 200, 're-activation must clear the pause');
+  });
+
+  test('the admin rollout-status endpoint shows the target, envelope, and boot-fail stats', async () => {
+    const adminToken = await loginAdmin();
+    const { deviceId, key } = await provisionTestDevice();
+    createdBootReportDevices.push(deviceId);
+    const version = freshVersion();
+    const upload = await fetch(`${BASE}/api/firmware/upload?version=${version}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(32)
+    });
+    assert.equal(upload.status, 201);
+    createdVersions.push(version);
+    const { id } = await upload.json();
+    await fetch(`${BASE}/api/firmware/activate/${id}?rollout_pct=50&region=Nairobi`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+
+    await fetch(`${BASE}/api/firmware/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...deviceHeaders(deviceId, key) },
+      body: JSON.stringify({ version, status: 'fail' })
+    });
+
+    const r = await fetch(`${BASE}/api/firmware/rollout`, { headers: { Authorization: `Bearer ${adminToken}` } });
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.active.version, version);
+    assert.equal(body.active.rollout_pct, 50);
+    assert.equal(body.active.rollout_region, 'Nairobi');
+    assert.equal(body.bootFailures24h.reports, 1);
+    assert.equal(body.bootFailures24h.distinctDevices, 1);
+    assert.equal(body.bootFailures24h.pauseThreshold, 2);
+
+    /* Non-admin is locked out. */
+    const customerToken = await loginCustomer();
+    const forbidden = await fetch(`${BASE}/api/firmware/rollout`, { headers: { Authorization: `Bearer ${customerToken}` } });
+    assert.equal(forbidden.status, 403);
+  });
+
+  test('manual pause works and blocks /latest', async () => {
+    const adminToken = await loginAdmin();
+    const { deviceId, key } = await provisionTestDevice();
+    const version = freshVersion();
+    const upload = await fetch(`${BASE}/api/firmware/upload?version=${version}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(32)
+    });
+    assert.equal(upload.status, 201);
+    createdVersions.push(version);
+    const { id } = await upload.json();
+    await fetch(`${BASE}/api/firmware/activate/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+
+    const pause = await fetch(`${BASE}/api/firmware/pause/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(pause.status, 200);
+    assert.equal((await pause.json()).rollout_paused, true);
+
+    const r = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(deviceId, key) });
+    assert.equal(r.status, 404);
+
+    const customerToken = await loginCustomer();
+    const forbidden = await fetch(`${BASE}/api/firmware/pause/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${customerToken}` }
+    });
+    assert.equal(forbidden.status, 403);
+  });
+
+  test('report validates version, status, and device credentials', async () => {
+    const { deviceId, key } = await provisionTestDevice();
+    createdBootReportDevices.push(deviceId);
+    const headers = { 'Content-Type': 'application/json', ...deviceHeaders(deviceId, key) };
+
+    const badVersion = await fetch(`${BASE}/api/firmware/report`, {
+      method: 'POST', headers, body: JSON.stringify({ version: 'not-a-version', status: 'ok' })
+    });
+    assert.equal(badVersion.status, 400);
+
+    const badStatus = await fetch(`${BASE}/api/firmware/report`, {
+      method: 'POST', headers, body: JSON.stringify({ version: '1.2.3', status: 'maybe' })
+    });
+    assert.equal(badStatus.status, 400);
+
+    const noAuth = await fetch(`${BASE}/api/firmware/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: '1.2.3', status: 'ok' })
+    });
+    assert.equal(noAuth.status, 401);
+  });
+});
+
+describe('rollback aid (previous pointer)', { skip: OTA_PINNED_OFF }, () => {
+  test('/latest offers a device its last boot-ok version as `previous`', async () => {
+    const adminToken = await loginAdmin();
+    const { deviceId, key } = await provisionTestDevice();
+    createdBootReportDevices.push(deviceId);
+
+    /* vOld: published, activated, and the device boots it OK. */
+    const vOld = freshVersion();
+    const upOld = await fetch(`${BASE}/api/firmware/upload?version=${vOld}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(32)
+    });
+    assert.equal(upOld.status, 201);
+    createdVersions.push(vOld);
+    const oldId = (await upOld.json()).id;
+    await fetch(`${BASE}/api/firmware/activate/${oldId}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    const okOld = await fetch(`${BASE}/api/firmware/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...deviceHeaders(deviceId, key) },
+      body: JSON.stringify({ version: vOld, status: 'ok' })
+    });
+    assert.equal(okOld.status, 200);
+
+    /* vNew: published + activated. */
+    const vNew = freshVersion();
+    const upNew = await fetch(`${BASE}/api/firmware/upload?version=${vNew}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(32)
+    });
+    assert.equal(upNew.status, 201);
+    createdVersions.push(vNew);
+    const newId = (await upNew.json()).id;
+    await fetch(`${BASE}/api/firmware/activate/${newId}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+
+    const latest = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(deviceId, key) });
+    assert.equal(latest.status, 200);
+    const info = await latest.json();
+    assert.equal(info.version, vNew);
+    assert.ok(info.previous, 'a device with a boot-ok history must get a previous pointer');
+    assert.equal(info.previous.version, vOld);
+    assert.equal(info.previous.url, `/api/firmware/download/${oldId}`);
+
+    /* A device with no boot reports gets no previous pointer. */
+    const { deviceId: freshId, key: freshKey } = await provisionTestDevice();
+    const fresh = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(freshId, freshKey) });
+    assert.equal(fresh.status, 200);
+    assert.equal((await fresh.json()).previous, undefined);
+  });
+
+  test('a quarantined device keeps its downgrade pointer even after the rollout is auto-paused', async () => {
+    const adminToken = await loginAdmin();
+    const { deviceId: devA, key: keyA } = await provisionTestDevice();
+    const { deviceId: devB, key: keyB } = await provisionTestDevice();
+    createdBootReportDevices.push(devA, devB);
+
+    /* devA proves vOld good, then both devices fail vNew twice → pause. */
+    const vOld = freshVersion();
+    const upOld = await fetch(`${BASE}/api/firmware/upload?version=${vOld}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(32)
+    });
+    assert.equal(upOld.status, 201);
+    createdVersions.push(vOld);
+    const oldId = (await upOld.json()).id;
+    await fetch(`${BASE}/api/firmware/activate/${oldId}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    const okOld = await fetch(`${BASE}/api/firmware/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...deviceHeaders(devA, keyA) },
+      body: JSON.stringify({ version: vOld, status: 'ok' })
+    });
+    assert.equal(okOld.status, 200);
+
+    const vNew = freshVersion();
+    const upNew = await fetch(`${BASE}/api/firmware/upload?version=${vNew}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(32)
+    });
+    assert.equal(upNew.status, 201);
+    createdVersions.push(vNew);
+    const newId = (await upNew.json()).id;
+    await fetch(`${BASE}/api/firmware/activate/${newId}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+
+    /* Both devices report vNew failing; the second distinct device crosses
+       the threshold and auto-pauses. */
+    const failA = await fetch(`${BASE}/api/firmware/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...deviceHeaders(devA, keyA) },
+      body: JSON.stringify({ version: vNew, status: 'fail' })
+    });
+    assert.equal((await failA.json()).paused, false, 'first distinct device must not pause yet');
+    const failB = await fetch(`${BASE}/api/firmware/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...deviceHeaders(devB, keyB) },
+      body: JSON.stringify({ version: vNew, status: 'fail' })
+    });
+    assert.equal((await failB.json()).paused, true, 'second distinct device must auto-pause');
+
+    /* Even though the rollout is paused (no active target), devA — which has
+       a last-known-good (vOld) it is not running — still gets the downgrade
+       pointer. This is the path a crash-looping device takes to recover. */
+    const latest = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(devA, keyA) });
+    assert.equal(latest.status, 200, 'a device with a downgrade path must not be 404ed');
+    const body = await latest.json();
+    assert.equal(body.version, undefined, 'no active target while paused');
+    assert.equal(body.previous.version, vOld);
+    assert.equal(body.previous.url, `/api/firmware/download/${oldId}`);
+  });
+});
+
+describe('ENFORCE_PER_DEVICE_KEYS toggle', { skip: OTA_PINNED_OFF }, () => {
+  let enforcePort;
+  let enforceBase;
+  let enforceChild;
+
+  before(async () => {
+    enforcePort = PORT + 100;
+    enforceBase = `http://localhost:${enforcePort}`;
+    enforceChild = await spawnAndWait(enforcePort, {
+      OTA_ENABLED: 'true',
+      FIRMWARE_SIGNING_KEY: SIGNING_PRIVATE_PEM,
+      ENFORCE_PER_DEVICE_KEYS: 'true',
+      API_RATE_LIMIT_MAX: '20000'
+    }, 'enforce-keys server');
+  });
+
+  after(() => {
+    if (enforceChild) { enforceChild.kill(); }
+  });
+
+  test('rejects a device without a per-device key on /latest', async () => {
+    const r = await fetch(`${enforceBase}/api/firmware/latest`, {
+      headers: { 'X-Device-Id': 'DEMO-001', 'X-Device-Key': 'some-shared-key' }
+    });
+    /* DEMO-001 has no api_key in the DB (it was seeded without one), and
+       ENFORCE_PER_DEVICE_KEYS=true removes the DEVICE_API_KEY fallback. */
+    assert.equal(r.status, 401, 'unprovisioned device must be rejected when enforced');
+  });
+
+  test('accepts a provisioned device with its own key on /latest', async () => {
+    const { deviceId, key } = await provisionTestDevice();
+    const r = await fetch(`${enforceBase}/api/firmware/latest`, {
+      headers: deviceHeaders(deviceId, key)
+    });
+    /* 404 means the auth passed (the device is authenticated) but there's
+       no active firmware — which is the expected state. */
+    assert.notEqual(r.status, 401, 'provisioned device must not be rejected');
+  });
+
+  test('rejects an unprovisioned device on /report', async () => {
+    const r = await fetch(`${enforceBase}/api/firmware/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Device-Id': 'NO-KEY-DEVICE', 'X-Device-Key': 'some-key' },
+      body: JSON.stringify({ version: '1.0.0', status: 'fail' })
+    });
+    assert.equal(r.status, 401, 'unprovisioned device must be rejected on /report when enforced');
+  });
+});
+
+

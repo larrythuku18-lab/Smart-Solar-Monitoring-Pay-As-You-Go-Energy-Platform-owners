@@ -37,6 +37,7 @@ JOBS="${JOBS:-2}"
 
 step()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 ok()    { printf '\033[1;32m[OK]\033[0m %s\n' "$*"; }
+warn()  { printf '\033[1;33m[WARN]\033[0m %s\n' "$*" >&2; }
 die()   { printf '\033[1;31m[FAIL]\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ -f "$SKETCH" ] || die "Sketch not found: $SKETCH"
@@ -91,6 +92,16 @@ step "Compiling OTA-enabled configuration (OTA_ENABLED=1)"
 OTA_SKETCH="$STAGING_DIR/ota/esp32-firmware/esp32-firmware.ino"
 mkdir -p "$(dirname "$OTA_SKETCH")"
 sed 's/^#define OTA_ENABLED 0$/#define OTA_ENABLED 1/' "$SKETCH" > "$OTA_SKETCH"
+
+# A fleet build MUST bake in the OTA root public key — with an empty
+# FIRMWARE_ROOT_PUBKEY the device accepts unsigned binaries, which defeats
+# the whole signature chain. Warn loudly (dev builds legitimately omit it,
+# so this is a warning, not a failure).
+if grep -q '^#define FIRMWARE_ROOT_PUBKEY ""$' "$OTA_SKETCH"; then
+  warn "OTA-enabled sketch has an EMPTY FIRMWARE_ROOT_PUBKEY — devices flashed " \
+       "from this build will accept UNSIGNED firmware. Run \`node " \
+       "scripts/generate-ota-keys.js\` and paste the root key before a fleet build."
+fi
 arduino-cli compile --fqbn "$FQBN" --warnings all --jobs "$JOBS" \
   --output-dir "$OUT_DIR/ota-enabled" "$STAGING_DIR/ota/esp32-firmware"
 ok "OTA-enabled firmware compiled"

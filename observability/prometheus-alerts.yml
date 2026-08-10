@@ -1,0 +1,182 @@
+# Prometheus alert rules — SolGrid SLIs (Section 8 of production-hardening spec)
+#
+# Load into Prometheus via rule_files, or import into Grafana / managed
+# alerting. Metric names match observability.js exactly; the values come
+# from the spec's SLO targets:
+#   payments  — success rate >= 98%, settle time p95 < 120s
+#   devices   — >= 95% of fleet online
+#   relay     — command failure rate < 5%, p95 latency < 5s
+#
+# Recommended scrape config for render.yaml:
+#   - job_name: solgrid
+#     metrics_path: /metrics
+#     bearer_token: <METRICS_TOKEN>
+#     static_configs:
+#       - targets: [solgrid:3000]        # internal service URL
+
+groups:
+  - name: solgrid-payments
+    rules:
+      # Payment success rate over the last 10 minutes. 99% success for the
+      # last 10 of 100+ initiated payments is a real degradation.
+      - alert: SolGridPaymentSuccessRateLow
+        expr: |
+          sum(rate(solgrid_payments_total{status="completed"}[10m]))
+            / clamp_min(sum(rate(solgrid_payments_total{status=~"completed|failed"}[10m])), 1)
+            < 0.98
+        for: 10m
+        labels:
+          severity: page
+          sli: payments
+        annotations:
+          summary: "Payment success rate below 98%"
+          description: "Payment completion rate dropped to {{ $value | humanizePercentage }} over the last 10 minutes — check M-Pesa status and /api/mpesa/callback logs (runbook: payment-failure)."
+
+      # Payments failing outright (initiated but never completed / failed out).
+      - alert: SolGridPaymentFailuresSpike
+        expr: |
+          rate(solgrid_payments_total{status="failed"}[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          sli: payments
+        annotations:
+          summary: "Payment failures spiking"
+          description: "More than 0.5 failed payments/sec over 5 minutes — possible M-Pesa outage or callback auth failure."
+
+      # p95 payment settle time. Real M-Pesa callbacks typically land in
+      # 5-30s; a sustained climb past 2 minutes means Daraja is slow.
+      - alert: SolGridPaymentSettleSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(solgrid_payment_settle_seconds_bucket[10m])) by (le))
+            > 120
+        for: 10m
+        labels:
+          severity: warning
+          sli: payments
+        annotations:
+          summary: "Payment settle time p95 above 2 minutes"
+          description: "p95 time from initiation to completion is {{ $value | humanizeDuration }} — customers are waiting too long to get power."
+
+  - name: solgrid-devices
+    rules:
+      # Telemetry ingest dropping to zero is the fastest offline signal.
+      # A healthy fleet posts every 5s/device, so any sustained zero is bad.
+      - alert: SolGridTelemetryStopped
+        expr: |
+          sum(rate(solgrid_telemetry_ingested_total{outcome="ok"}[5m])) == 0
+        for: 10m
+        labels:
+          severity: page
+          sli: devices
+        annotations:
+          summary: "No telemetry being ingested"
+          description: "Zero successful telemetry readings in 10 minutes — either the fleet is offline, the network is down, or the ingest path is broken. Check /api/admin/devices."
+
+      # Unauthorized telemetry attempts — devices with rotated/wrong keys,
+      # or someone probing the endpoint. Worth knowing but not page-worthy.
+      - alert: SolGridTelemetryAuthFailures
+        expr: |
+          rate(solgrid_telemetry_ingested_total{outcome="unauth"}[5m]) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+          sli: devices
+        annotations:
+          summary: "Telemetry auth failures increasing"
+          description: "Devices are being rejected at {{ $value | humanize }} req/s — check for rotated keys or an attacker probing /api/telemetry."
+
+      # OTA boot failures — the fleet rollback safety valve is about to fire.
+      - alert: SolGridBootFailures
+        expr: |
+          increase(solgrid_ota_boot_reports_total{status="fail"}[10m]) > 5
+        for: 5m
+        labels:
+          severity: page
+          sli: devices
+        annotations:
+          summary: "Multiple firmware boot failures"
+          description: "{{ $value }} boot failures in 10 minutes — a bad release is rolling out. The auto-pause threshold will fire; check the Firmware tab rollout status."
+
+  - name: solgrid-relay
+    rules:
+      # Relay commands failing faster than 5% (spec SLO) means devices
+      # can't be locked/unlocked — a revenue + safety problem.
+      - alert: SolGridRelayFailureRateHigh
+        expr: |
+          sum(rate(solgrid_relay_commands_total{result!="success"}[10m]))
+            / clamp_min(sum(rate(solgrid_relay_commands_total[10m])), 1)
+            > 0.05
+        for: 10m
+        labels:
+          severity: page
+          sli: relay
+        annotations:
+          summary: "Relay command failure rate above 5%"
+          description: "{{ $value | humanizePercentage }} of relay commands are failing or queued — devices unreachable? Check network status and the retry queue (runbook: relay-stuck)."
+
+      # p95 relay command latency. 5s+ means the device HTTP path is slow.
+      - alert: SolGridRelayLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(solgrid_relay_command_duration_seconds_bucket[10m])) by (le))
+            > 5
+        for: 10m
+        labels:
+          severity: warning
+          sli: relay
+        annotations:
+          summary: "Relay command latency p95 above 5s"
+          description: "p95 relay command round-trip is {{ $value | humanizeDuration }} — devices responding slowly over the network."
+
+      # A sudden burst of queued commands means the fleet is unreachable.
+      - alert: SolGridRelayQueueGrowing
+        expr: |
+          rate(solgrid_relay_commands_total{result="queued"}[5m]) > 1
+        for: 10m
+        labels:
+          severity: warning
+          sli: relay
+        annotations:
+          summary: "Relay retry queue growing"
+          description: "More than 1 queued relay command/sec — many devices unreachable. Field tech dispatch may be needed (runbook: device-offline)."
+
+  - name: solgrid-platform
+    rules:
+      # The /metrics endpoint itself being scraped means the process is up;
+      # this fires when the whole app is dead or unreachable.
+      - alert: SolGridInstanceDown
+        expr: up{job="solgrid"} == 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "SolGrid instance down"
+          description: "Prometheus cannot scrape {{ $labels.instance }} — the app is down or the container is restarting."
+
+      # High HTTP 5xx rate (health-check threshold from the spec: rollback
+      # on 5xx > 5%).
+      - alert: SolGridHigh5xxRate
+        expr: |
+          sum(rate(solgrid_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(solgrid_http_requests_total[5m])), 1)
+            > 0.05
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "HTTP 5xx rate above 5%"
+          description: "{{ $value | humanizePercentage }} of requests are failing with 5xx — consider triggering the blue-green rollback."
+
+      # Event-loop lag is the classic Node health canary. All default
+      # metrics carry the solgrid_ prefix (see startDefaultMetrics).
+      - alert: SolGridEventLoopLagging
+        expr: |
+          solgrid_nodejs_eventloop_lag_seconds > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Event loop lagging"
+          description: "Event loop is blocked for {{ $value | humanizeDuration }} — possible blocking call or memory pressure."

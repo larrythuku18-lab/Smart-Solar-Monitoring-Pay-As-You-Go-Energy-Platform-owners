@@ -57,6 +57,43 @@ async function seedPendingPayment(amount = 123) {
   return { checkoutRequestId, userId: user.id };
 }
 
+describe('createPayment idempotency', () => {
+  test('a duplicate checkoutRequestId returns the original payment id, not a new row', async () => {
+    const { checkoutRequestId } = await seedPendingPayment(50);
+    const first = await getPaymentByCheckoutId(checkoutRequestId);
+    assert.ok(first, 'seed payment must exist');
+
+    /* Re-send the exact same initiation (client retry / double-click). */
+    const dup = await createPayment({
+      userId: first.user_id,
+      deviceId: first.device_id,
+      amount: 50,
+      phoneNumber: '254712345678',
+      merchantRequestId: `TEST-MR-${checkoutRequestId}`,
+      checkoutRequestId,
+      paymentType: 'energy'
+    });
+    assert.equal(dup.id, first.id, 'duplicate initiation must return the ORIGINAL payment id');
+
+    /* And the unique index must have kept the table to exactly one row. */
+    const { rows } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM payments WHERE checkout_request_id = $1',
+      [checkoutRequestId]
+    );
+    assert.equal(rows[0].n, 1, 'only one payment row may exist per checkoutRequestId');
+  });
+
+  test('simulated payments (unique ids) still create distinct rows', async () => {
+    const deviceId = `TEST-${crypto.randomBytes(6).toString('hex')}`;
+    const user = await createUser({ deviceId, name: 'Test User', role: 'customer' });
+    const c1 = `SIM-${Date.now()}-aaaa`;
+    const c2 = `SIM-${Date.now()}-bbbb`;
+    const p1 = await createPayment({ userId: user.id, deviceId, amount: 10, checkoutRequestId: c1, paymentType: 'energy' });
+    const p2 = await createPayment({ userId: user.id, deviceId, amount: 10, checkoutRequestId: c2, paymentType: 'energy' });
+    assert.notEqual(p1.id, p2.id);
+  });
+});
+
 describe('completePayment idempotency', () => {
   test('completes a pending payment and credits the wallet once', async () => {
     const { checkoutRequestId, userId } = await seedPendingPayment(50);

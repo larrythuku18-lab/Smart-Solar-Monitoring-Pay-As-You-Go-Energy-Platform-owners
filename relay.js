@@ -14,6 +14,8 @@ const {
   updatePendingCommand,
   removePendingCommand
 } = require('./db');
+/* Relay SLI counters — always safe to call (module side-effect free). */
+const obs = require('./observability');
 
 const REQUEST_TIMEOUT = 5_000;
 
@@ -40,11 +42,15 @@ async function sendRelayCommand(deviceId, state) {
 
 async function unlockRelay(deviceId) {
   try {
+    const start = process.hrtime.bigint();
     await sendRelayCommand(deviceId, true);
-    console.log(`[RELAY] Unlocked for device ${deviceId}`);
+    obs.relayCommandDuration.observe({ action: 'unlock' }, Number(process.hrtime.bigint() - start) / 1e9);
+    obs.recordRelay('unlock', 'success');
+    obs.log.info('[RELAY] Unlocked', { deviceId });
     return { success: true };
   } catch (err) {
-    console.error(`Failed to unlock relay for ${deviceId}:`, err.message);
+    obs.recordRelay('unlock', 'queued');
+    obs.log.error('[RELAY] Failed to unlock', { deviceId, error: err.message });
     await setRelayState(deviceId, true);
     queuePendingCommand(deviceId, 'unlock', err.message).catch(console.error);
     return { success: false, error: err.message, queued: true, stateUpdated: true };
@@ -53,11 +59,15 @@ async function unlockRelay(deviceId) {
 
 async function lockRelay(deviceId) {
   try {
+    const start = process.hrtime.bigint();
     await sendRelayCommand(deviceId, false);
-    console.log(`[RELAY] Locked for device ${deviceId}`);
+    obs.relayCommandDuration.observe({ action: 'lock' }, Number(process.hrtime.bigint() - start) / 1e9);
+    obs.recordRelay('lock', 'success');
+    obs.log.info('[RELAY] Locked', { deviceId });
     return { success: true };
   } catch (err) {
-    console.error(`Failed to lock relay for ${deviceId}:`, err.message);
+    obs.recordRelay('lock', 'queued');
+    obs.log.error('[RELAY] Failed to lock', { deviceId, error: err.message });
     await setRelayState(deviceId, false);
     queuePendingCommand(deviceId, 'lock', err.message).catch(console.error);
     return { success: false, error: err.message, queued: true, stateUpdated: true };

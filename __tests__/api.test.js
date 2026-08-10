@@ -201,6 +201,65 @@ describe('M-Pesa callback security', () => {
     // matches a real payment — that lookup happens async after the response.
     assert.equal(r.status, 200);
   });
+
+  test('completes a real pending payment from a valid callback (idempotent on replay)', async () => {
+    if (!process.env.MPESA_CALLBACK_SECRET) return;
+    const db = require('../db');
+    const crypto = require('node:crypto');
+    const user = await db.createUser({ deviceId: `CB-TEST-${Date.now()}`, name: 'CB Test', role: 'customer' });
+    const checkoutRequestId = `CB-${crypto.randomBytes(8).toString('hex')}`;
+    await db.createPayment({ userId: user.id, deviceId: user.device_id, amount: 75, checkoutRequestId, paymentType: 'energy' });
+
+    const callbackBody = (amount) => ({
+      Body: { stkCallback: {
+        MerchantRequestID: 'mr', CheckoutRequestID: checkoutRequestId, ResultCode: 0, ResultDesc: 'ok',
+        CallbackMetadata: { Item: [
+          { Name: 'Amount', Value: amount },
+          { Name: 'MpesaReceiptNumber', Value: 'CB-RCPT-1' },
+          { Name: 'PhoneNumber', Value: 254712345678 }
+        ] }
+      } }
+    });
+
+    /* First callback completes the payment. */
+    const r1 = await fetch(`${BASE}/api/mpesa/callback?secret=${process.env.MPESA_CALLBACK_SECRET}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(callbackBody(75))
+    });
+    assert.equal(r1.status, 200);
+
+    /* The handler processes async after the 200 — poll the DB row instead
+       of sleeping a fixed duration (which flakes on slow machines). */
+    const stored = await (async () => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const row = await db.getPaymentByCheckoutId(checkoutRequestId);
+        if (row?.status === 'completed') return row;
+        await new Promise(r => setTimeout(r, 100));
+      }
+      return null;
+    })();
+    assert.ok(stored, 'valid callback must complete the payment (timed out waiting)');
+    assert.equal(stored.status, 'completed', 'valid callback must complete the payment');
+    const wallet = await db.getUserById(user.id);
+    assert.equal(Number(wallet.wallet_balance), 75, 'wallet credited once');
+
+    /* Replay the same callback — must not double-credit. */
+    const r2 = await fetch(`${BASE}/api/mpesa/callback?secret=${process.env.MPESA_CALLBACK_SECRET}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(callbackBody(75))
+    });
+    assert.equal(r2.status, 200);
+    /* Give the async handler a beat to run the (no-op) second completion. */
+    await new Promise(r => setTimeout(r, 150));
+    const wallet2 = await db.getUserById(user.id);
+    assert.equal(Number(wallet2.wallet_balance), 75, 'replayed callback must not double-credit');
+
+    await db.pool.query('DELETE FROM payments WHERE checkout_request_id = $1', [checkoutRequestId]);
+    await db.pool.query('DELETE FROM users WHERE id = $1', [user.id]);
+  });
 });
 
 describe('payment endpoints are scoped to the authenticated user', () => {

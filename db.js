@@ -238,6 +238,36 @@ async function runMigrations() {
       is_active  BOOLEAN      DEFAULT FALSE,
       created_at TIMESTAMPTZ  DEFAULT NOW()
     );
+    -- OTA hardening: ECDSA P-256 signature over the binary's SHA-256 (base64
+    -- DER), produced at upload time from FIRMWARE_SIGNING_KEY. NULL when no
+    -- signing key was configured — devices with a baked-in root key reject
+    -- unsigned binaries (fail-closed), so NULL only ever ships to dev fleets.
+    ALTER TABLE firmware_versions ADD COLUMN IF NOT EXISTS signature TEXT;
+    -- Staged rollout: what % of the fleet to target (0-100, deterministic
+    -- hash bucket per device) and an optional region filter (case-insensitive
+    -- substring of devices.location). Devices outside the rollout get no
+    -- update — 1% → 10% → 50% → 100% is just re-activating with a higher %.
+    ALTER TABLE firmware_versions ADD COLUMN IF NOT EXISTS rollout_pct INTEGER NOT NULL DEFAULT 100;
+    ALTER TABLE firmware_versions ADD COLUMN IF NOT EXISTS rollout_region VARCHAR(128);
+    -- Auto-paused after 2 consecutive boot failures of this version (see
+    -- recordBootReport / pauseActiveFirmwareByVersion). Paused firmware is
+    -- never offered to devices again until an admin re-activates it.
+    ALTER TABLE firmware_versions ADD COLUMN IF NOT EXISTS rollout_paused BOOLEAN NOT NULL DEFAULT FALSE;
+
+    -- ── Firmware boot reports (OTA rollback) ──────────────────────────────
+    -- Devices POST here after booting into a freshly-flashed version,
+    -- declaring it OK (status='ok', after a stable-uptime window) or failing
+    -- (status='fail'). Two consecutive 'fail' rows for the same
+    -- (device, version) trigger the automatic rollout pause — the server
+    -- half of the rollback story (the device half keeps its last-good
+    -- version in NVS and re-downloads it when quarantined).
+    CREATE TABLE IF NOT EXISTS firmware_boot_reports (
+      id               BIGSERIAL    PRIMARY KEY,
+      device_id        VARCHAR(64)  NOT NULL,
+      firmware_version VARCHAR(32)  NOT NULL,
+      status           VARCHAR(16)  NOT NULL,
+      created_at       TIMESTAMPTZ  DEFAULT NOW()
+    );
 
     -- Data fix: category icons were originally seeded as emojis; the UI no
     -- longer renders them and the product style is text-only. seedProducts()
@@ -259,6 +289,38 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS idx_energy_device_ts  ON energy_readings(device_id, recorded_at DESC);
     CREATE INDEX IF NOT EXISTS idx_payments_user     ON payments(user_id);
     CREATE INDEX IF NOT EXISTS idx_payments_status   ON payments(status);
+    -- Idempotency anchor for M-Pesa callbacks: a checkoutRequestId is unique
+    -- per STK push, so a replayed or duplicated callback can never double-
+    -- create a payment row (completePayment already guards against double-
+    -- crediting; this guards against double-creating). Postgres treats NULLs
+    -- as distinct in unique indexes, so this also allows the (never-used)
+    -- NULL checkout id case without a partial predicate — and, importantly,
+    -- the bare-column form makes ON CONFLICT (checkout_request_id) work.
+    --
+    -- This must NOT be a plain CREATE UNIQUE INDEX on every boot: a table
+    -- that predates the index may hold duplicate checkout ids (the column
+    -- was never constrained, and createPayment wasn't idempotent), which
+    -- would fail the migration and brick startup. So: create once, and if
+    -- duplicates exist, keep the earliest row per checkout id and clear the
+    -- id on the rest (they were duplicate creations of the same payment).
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'uq_payments_checkout') THEN
+        BEGIN
+          CREATE UNIQUE INDEX uq_payments_checkout ON payments(checkout_request_id);
+        EXCEPTION WHEN unique_violation THEN
+          UPDATE payments p
+             SET checkout_request_id = NULL
+           WHERE checkout_request_id IS NOT NULL
+             AND p.id NOT IN (
+                   SELECT MIN(id) FROM payments
+                    WHERE checkout_request_id IS NOT NULL
+                    GROUP BY checkout_request_id
+                 );
+          CREATE UNIQUE INDEX uq_payments_checkout ON payments(checkout_request_id);
+        END;
+      END IF;
+    END $$;
     CREATE INDEX IF NOT EXISTS idx_payments_checkout ON payments(checkout_request_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_device     ON maintenance_alerts(device_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_pred_device       ON ai_predictions(device_id, created_at DESC);
@@ -273,6 +335,8 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS idx_alerts_user       ON maintenance_alerts(user_id);
     -- Active-firmware lookup (GET /api/firmware/latest) — one active row max
     CREATE INDEX IF NOT EXISTS idx_firmware_active   ON firmware_versions (is_active) WHERE is_active;
+    -- Boot-report trail for the 2-strike rollback check (per device+version)
+    CREATE INDEX IF NOT EXISTS idx_boot_reports_device ON firmware_boot_reports (device_id, firmware_version, created_at DESC);
   `);
 
   console.log('[DB] PostgreSQL migrations complete');
@@ -821,14 +885,26 @@ async function getEnergyHistory48hAllDevices() {
 ══════════════════════════════════════════════════════════════════════════ */
 
 async function createPayment({ userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId, paymentType = 'energy', productId = null, productName = null }) {
+  /* Idempotent by design: checkoutRequestId is the M-Pesa idempotency key.
+     If the same STK push is re-sent (client retry, Safaricom replay), we
+     return the ORIGINAL payment row instead of creating a duplicate — the
+     uq_payments_checkout index enforces this at the DB level too, so even
+     a racing double-request collapses to one row. */
   const { rows } = await q(
     `INSERT INTO payments
        (user_id, device_id, amount, phone_number, status, merchant_request_id, checkout_request_id, payment_type, product_id, product_name)
      VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9)
+     ON CONFLICT (checkout_request_id) DO NOTHING
      RETURNING id`,
     [userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId, paymentType, productId, productName]
   );
-  return rows[0];
+  if (rows[0]) return rows[0];
+  /* Duplicate checkoutRequestId — fetch and return the original row's id. */
+  const existing = await q(
+    'SELECT id FROM payments WHERE checkout_request_id = $1',
+    [checkoutRequestId]
+  );
+  return existing.rows[0] ?? null;
 }
 
 async function completePayment(checkoutRequestId, receiptNumber, resultCode, resultDesc) {
@@ -1225,12 +1301,22 @@ async function getProductById(id) {
  *  uploaded and discarded without ever targeting the fleet. Duplicate
  *  `version` violates the UNIQUE constraint (pg error 23505) and is surfaced
  *  by the caller as a 409. */
-async function insertFirmwareVersion({ version, filename, checksum, changelog = null, sizeBytes = 0 }) {
+/* How many devices have a per-device api_key (non-NULL). Used by the OTA
+   pause threshold (OTA_PAUSE_PCT) to make the 2-strike value scale with
+   the fleet — at 50k devices with keys, OTA_PAUSE_PCT=1 ≅ 500 devices
+   must fail before the rollout pauses.  Returns 0 when no devices match,
+   which causes the percentage path to fall back to the absolute minimum. */
+async function getCountOfProvisionedDevices() {
+  const { rows: [r] } = await q('SELECT COUNT(*)::int AS n FROM devices WHERE api_key IS NOT NULL');
+  return r?.n ?? 0;
+}
+
+async function insertFirmwareVersion({ version, filename, checksum, changelog = null, sizeBytes = 0, signature = null }) {
   const { rows } = await q(
-    `INSERT INTO firmware_versions (version, filename, checksum, changelog, size_bytes, is_active)
-     VALUES ($1,$2,$3,$4,$5,FALSE)
+    `INSERT INTO firmware_versions (version, filename, checksum, changelog, size_bytes, signature, is_active)
+     VALUES ($1,$2,$3,$4,$5,$6,FALSE)
      RETURNING *`,
-    [version, filename, checksum, changelog, sizeBytes]
+    [version, filename, checksum, changelog, sizeBytes, signature]
   );
   return rows[0];
 }
@@ -1243,7 +1329,20 @@ async function insertFirmwareVersion({ version, filename, checksum, changelog = 
  *  activations could interleave their deactivate/update steps and whichever
  *  COMMIT lands last would win, leaving an older version active after a
  *  newer one was acknowledged. */
-async function activateFirmwareVersion(id) {
+/* Activate a staged firmware version — the only way a version becomes the
+ *  OTA target. Atomic: deactivates whatever is currently active, then marks
+ *  this row active. Returns null when the id doesn't exist.
+ *
+ *  rolloutPct / rolloutRegion set the staged-rollout envelope for the
+ *  activation; defaults (100 / null) reproduce the pre-rollout behavior of
+ *  targeting the whole fleet. Re-activating also clears any auto/manual
+ *  rollout_paused flag, which is how a paused rollout is resumed.
+ *
+ *  The advisory lock serializes concurrent activations: without it, two
+ *  activations could interleave their deactivate/update steps and whichever
+ *  COMMIT lands last would win, leaving an older version active after a
+ *  newer one was acknowledged. */
+async function activateFirmwareVersion(id, { rolloutPct = 100, rolloutRegion = null } = {}) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1257,8 +1356,10 @@ async function activateFirmwareVersion(id) {
     }
     await client.query('UPDATE firmware_versions SET is_active = FALSE WHERE is_active = TRUE');
     const { rows } = await client.query(
-      'UPDATE firmware_versions SET is_active = TRUE WHERE id = $1 RETURNING *',
-      [id]
+      `UPDATE firmware_versions
+       SET is_active = TRUE, rollout_pct = $2, rollout_region = $3, rollout_paused = FALSE
+       WHERE id = $1 RETURNING *`,
+      [id, rolloutPct, rolloutRegion || null]
     );
     await client.query('COMMIT');
     return rows[0];
@@ -1268,6 +1369,122 @@ async function activateFirmwareVersion(id) {
   } finally {
     client.release();
   }
+}
+
+/* The current OTA target, excluding auto/manually paused versions — a paused
+ * rollout must stop being offered immediately, without waiting for an admin. */
+async function getActiveFirmware() {
+  const { rows } = await q(
+    'SELECT * FROM firmware_versions WHERE is_active = TRUE AND rollout_paused = FALSE ORDER BY created_at DESC LIMIT 1'
+  );
+  return rows[0] ?? null;
+}
+
+async function getLatestFirmware() {
+  const { rows } = await q(
+    'SELECT * FROM firmware_versions WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1'
+  );
+  return rows[0] ?? null;
+}
+
+/* Re-sign (or sign for the first time) an existing binary — used when the
+ * signing key was generated after upload, or rotated since. */
+async function setFirmwareSignature(id, signature) {
+  const { rows } = await q(
+    'UPDATE firmware_versions SET signature = $1 WHERE id = $2 RETURNING *',
+    [signature, id]
+  );
+  return rows[0] ?? null;
+}
+
+/* ── Boot reports (2-strike rollback) ──────────────────────────────────── */
+
+async function recordBootReport({ deviceId, version, status }) {
+  await q(
+    'INSERT INTO firmware_boot_reports (device_id, firmware_version, status) VALUES ($1,$2,$3)',
+    [deviceId, version, status]
+  );
+}
+
+/* How many DISTINCT devices reported a boot-failure for this version within
+ * the window (hours). The fleet-wide auto-pause requires evidence from 2+
+ * devices — a single buggy or compromised device must not be able to pause a
+ * rollout for everyone (it still rolls itself back locally via quarantine +
+ * the /latest `previous` pointer). */
+async function getDistinctFailingDevices(version, hours = 24) {
+  const { rows: [r] } = await q(
+    `SELECT COUNT(DISTINCT device_id)::int AS n
+     FROM firmware_boot_reports
+     WHERE firmware_version = $1 AND status = 'fail'
+       AND created_at > NOW() - make_interval(hours => $2)`,
+    [version, hours]
+  );
+  return r?.n ?? 0;
+}
+
+/* Boot-fail stats for the admin rollout-status endpoint: how many fail
+ * reports and how many distinct devices in the last `hours`, alongside the
+ * pause threshold, so an operator can see how close a rollout is to being
+ * auto-paused. */
+async function getRolloutStats(version, hours = 24) {
+  const { rows: [r] } = await q(
+    `SELECT COUNT(*)::int                 AS fail_reports,
+            COUNT(DISTINCT device_id)::int AS failing_devices
+     FROM firmware_boot_reports
+     WHERE firmware_version = $1 AND status = 'fail'
+       AND created_at > NOW() - make_interval(hours => $2)`,
+    [version, hours]
+  );
+  return r ?? { fail_reports: 0, failing_devices: 0 };
+}
+
+/* Pause the ACTIVE firmware matching a version string — used by the 2-strike
+ * auto-rollback path (the device reports its own target version, not a row
+ * id). Only touches the active row so a paused older version can't be
+ * resurrected by a stray report. */
+async function pauseActiveFirmwareByVersion(version) {
+  const { rows } = await q(
+    `UPDATE firmware_versions SET rollout_paused = TRUE
+     WHERE version = $1 AND is_active = TRUE RETURNING *`,
+    [version]
+  );
+  return rows[0] ?? null;
+}
+
+/* Manual pause by row id (POST /api/firmware/pause/:id). */
+async function pauseFirmware(id) {
+  const { rows } = await q(
+    'UPDATE firmware_versions SET rollout_paused = TRUE WHERE id = $1 RETURNING *',
+    [id]
+  );
+  return rows[0] ?? null;
+}
+
+/* The last version this device booted into and confirmed OK — the server's
+ * record of "known good", offered to the device as `previous` so a
+ * quarantined unit can re-download it (the downgrade half of rollback). */
+async function getLastGoodFirmwareForDevice(deviceId) {
+  const { rows } = await q(
+    `SELECT fv.* FROM firmware_boot_reports r
+     JOIN firmware_versions fv ON fv.version = r.firmware_version
+     WHERE r.device_id = $1 AND r.status = 'ok'
+     ORDER BY r.created_at DESC LIMIT 1`,
+    [deviceId]
+  );
+  return rows[0] ?? null;
+}
+
+async function getFirmwareById(id) {
+  const { rows } = await q('SELECT * FROM firmware_versions WHERE id = $1', [id]);
+  return rows[0] ?? null;
+}
+
+async function listFirmwareVersions(limit = 20) {
+  const { rows } = await q(
+    'SELECT * FROM firmware_versions ORDER BY created_at DESC LIMIT $1',
+    [limit]
+  );
+  return rows;
 }
 
 async function getLatestFirmware() {
@@ -1365,7 +1582,17 @@ module.exports = {
   /* firmware (OTA) */
   insertFirmwareVersion,
   activateFirmwareVersion,
+  getCountOfProvisionedDevices,
+  getActiveFirmware,
   getLatestFirmware,
+  setFirmwareSignature,
   getFirmwareById,
-  listFirmwareVersions
+  listFirmwareVersions,
+  /* firmware boot reports (2-strike rollback) */
+  recordBootReport,
+  getDistinctFailingDevices,
+  getRolloutStats,
+  pauseActiveFirmwareByVersion,
+  pauseFirmware,
+  getLastGoodFirmwareForDevice
 };

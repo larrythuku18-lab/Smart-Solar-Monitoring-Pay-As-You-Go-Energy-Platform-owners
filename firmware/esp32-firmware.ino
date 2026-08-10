@@ -26,6 +26,12 @@
 #include <Update.h>          // OTA partition flashing (only used when OTA_ENABLED=1)
 #include <mbedtls/md.h>      // SHA-256 digest while streaming the download
 
+#if OTA_ENABLED
+#include <Preferences.h>     // NVS: boot-verification + rollback state
+#include <mbedtls/pk.h>      // ECDSA P-256 signature verification
+#include <mbedtls/base64.h>  // decode the base64 signature from /latest
+#endif
+
 // ===== CONFIGURATION =====
 #define BACKEND_URL "https://smart-solar-monitoring-pay-as-you-go.onrender.com/api/telemetry"
 // Without this, anyone can POST fake telemetry for any deviceId.
@@ -62,6 +68,15 @@
 // Version of THIS firmware build. The backend compares against it and only
 // offers an update when the published version is strictly newer.
 #define FIRMWARE_VERSION "1.0.0"
+
+// Root PUBLIC key for OTA signature verification (ECDSA P-256, SPKI PEM).
+// The matching private key lives ONLY on the backend (FIRMWARE_SIGNING_KEY
+// env var / HSM) and never reaches this file or the devices. When this stays
+// EMPTY the firmware skips signature checks — dev-only; a fleet build should
+// always bake the real key in so forged or unsigned binaries are rejected
+// (the OTA flow fails closed). Generate a keypair with:
+//   node scripts/generate-ota-keys.js
+#define FIRMWARE_ROOT_PUBKEY ""
 
 // Origin of the OTA API (same host as BACKEND_URL). Unused while OTA_ENABLED=0.
 #define OTA_SERVER_BASE "https://smart-solar-monitoring-pay-as-you-go.onrender.com"
@@ -104,6 +119,25 @@ const unsigned long WIFI_RETRY_INTERVAL = 30000;  // try a reconnect at most eve
 #if OTA_ENABLED
 unsigned long lastOtaCheck = 0;
 const unsigned long OTA_CHECK_INTERVAL = 86400000UL;  // 24 h
+
+/* ── Boot verification + automatic rollback state ── */
+// A freshly-flashed build must survive this long without crashing before it
+// reports boot-ok. Crashes before that (crash loop) keep the NVS "pending"
+// marker set, so every subsequent boot counts a strike.
+#define OTA_BOOT_VERIFY_MS   90000UL
+// Consecutive unverified boots before the device quarantines itself and
+// re-downloads its last-known-good build (the 2-strike rule).
+#define OTA_MAX_BOOT_STRIKES 2
+
+// NVS keys (namespace "ota") for the rollback bookkeeping below.
+#define PREF_NS       "ota"
+#define PREF_PENDING  "pending"    // version currently awaiting boot verification
+#define PREF_STRIKES  "strikes"    // unverified boots of that version
+#define PREF_LAST_GOOD "lastGood"  // version that last reported boot-ok
+
+Preferences otaPrefs;
+bool otaQuarantined = false;     // true → stop applying new builds, try downgrade
+unsigned long otaBootStart = 0;  // 0 = nothing being verified this boot
 #endif
 
 // Panel configuration database
@@ -148,6 +182,11 @@ void setup() {
   }
 
 #if OTA_ENABLED
+  // Boot verification: decide whether this boot needs to prove itself (a
+  // fresh OTA flash), count strikes against an unverified build, and report
+  // any orphaned pending version. Runs BEFORE the OTA check so a quarantined
+  // device downgrades instead of re-applying the failing build.
+  otaBootInit();
   // OTA needs a TLS socket — only attempt it over WiFi. GSM units skip the
   // check this boot and pick it up on a later WiFi-connected loop tick.
   if (WiFi.status() == WL_CONNECTED) checkForOTA();
@@ -164,6 +203,10 @@ void loop() {
   }
 
 #if OTA_ENABLED
+  // A freshly-flashed build reports boot-ok once it survives the stability
+  // window (see OTA_BOOT_VERIFY_MS) — or keeps counting strikes if it never
+  // gets here (crash loop → quarantine → automatic downgrade).
+  otaBootTick();
   // Periodic update check — unsigned millis() arithmetic wraps safely.
   if (WiFi.status() == WL_CONNECTED && millis() - lastOtaCheck >= OTA_CHECK_INTERVAL) {
     lastOtaCheck = millis();
@@ -505,12 +548,135 @@ String extractJsonString(String json, String key) {
   return json.substring(start, end);
 }
 
+/* Like extractJsonString, but starts scanning at fromIndex — used to read the
+   fields inside the "previous":{...} object, which appears after the
+   top-level fields in the /latest response. */
+String extractJsonStringFrom(String json, String key, int fromIndex) {
+  int start = json.indexOf("\"" + key + "\":\"", fromIndex);
+  if (start < 0) return "";
+  start += key.length() + 4;
+  int end = json.indexOf('"', start);
+  if (end < 0) return "";
+  return json.substring(start, end);
+}
+
+/* base64-decode a string with mbedtls into out[], returning the decoded
+   length, or 0 on failure / empty input. */
+int base64Decode(const String& b64, uint8_t* out, size_t outCap) {
+  if (b64.length() == 0 || out == NULL || outCap == 0) return 0;
+  size_t olen = 0;
+  int ret = mbedtls_base64_decode(out, outCap, &olen,
+      (const unsigned char*)b64.c_str(), b64.length());
+  return (ret == 0) ? (int)olen : 0;
+}
+
+/* Verify an ECDSA P-256 signature over the firmware's SHA-256 digest using
+   the root public key baked into this build. sig is the DER-encoded
+   ECDSA-Sig-Value the backend produced. Any parse or verify failure returns
+   false (fail-closed) — a device with a root key never flashes an unsigned
+   or forged binary. */
+bool verifyFirmwareSignature(const uint8_t* digest, size_t digestLen,
+                             const uint8_t* sig, size_t sigLen) {
+  if (strlen(FIRMWARE_ROOT_PUBKEY) == 0) return false;
+  mbedtls_pk_context pk;
+  mbedtls_pk_init(&pk);
+  int ret = mbedtls_pk_parse_public_key(&pk,
+      (const unsigned char*)FIRMWARE_ROOT_PUBKEY, strlen(FIRMWARE_ROOT_PUBKEY) + 1);
+  if (ret != 0) {
+    Serial.println("OTA: could not parse baked-in root public key");
+    mbedtls_pk_free(&pk);
+    return false;
+  }
+  ret = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, digest, digestLen, sig, sigLen);
+  mbedtls_pk_free(&pk);
+  return ret == 0;
+}
+
+/* POST the outcome of booting a version to the backend
+   (POST /api/firmware/report). Fire-and-forget — failures are logged and
+   retried on the next boot, never allowed to wedge the loop. */
+bool reportBootStatus(const String& version, const String& status) {
+  String url = String(OTA_SERVER_BASE) + "/api/firmware/report";
+  HTTPClient http;
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure();  // same TLS tradeoff as sendViaHTTP()
+  if (!http.begin(secureClient, url)) return false;
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Device-Id", DEVICE_ID);
+  if (strlen(DEVICE_API_KEY) > 0) http.addHeader("X-Device-Key", DEVICE_API_KEY);
+  http.setTimeout(10000);
+  String body = "{\"version\":\"" + version + "\",\"status\":\"" + status + "\"}";
+  int code = http.POST(body);
+  http.end();
+  return code == HTTP_CODE_OK;
+}
+
+/* Boot-time bookkeeping for OTA rollback (called once from setup, after the
+   network is up so boot-fail reports can actually be sent):
+   - pending == this build: we're verifying a fresh flash — every boot before
+     the stability window counts a strike; at OTA_MAX_BOOT_STRIKES the device
+     quarantines itself (checkForOTA then downgrades via /latest's
+     `previous` pointer).
+   - pending != this build: the previously-flashed build never proved itself
+     (crash loop, or we were reflashed) — count a strike against it, report
+     fail, and clear the marker.
+   - no pending: a stock boot, nothing to verify. */
+void otaBootInit() {
+  otaPrefs.begin(PREF_NS, false);
+  String pending = otaPrefs.getString(PREF_PENDING, "");
+  int strikes = otaPrefs.getInt(PREF_STRIKES, 0);
+
+  if (pending.length() > 0) {
+    if (pending == String(FIRMWARE_VERSION)) {
+      strikes++;
+      otaPrefs.putInt(PREF_STRIKES, strikes);
+      Serial.printf("OTA: verifying build %s — boot %d of %d before verdict\n",
+        pending.c_str(), strikes, OTA_MAX_BOOT_STRIKES);
+      if (strikes >= OTA_MAX_BOOT_STRIKES) {
+        otaQuarantined = true;
+        Serial.println("OTA: 2 unverified boots — quarantining; will roll back to last known-good");
+      } else {
+        otaBootStart = millis();  // give this boot its stability window
+      }
+    } else {
+      strikes++;
+      otaPrefs.putInt(PREF_STRIKES, strikes);
+      Serial.printf("OTA: pending version %s never verified — strike %d\n", pending.c_str(), strikes);
+      otaPrefs.remove(PREF_PENDING);
+      reportBootStatus(pending, "fail");
+    }
+  }
+  otaPrefs.end();
+}
+
+/* Called from loop(): once a freshly-flashed build survives the stability
+   window it is declared good — boot-ok is reported to the backend, the
+   pending marker is cleared, strikes reset, and any quarantine lifted. */
+void otaBootTick() {
+  if (otaBootStart == 0) return;
+  if (millis() - otaBootStart < OTA_BOOT_VERIFY_MS) return;
+  otaBootStart = 0;
+
+  otaPrefs.begin(PREF_NS, false);
+  String pending = otaPrefs.getString(PREF_PENDING, "");
+  if (pending == String(FIRMWARE_VERSION)) {
+    otaPrefs.putString(PREF_LAST_GOOD, FIRMWARE_VERSION);
+    otaPrefs.putInt(PREF_STRIKES, 0);
+    otaPrefs.remove(PREF_PENDING);
+    otaQuarantined = false;
+    Serial.println("OTA: build stable — reporting boot OK");
+    reportBootStatus(FIRMWARE_VERSION, "ok");
+  }
+  otaPrefs.end();
+}
+
 /* Download the binary over HTTPS, stream it into the OTA partition while
-   computing its SHA-256, and only commit (Update.end) when the digest matches
-   the one the backend published. On any failure the OTA partition is aborted
-   and the currently-running firmware is left untouched — the device keeps
-   operating and retries on the next check. */
-bool otaDownloadAndApply(String url, String expectedSha256) {
+   computing its SHA-256, then verify BOTH the published checksum and — when
+   a root public key is baked in — the ECDSA P-256 signature over that
+   digest. Only then commit (Update.end) and reboot. On any failure the OTA
+   partition is aborted and the currently-running firmware is left untouched,
+   so the device keeps operating and retries on the next check. */
+bool otaDownloadAndApply(String url, String targetVersion, String expectedSha256, String signatureB64) {
   HTTPClient http;
   WiFiClientSecure secureClient;
   secureClient.setInsecure();  // same TLS tradeoff as sendViaHTTP()
@@ -610,10 +776,40 @@ bool otaDownloadAndApply(String url, String expectedSha256) {
     return false;
   }
 
+  /* ECDSA P-256 signature gate (fail-closed). The signature is verified over
+     the digest just computed — no need to hold the whole binary in RAM. When
+     a root key is baked in, a missing or invalid signature aborts exactly
+     like a checksum mismatch. */
+  if (strlen(FIRMWARE_ROOT_PUBKEY) > 0) {
+    if (signatureB64.length() == 0) {
+      Serial.println("OTA: unsigned binary rejected (root key configured) — keeping current firmware");
+      Update.abort();
+      return false;
+    }
+    uint8_t sigBuf[160];
+    int sigLen = base64Decode(signatureB64, sigBuf, sizeof(sigBuf));
+    if (sigLen <= 0 || !verifyFirmwareSignature(digest, 32, sigBuf, (size_t)sigLen)) {
+      Serial.println("OTA: ECDSA signature verification FAILED — keeping current firmware");
+      Update.abort();
+      return false;
+    }
+    Serial.println("OTA: ECDSA P-256 signature verified");
+  } else {
+    Serial.println("OTA: WARNING — no FIRMWARE_ROOT_PUBKEY baked in; unsigned OTA accepted (dev build)");
+  }
+
   if (!Update.end()) {
     Serial.printf("OTA: Update.end failed (error %d)\n", Update.getError());
     return false;
   }
+
+  /* Mark this build as pending verification in NVS before rebooting. If it
+     never boots (or boots but crashes before the stability window), the next
+     boot counts a strike — see otaBootInit(). */
+  otaPrefs.begin(PREF_NS, false);
+  otaPrefs.putString(PREF_PENDING, targetVersion);
+  otaPrefs.putInt(PREF_STRIKES, 0);
+  otaPrefs.end();
 
   Serial.println("OTA: success — rebooting into new firmware");
   ESP.restart();
@@ -622,7 +818,10 @@ bool otaDownloadAndApply(String url, String expectedSha256) {
 
 /* Ask the backend for the latest firmware and apply it if it's newer.
    Safe when no update exists or the backend is unreachable — both are
-   logged and ignored. */
+   logged and ignored. A quarantined device (2 unverified boots of a new
+   build) skips the new target and re-downloads its last-known-good build
+   from the server's `previous` pointer instead — the downgrade half of
+   automatic rollback. */
 void checkForOTA() {
   Serial.println("OTA: checking for updates...");
   String url = String(OTA_SERVER_BASE) + "/api/firmware/latest";
@@ -648,9 +847,34 @@ void checkForOTA() {
   String body = http.getString();
   http.end();
 
+  /* Quarantine check FIRST — it must run even when the server has nothing
+     new to offer. A quarantined device is running a build that failed to
+     prove itself twice; its way out is the `previous` pointer, which the
+     server also sends when the rollout is paused (or as `{ previous }` with
+     no active target at all). If we early-returned on an empty version
+     before this branch, the device would stay stuck on the broken build. */
+  if (otaQuarantined) {
+    int prevStart = body.indexOf("\"previous\":{");
+    if (prevStart >= 0) {
+      String prev = body.substring(prevStart + 12);  // skip past "previous":{
+      String prevVersion = extractJsonStringFrom(prev, "version", 0);
+      String prevUrl     = extractJsonStringFrom(prev, "url", 0);
+      String prevSha     = extractJsonStringFrom(prev, "checksum", 0);
+      String prevSig     = extractJsonStringFrom(prev, "signature", 0);
+      if (prevVersion.length() > 0 && prevUrl.length() > 0 && prevVersion != String(FIRMWARE_VERSION)) {
+        Serial.printf("OTA: quarantined — rolling back to last known-good %s\n", prevVersion.c_str());
+        otaDownloadAndApply(String(OTA_SERVER_BASE) + prevUrl, prevVersion, prevSha, prevSig);
+        return;
+      }
+    }
+    Serial.println("OTA: quarantined and no previous build offered — staying put");
+    return;
+  }
+
   String remoteVersion = extractJsonString(body, "version");
   String urlPath       = extractJsonString(body, "url");
   String checksum      = extractJsonString(body, "checksum");
+  String signature     = extractJsonString(body, "signature");
 
   if (remoteVersion.length() == 0 || urlPath.length() == 0) {
     Serial.println("OTA: no update available");
@@ -661,7 +885,7 @@ void checkForOTA() {
   if (compareVersionStrings(remoteVersion, FIRMWARE_VERSION) <= 0) return;
 
   Serial.printf("OTA: applying %s...\n", remoteVersion.c_str());
-  otaDownloadAndApply(String(OTA_SERVER_BASE) + urlPath, checksum);
+  otaDownloadAndApply(String(OTA_SERVER_BASE) + urlPath, remoteVersion, checksum, signature);
 }
 #endif  // OTA_ENABLED
 

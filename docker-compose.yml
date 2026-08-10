@@ -18,6 +18,11 @@ services:
       # mount /api/firmware/*; setting it back to false + `docker compose
       # restart app` is the documented rollback for the whole feature.
       - OTA_ENABLED=${OTA_ENABLED:-false}
+      # ECDSA P-256 private key (PEM) that signs every uploaded firmware
+      # binary. Devices with the matching root public key baked into the
+      # sketch refuse unsigned builds (fail-closed). Leave blank only for dev
+      # fleets. Generate: node scripts/generate-ota-keys.js
+      - FIRMWARE_SIGNING_KEY=${FIRMWARE_SIGNING_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
