@@ -1750,10 +1750,17 @@ const SolarDashboard = () => {
     className: "font-semibold text-slate-900 dark:text-slate-100"
   }, "Rollout Status"), /*#__PURE__*/React.createElement("p", {
     className: "mt-1 text-sm text-slate-500 dark:text-slate-400"
-  }, rolloutStatus.active ? `Active target: ${rolloutStatus.active.version}` : 'No active firmware')), /*#__PURE__*/React.createElement(Badge, {
+  }, rolloutStatus.active ? `Active target: ${rolloutStatus.active.version}` : 'No active firmware'), rolloutStatus.active?.org_name && /*#__PURE__*/React.createElement("p", {
+    className: "mt-0.5 text-xs text-violet-600 dark:text-violet-400 font-medium"
+  }, "Org: ", rolloutStatus.active.org_name)), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2"
+  }, rolloutStatus.active?.org_name && /*#__PURE__*/React.createElement(Badge, {
+    label: rolloutStatus.active.org_name,
+    color: "violet"
+  }), /*#__PURE__*/React.createElement(Badge, {
     label: rolloutStatus.active?.rollout_paused ? 'Paused' : 'Active',
     color: rolloutStatus.active?.rollout_paused ? 'red' : 'emerald'
-  })), /*#__PURE__*/React.createElement("div", {
+  }))), /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-2 sm:grid-cols-4 gap-4"
   }, /*#__PURE__*/React.createElement("div", {
     className: "rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"
@@ -1846,7 +1853,10 @@ const SolarDashboard = () => {
       className: "py-3 flex items-start justify-between gap-4"
     }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("p", {
       className: "text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2 flex-wrap"
-    }, v.version, v.is_active && /*#__PURE__*/React.createElement(Badge, {
+    }, v.version, v.org_name && /*#__PURE__*/React.createElement(Badge, {
+      label: v.org_name,
+      color: "violet"
+    }), v.is_active && /*#__PURE__*/React.createElement(Badge, {
       label: "Active",
       color: "emerald"
     }), v.rollout_paused && /*#__PURE__*/React.createElement(Badge, {

@@ -558,10 +558,11 @@ app.get('/api/state', authMiddleware, async (req, res) => {
     }
     const [state, stats] = await Promise.all([getDashboardState(dashboardDeviceId, orgId), getPaymentStats(orgId)]);
     /* otaEnabled lets the admin dashboard conditionally show the Firmware
-       tab without hardcoding env knowledge into the browser. The firmware
-       routes are super-admin-only (firmware.js's isAdminRequest), so org
-       admins must not see the tab — every action would 403. */
-    res.json({ ...state, paymentStats: stats, otaEnabled: otaEnabled() && isSuperAdmin(req.user), organization });
+       tab without hardcoding env knowledge into the browser. Firmware routes
+       are now org-scoped end-to-end (firmware.js resolves the caller's org),
+       so org admins get the tab too — they can publish updates only to
+       their own fleet. */
+    res.json({ ...state, paymentStats: stats, otaEnabled: otaEnabled() && canAccessAdmin(req.user), organization });
   } catch (err) {
     console.error('Dashboard state error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);

@@ -103,6 +103,12 @@ before(async () => {
   }
 });
 
+/* Orgs created by the multi-tenant OTA tests (org-scoped firmware). The
+   after() hook deletes their users/devices/firmware before the org rows, so
+   repeated runs never accumulate tenant rows in the shared local DB. */
+const createdOrgIds = [];
+const createdOrgUserIds = [];
+
 after(async () => {
   server?.kill('SIGKILL');
   offServer?.kill('SIGKILL');
@@ -114,6 +120,16 @@ after(async () => {
     }
     if (createdBootReportDevices.length > 0) {
       await db.pool.query('DELETE FROM firmware_boot_reports WHERE device_id = ANY($1)', [createdBootReportDevices]);
+    }
+    if (createdOrgIds.length > 0) {
+      await db.pool.query('DELETE FROM users    WHERE organization_id = ANY($1)', [createdOrgIds]);
+      await db.pool.query('DELETE FROM devices  WHERE organization_id = ANY($1)', [createdOrgIds]);
+      await db.pool.query('DELETE FROM firmware_versions WHERE organization_id = ANY($1)', [createdOrgIds]);
+      await db.pool.query('DELETE FROM firmware_boot_reports WHERE organization_id = ANY($1)', [createdOrgIds]);
+      await db.pool.query('DELETE FROM organizations WHERE id = ANY($1)', [createdOrgIds]);
+    }
+    if (createdOrgUserIds.length > 0) {
+      await db.pool.query('DELETE FROM users WHERE id = ANY($1)', [createdOrgUserIds]);
     }
   } catch (err) {
     console.warn('OTA test cleanup warning:', err.message);
@@ -994,4 +1010,242 @@ describe('ENFORCE_PER_DEVICE_KEYS toggle', { skip: OTA_PINNED_OFF }, () => {
   });
 });
 
+describe('multi-tenant OTA (per-org firmware)', { skip: OTA_PINNED_OFF }, () => {
+  /* Unique org slugs per run so repeated runs never collide. */
+  const MT_SUFFIX = Date.now().toString(36);
+  const ORG_A_SLUG = `ota-org-a-${MT_SUFFIX}`;
+  const ORG_B_SLUG = `ota-org-b-${MT_SUFFIX}`;
+  const ADMIN_A_EMAIL = `ota-admin-a-${MT_SUFFIX}@example.com`;
+  const ADMIN_B_EMAIL = `ota-admin-b-${MT_SUFFIX}@example.com`;
 
+  let orgAId;
+  let orgBId;
+  let orgAToken;
+  let orgBToken;
+  /* Devices provisioned into the test orgs, so the after() hook can remove
+     their boot reports alongside the org cleanup. */
+  const orgTestDevices = [];
+
+  async function login(email, password) {
+    const r = await fetch(`${BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const body = await r.json();
+    assert.equal(r.status, 200, `org admin login failed: ${JSON.stringify(body)}`);
+    return body.token;
+  }
+
+  before(async () => {
+    const adminToken = await loginAdmin();
+
+    /* Create two tenants + one org admin each (super-admin only operation). */
+    const mkOrg = async (slug) => {
+      const r = await fetch(`${BASE}/api/admin/organizations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ name: `OTA Org ${slug}`, slug })
+      });
+      const body = await r.json();
+      assert.equal(r.status, 201, `org creation failed: ${JSON.stringify(body)}`);
+      return body.organization.id;
+    };
+    orgAId = await mkOrg(ORG_A_SLUG);
+    orgBId = await mkOrg(ORG_B_SLUG);
+    createdOrgIds.push(orgAId, orgBId);
+
+    const mkAdmin = async (email, organizationId) => {
+      const r = await fetch(`${BASE}/api/admin/admins`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({
+          name: 'OTA Org Admin', email, password: 'OrgAdmin@123',
+          role: 'org_admin', organizationId
+        })
+      });
+      const body = await r.json();
+      assert.equal(r.status, 201, `org admin creation failed: ${JSON.stringify(body)}`);
+      return body.admin;
+    };
+    const adminA = await mkAdmin(ADMIN_A_EMAIL, orgAId);
+    const adminB = await mkAdmin(ADMIN_B_EMAIL, orgBId);
+    createdOrgUserIds.push(adminA.id, adminB.id);
+
+    orgAToken = await login(ADMIN_A_EMAIL, 'OrgAdmin@123');
+    orgBToken = await login(ADMIN_B_EMAIL, 'OrgAdmin@123');
+  });
+
+  /* Provision a device into a specific org (super-admin passes ?orgId=). */
+  async function provisionOrgDevice(orgId) {
+    const adminToken = await loginAdmin();
+    const deviceId = `OTA-MT-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const r = await fetch(`${BASE}/api/admin/devices?orgId=${orgId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+      body: JSON.stringify({ deviceId })
+    });
+    assert.equal(r.status, 200, 'org device provisioning failed');
+    const { device } = await r.json();
+    orgTestDevices.push(deviceId);
+    createdBootReportDevices.push(deviceId);
+    return { deviceId, key: device.api_key };
+  }
+
+  /* Upload + activate as a given admin; returns the version + firmware id. */
+  async function publishAs(adminToken, version, extraQs = '') {
+    const upload = await fetch(`${BASE}/api/firmware/upload?version=${version}${extraQs}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/octet-stream' },
+      body: crypto.randomBytes(32)
+    });
+    const uploadBody = await upload.json();
+    assert.equal(upload.status, 201, `upload failed: ${JSON.stringify(uploadBody)}`);
+    const { id } = uploadBody;
+    createdVersions.push(version);
+    const act = await fetch(`${BASE}/api/firmware/activate/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.equal(act.status, 200, 'activation failed');
+    return { version, id };
+  }
+
+  test('org admins can publish firmware that lands in their own org', async () => {
+    const { id } = await publishAs(orgAToken, freshVersion());
+
+    /* Org A sees its own build. */
+    const listA = await fetch(`${BASE}/api/firmware`, {
+      headers: { Authorization: `Bearer ${orgAToken}` }
+    });
+    assert.equal(listA.status, 200);
+    const { versions: versionsA } = await listA.json();
+    assert.ok(versionsA.find(v => v.id === id), 'org A must see its own firmware');
+    assert.equal(versionsA.find(v => v.id === id).org_id, orgAId, 'version must carry the org identity');
+
+    /* Org B must NOT see it. */
+    const listB = await fetch(`${BASE}/api/firmware`, {
+      headers: { Authorization: `Bearer ${orgBToken}` }
+    });
+    const { versions: versionsB } = await listB.json();
+    assert.ok(!versionsB.find(v => v.id === id), 'org B must never see org A firmware');
+
+    /* Super-admin sees it with the org label. */
+    const listSuper = await fetch(`${BASE}/api/firmware`, {
+      headers: { Authorization: `Bearer ${await loginAdmin()}` }
+    });
+    const { versions: versionsSuper } = await listSuper.json();
+    const v = versionsSuper.find(x => x.id === id);
+    assert.ok(v, 'super-admin must see every org version');
+    assert.equal(v.org_id, orgAId);
+    assert.ok(v.org_name, 'super-admin list must include the org name for labelling');
+  });
+
+  test('two orgs may publish the SAME version string independently', async () => {
+    const sharedVersion = freshVersion();
+    const inA = await publishAs(orgAToken, sharedVersion);
+    const inB = await publishAs(orgBToken, sharedVersion);
+
+    assert.ok(inA.id !== inB.id, 'each org must get its own row for the same version string');
+    const both = await fetch(`${BASE}/api/firmware`, {
+      headers: { Authorization: `Bearer ${await loginAdmin()}` }
+    }).then(r => r.json());
+    const matches = both.versions.filter(v => v.version === sharedVersion);
+    assert.equal(matches.length, 2, 'both orgs must be able to publish version X simultaneously');
+    assert.equal(new Set(matches.map(m => m.org_id)).size, 2, 'the two rows must live in different orgs');
+  });
+
+  test('org admins cannot activate or pause another org firmware', async () => {
+    const { id } = await publishAs(orgAToken, freshVersion());
+
+    /* Org B tries to activate org A's staged version → 404 (not 403/200). */
+    const activate = await fetch(`${BASE}/api/firmware/activate/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${orgBToken}` }
+    });
+    assert.equal(activate.status, 404, 'cross-org activation must look like not-found');
+
+    /* Org B tries to pause org A's version → 404. */
+    const pause = await fetch(`${BASE}/api/firmware/pause/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${orgBToken}` }
+    });
+    assert.equal(pause.status, 404, 'cross-org pause must look like not-found');
+
+    /* Org B tries to re-sign org A's binary → 404. */
+    const sign = await fetch(`${BASE}/api/firmware/sign/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${orgBToken}` }
+    });
+    assert.equal(sign.status, 404, 'cross-org sign must look like not-found');
+  });
+
+  test('devices only get firmware from their own org (/latest + /download)', async () => {
+    const { version, id } = await publishAs(orgAToken, freshVersion());
+    const devA = await provisionOrgDevice(orgAId);
+    const devB = await provisionOrgDevice(orgBId);
+
+    /* The org A device is offered the org A target. */
+    const latestA = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(devA.deviceId, devA.key) });
+    assert.equal(latestA.status, 200, 'org A device must be offered org A firmware');
+    assert.equal((await latestA.json()).version, version);
+
+    /* The org B device may get ITS OWN org's firmware (org B published its
+       own version in an earlier test) — but never org A's target. */
+    const latestB = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(devB.deviceId, devB.key) });
+    assert.notEqual(latestB.status, 401, 'org B device must authenticate');
+    const bBody = await latestB.json();
+    assert.notEqual(bBody.version, version, 'org B device must never be offered org A firmware');
+    if (bBody.version) {
+      /* Cross-check: the version org B's device was offered must actually
+         belong to org B in the admin list. */
+      const superList = await fetch(`${BASE}/api/firmware`, {
+        headers: { Authorization: `Bearer ${await loginAdmin()}` }
+      }).then(r => r.json());
+      const offered = superList.versions.find(v => v.version === bBody.version);
+      assert.ok(offered, 'the offered version must exist');
+      assert.equal(offered.org_id, orgBId, 'org B device must be offered an org B build');
+    }
+
+    /* The org B device cannot download org A's binary either. */
+    const dlB = await fetch(`${BASE}/api/firmware/download/${id}`, { headers: deviceHeaders(devB.deviceId, devB.key) });
+    assert.equal(dlB.status, 404, 'cross-org download must be blocked');
+
+    /* The org A device can download its own org's binary. */
+    const dlA = await fetch(`${BASE}/api/firmware/download/${id}`, { headers: deviceHeaders(devA.deviceId, devA.key) });
+    assert.equal(dlA.status, 200, 'same-org download must work');
+  });
+
+  test('boot-failures in one org never pause another org rollout', async () => {
+    const { version, id } = await publishAs(orgAToken, freshVersion());
+    /* Org B publishes its own version so the cross-org probe has a target. */
+    await publishAs(orgBToken, freshVersion());
+
+    const devA1 = await provisionOrgDevice(orgAId);
+    const devA2 = await provisionOrgDevice(orgAId);
+    const devB = await provisionOrgDevice(orgBId);
+
+    const report = (dev, status) => fetch(`${BASE}/api/firmware/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...deviceHeaders(dev.deviceId, dev.key) },
+      body: JSON.stringify({ version, status })
+    });
+
+    /* Two distinct org A devices fail → org A's rollout pauses. */
+    assert.equal((await (await report(devA1, 'fail')).json()).paused, false);
+    const second = await report(devA2, 'fail');
+    assert.equal((await second.json()).paused, true, '2 org-A failures must pause org A rollout');
+
+    /* But org B's rollout is untouched — its device is still offered its target. */
+    const bLatest = await fetch(`${BASE}/api/firmware/latest`, { headers: deviceHeaders(devB.deviceId, devB.key) });
+    assert.equal(bLatest.status, 200, 'org B rollout must survive org A failures');
+
+    /* And the admin list surfaces the paused flag per org: org B's active
+       version is NOT paused, org A's is. */
+    const superList = await fetch(`${BASE}/api/firmware`, {
+      headers: { Authorization: `Bearer ${await loginAdmin()}` }
+    }).then(r => r.json());
+    const aRow = superList.versions.find(v => v.id === id);
+    assert.equal(aRow.rollout_paused, true, 'org A version must be flagged paused');
+  });
+});

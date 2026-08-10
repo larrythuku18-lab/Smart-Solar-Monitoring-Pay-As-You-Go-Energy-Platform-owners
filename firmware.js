@@ -55,6 +55,7 @@ const path = require('node:path');
 
 const {
   getDevice,
+  getDefaultOrganizationId,
   insertFirmwareVersion,
   activateFirmwareVersion,
   getActiveFirmware,
@@ -182,8 +183,48 @@ if (otaEnabled() && !signingKeyPem()) {
 
 /* ── Helpers ────────────────────────────────────────────────────────────── */
 
-function isAdmin(req) {
+/* Super-admins: role 'admin', or the legacy ADMIN device token. */
+function isSuperAdmin(req) {
   return req.user?.role === 'admin' || req.user?.deviceId === 'ADMIN';
+}
+
+/* Anything the admin dashboards call: super-admin OR org admin. Org admins
+   get full firmware control — but only inside their own tenant (every route
+   below resolves the org scope and scopes its queries by it). */
+function isAdmin(req) {
+  return isSuperAdmin(req) || req.user?.role === 'org_admin';
+}
+
+/* Resolve the org scope for an admin request:
+   - org_admin:   always their own organizationId — a query param can never
+                  widen an org admin's view (the param is ignored)
+   - super-admin: null (all orgs) unless they opt into ?orgId= to drill into
+                  a single tenant
+   - anyone else: null (never reaches scoped queries — routes guard first) */
+function resolveOrgScope(req) {
+  if (req.user?.role === 'org_admin') return req.user.organizationId ?? null;
+  if (isSuperAdmin(req)) {
+    /* Strict parse — Number('12abc') is NaN, so trailing garbage can't
+       silently narrow to 12. */
+    const orgId = Number(req.query.orgId);
+    return Number.isInteger(orgId) && orgId > 0 ? orgId : null;
+  }
+  return null;
+}
+
+/* The org a DEVICE belongs to — device endpoints are scoped by the device's
+   own organization_id, never by admin query params, so a device can only
+   ever see/download/report firmware from its own tenant.
+
+   FAILS CLOSED: a device row with a NULL org (shouldn't exist after the
+   backfill, but defense-in-depth) resolves to the DEFAULT org rather than
+   null — getActiveFirmware(null)/getFirmwareById(id, null) match across
+   ALL orgs, which would leak another tenant's target or binary to an
+   unassigned device. Falling back to the default org keeps the lookup
+   tenant-scoped. */
+async function deviceOrgScope(req) {
+  if (req.device?.organization_id) return req.device.organization_id;
+  return (await getDefaultOrganizationId()) ?? null;
 }
 
 /* Same device-credential check as POST /api/telemetry: a device's own
@@ -260,7 +301,11 @@ function publicFirmwareView(row) {
     signed:          !!row.signature,
     rollout_pct:     Number(row.rollout_pct ?? 100),
     rollout_region:  row.rollout_region || null,
-    rollout_paused:  !!row.rollout_paused
+    rollout_paused:  !!row.rollout_paused,
+    /* multi-tenant identity — lets the super-admin global view label which
+       org each build belongs to (org admins only ever see their own) */
+    org_id:     row.organization_id ?? null,
+    org_name:   row.org_name || null
   };
 }
 
@@ -283,7 +328,9 @@ function deviceFirmwareView(row) {
 
 router.get('/latest', requireDeviceKey, async (req, res) => {
   try {
-    const latest = await getActiveFirmware();
+    /* Scoped to the requesting device's own org — a device in org A must
+       never be offered org B's OTA target. */
+    const latest = await getActiveFirmware(await deviceOrgScope(req));
 
     /* Rollback aid: the last version this device proved good (a boot-ok
        report). A device that fails to boot a new build re-downloads this one
@@ -292,7 +339,8 @@ router.get('/latest', requireDeviceKey, async (req, res) => {
        running the latest) so a quarantined device always has a path back,
        even if it already reports the failing version via telemetry or the
        rollout gets paused (in which case `latest` is null and the response
-       below is `{ previous }` only). */
+       below is `{ previous }` only). getLastGoodFirmwareForDevice is already
+       org-scoped by the device's own org (see db.js). */
     const running = req.device?.firmware_version || '';
     let previous = null;
     /* Always look up the last-known-good when there is NO active target (a
@@ -335,7 +383,9 @@ router.get('/download/:id', requireDeviceKey, async (req, res) => {
     return res.status(400).json({ error: 'Invalid firmware id' });
   }
   try {
-    const row = await getFirmwareById(id);
+    /* Org-scoped: a device may only download binaries published by its own
+       org — cross-tenant download would leak another tenant's build. */
+    const row = await getFirmwareById(id, await deviceOrgScope(req));
     if (!row) return res.status(404).json({ error: 'Firmware not found' });
 
     /* filename is server-generated (crypto.randomUUID() at upload time),
@@ -386,20 +436,23 @@ router.post('/report', requireDeviceKey, async (req, res) => {
   }
   try {
     const deviceId = req.get('x-device-id');
-    await recordBootReport({ deviceId, version, status });
+    /* The pause threshold counts failures within THIS device's org only —
+       a boot-failure in org A must never pause org B's rollout. */
+    const orgId = await deviceOrgScope(req);
+    await recordBootReport({ deviceId, version, status, organizationId: orgId });
     obs.otaBootReports.inc({ status });
-    obs.log.info('Firmware boot report', { deviceId, version, status });
+    obs.log.info('Firmware boot report', { deviceId, version, status, orgId });
 
     let paused = false;
     if (status === 'fail') {
-      const failingDevices = await getDistinctFailingDevices(version);
+      const failingDevices = await getDistinctFailingDevices(version, orgId);
       /* Use the dynamic threshold when per-device keys are enforced and
          OTA_PAUSE_PCT is configured; fall back to the absolute number. */
       let threshold = failDevicesToPause;
       if (process.env.ENFORCE_PER_DEVICE_KEYS === 'true' && process.env.OTA_PAUSE_PCT) {
         try {
           const { getCountOfProvisionedDevices } = require('./db');
-          const count = await getCountOfProvisionedDevices();
+          const count = await getCountOfProvisionedDevices(orgId);
           const pct = Math.max(1, Math.min(100, parseInt(process.env.OTA_PAUSE_PCT, 10) || 5));
           threshold = Math.max(2, Math.ceil(count * pct / 100));
         } catch {
@@ -407,7 +460,7 @@ router.post('/report', requireDeviceKey, async (req, res) => {
         }
       }
       if (failingDevices >= threshold) {
-        const row = await pauseActiveFirmwareByVersion(version);
+        const row = await pauseActiveFirmwareByVersion(version, orgId);
         if (row) {
           paused = true;
           obs.otaRolloutPaused.inc();
@@ -428,7 +481,9 @@ router.post('/report', requireDeviceKey, async (req, res) => {
 router.get('/', authMiddleware, async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ error: 'Admin access required' });
   try {
-    const versions = await listFirmwareVersions();
+    /* Org admins see only their own org's versions; super-admins see all
+       (or ?orgId= to drill into one tenant). */
+    const versions = await listFirmwareVersions(resolveOrgScope(req));
     res.json({
       versions: versions.map(v => ({
         ...publicFirmwareView(v),
@@ -475,8 +530,11 @@ router.post('/upload', authMiddleware, express.raw({ type: 'application/octet-st
     fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
     // eslint-disable-next-line security/detect-non-literal-fs-filename
     fs.writeFileSync(path.join(FIRMWARE_DIR, filename), body);
+    /* Org-scoped upload: org admins publish into their own org; super-admins
+       upload into the org from ?orgId= (or the default org when omitted). */
     const row = await insertFirmwareVersion({
-      version, filename, checksum, changelog, sizeBytes: body.length, signature
+      version, filename, checksum, changelog, sizeBytes: body.length, signature,
+      organizationId: resolveOrgScope(req)
     });
     res.status(201).json({
       success: true,
@@ -533,7 +591,10 @@ router.post('/activate/:id', authMiddleware, async (req, res) => {
     : null;
 
   try {
-    const row = await activateFirmwareVersion(id, { rolloutPct, rolloutRegion });
+    /* Org-scoped activation: org admins may only activate their own org's
+       versions (cross-org id → 404); super-admins get the same behavior
+       when they pass ?orgId=, else the version's own org is used. */
+    const row = await activateFirmwareVersion(id, { rolloutPct, rolloutRegion }, resolveOrgScope(req));
     if (!row) return res.status(404).json({ error: 'Firmware not found' });
     res.json({
       success: true,
@@ -563,7 +624,9 @@ router.post('/sign/:id', authMiddleware, async (req, res) => {
   }
 
   try {
-    const row = await getFirmwareById(id);
+    /* Org-scoped re-sign: an org admin can only re-sign their own org's
+       binaries (cross-org id → 404). */
+    const row = await getFirmwareById(id, resolveOrgScope(req));
     if (!row) return res.status(404).json({ error: 'Firmware not found' });
 
     const filePath = path.join(FIRMWARE_DIR, row.filename);
@@ -592,11 +655,13 @@ router.post('/sign/:id', authMiddleware, async (req, res) => {
 router.get('/rollout', authMiddleware, async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ error: 'Admin access required' });
   try {
+    const orgScope = resolveOrgScope(req);
     /* getLatestFirmware (not getActiveFirmware) so a paused rollout still
-       shows who the target is and why it's stopped. */
-    const active = await getLatestFirmware();
+       shows who the target is and why it's stopped — scoped to the caller's
+       org so an org admin sees only their own rollout. */
+    const active = await getLatestFirmware(orgScope);
     if (!active) return res.json({ active: null });
-    const stats = await getRolloutStats(active.version);
+    const stats = await getRolloutStats(active.version, orgScope);
     res.json({
       active: { ...publicFirmwareView(active), is_active: true },
       bootFailures24h: {
@@ -604,7 +669,7 @@ router.get('/rollout', authMiddleware, async (req, res) => {
         distinctDevices: stats.failing_devices,
         pauseThreshold:  process.env.ENFORCE_PER_DEVICE_KEYS === 'true' && process.env.OTA_PAUSE_PCT
           ? Math.max(2, Math.ceil(
-              (await getCountOfProvisionedDevices?.() || 0) *
+              (await getCountOfProvisionedDevices?.(orgScope) || 0) *
               (parseInt(process.env.OTA_PAUSE_PCT, 10) || 5) / 100
             ))
           : failDevicesToPause
@@ -627,7 +692,9 @@ router.post('/pause/:id', authMiddleware, async (req, res) => {
   }
 
   try {
-    const row = await pauseFirmware(id);
+    /* Org-scoped pause: an org admin can only pause their own org's rollout
+       (cross-org id → 404). */
+    const row = await pauseFirmware(id, resolveOrgScope(req));
     if (!row) return res.status(404).json({ error: 'Firmware not found' });
     res.json({ success: true, ...publicFirmwareView(row), is_active: row.is_active });
   } catch (err) {

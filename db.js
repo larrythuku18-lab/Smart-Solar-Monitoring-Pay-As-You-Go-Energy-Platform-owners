@@ -225,12 +225,17 @@ async function runMigrations() {
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_name VARCHAR(255);
 
     -- ── Firmware versions (OTA updates) ────────────────────────────────────
-    -- One row per published binary; exactly one row may be active at a time
-    -- (enforced by insertFirmwareVersion's transaction). Checksum is the
-    -- SHA-256 hex of the binary — devices refuse to apply on mismatch.
+    -- One row per published binary; exactly one row per org may be active at
+    -- a time (enforced by activateFirmwareVersion's transaction). Checksum
+    -- is the SHA-256 hex of the binary — devices refuse to apply on mismatch.
+    -- Multi-tenant: every version belongs to an organization, so org admins
+    -- can publish OTA updates only to their own fleet. Version strings are
+    -- unique per org (the global UNIQUE below is migrated to a composite
+    -- (organization_id, version) constraint further down), so two tenants can
+    -- independently publish a "1.2.0".
     CREATE TABLE IF NOT EXISTS firmware_versions (
       id         BIGSERIAL    PRIMARY KEY,
-      version    VARCHAR(32)  NOT NULL UNIQUE,
+      version    VARCHAR(32)  NOT NULL,
       filename   VARCHAR(128) NOT NULL,          -- server-generated UUID .bin name on disk
       checksum   CHAR(64)     NOT NULL,          -- SHA-256 hex
       changelog  TEXT,
@@ -253,6 +258,26 @@ async function runMigrations() {
     -- recordBootReport / pauseActiveFirmwareByVersion). Paused firmware is
     -- never offered to devices again until an admin re-activates it.
     ALTER TABLE firmware_versions ADD COLUMN IF NOT EXISTS rollout_paused BOOLEAN NOT NULL DEFAULT FALSE;
+    -- Multi-tenant ownership. Backfilled into the default org so
+    -- pre-tenant installs keep working unchanged, exactly like users/devices.
+    ALTER TABLE firmware_versions ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id);
+    UPDATE firmware_versions SET organization_id = (SELECT id FROM organizations WHERE slug = 'default')
+    WHERE organization_id IS NULL;
+
+    -- Version uniqueness is per-org, not global: the inline UNIQUE from the
+    -- original CREATE TABLE (constraint firmware_versions_version_key) is
+    -- dropped and replaced with a composite (organization_id, version). Both
+    -- steps are guarded so a second migration run is a no-op.
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'firmware_versions_version_key') THEN
+        ALTER TABLE firmware_versions DROP CONSTRAINT firmware_versions_version_key;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_firmware_org_version') THEN
+        ALTER TABLE firmware_versions
+          ADD CONSTRAINT uq_firmware_org_version UNIQUE (organization_id, version);
+      END IF;
+    END $$;
 
     -- ── Firmware boot reports (OTA rollback) ──────────────────────────────
     -- Devices POST here after booting into a freshly-flashed version,
@@ -268,6 +293,15 @@ async function runMigrations() {
       status           VARCHAR(16)  NOT NULL,
       created_at       TIMESTAMPTZ  DEFAULT NOW()
     );
+    -- Org scoping for the 2-strike auto-pause: a boot-failure in org A must
+    -- not pause org B's rollout. Populated from the reporting device's org
+    -- (backfilled below for rows recorded before this migration).
+    ALTER TABLE firmware_boot_reports ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id);
+    UPDATE firmware_boot_reports r
+       SET organization_id = d.organization_id
+      FROM devices d
+     WHERE r.device_id = d.device_id
+       AND r.organization_id IS NULL;
 
     -- ── Organizations (multi-tenant) ───────────────────────────────────────
     -- Every user, device, and payment belongs to exactly one organization.
@@ -364,10 +398,14 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS idx_energy_recorded   ON energy_readings(recorded_at);
     -- Index for getAlertsByUserId() — customer alert lookups
     CREATE INDEX IF NOT EXISTS idx_alerts_user       ON maintenance_alerts(user_id);
-    -- Active-firmware lookup (GET /api/firmware/latest) — one active row max
+    -- Active-firmware lookup (GET /api/firmware/latest) — one active row per org
     CREATE INDEX IF NOT EXISTS idx_firmware_active   ON firmware_versions (is_active) WHERE is_active;
+    -- Org-scoped active lookup (org admins' /latest + activate deactivation)
+    CREATE INDEX IF NOT EXISTS idx_firmware_org_active ON firmware_versions (organization_id, is_active) WHERE is_active;
     -- Boot-report trail for the 2-strike rollback check (per device+version)
     CREATE INDEX IF NOT EXISTS idx_boot_reports_device ON firmware_boot_reports (device_id, firmware_version, created_at DESC);
+    -- Org-scoped boot-fail counts (getDistinctFailingDevices / getRolloutStats)
+    CREATE INDEX IF NOT EXISTS idx_boot_reports_org ON firmware_boot_reports (organization_id, firmware_version, created_at DESC);
     -- Multi-tenant lookup indexes — every org-scoped aggregate scans these
     CREATE INDEX IF NOT EXISTS idx_users_org     ON users(organization_id);
     CREATE INDEX IF NOT EXISTS idx_devices_org   ON devices(organization_id);
@@ -1464,55 +1502,68 @@ async function getProductById(id) {
    the fleet — at 50k devices with keys, OTA_PAUSE_PCT=1 ≅ 500 devices
    must fail before the rollout pauses.  Returns 0 when no devices match,
    which causes the percentage path to fall back to the absolute minimum. */
-async function getCountOfProvisionedDevices() {
-  const { rows: [r] } = await q('SELECT COUNT(*)::int AS n FROM devices WHERE api_key IS NOT NULL');
+async function getCountOfProvisionedDevices(orgId = null) {
+  const { rows: [r] } = await q(
+    'SELECT COUNT(*)::int AS n FROM devices WHERE api_key IS NOT NULL AND ($1::int IS NULL OR organization_id = $1)',
+    [orgId]
+  );
   return r?.n ?? 0;
 }
 
-async function insertFirmwareVersion({ version, filename, checksum, changelog = null, sizeBytes = 0, signature = null }) {
+async function insertFirmwareVersion({ version, filename, checksum, changelog = null, sizeBytes = 0, signature = null, organizationId = null }) {
+  /* New versions land in the caller's org (org admin) or the default org
+     (super-admin without ?orgId=) — COALESCE keeps legacy uploads working. */
   const { rows } = await q(
-    `INSERT INTO firmware_versions (version, filename, checksum, changelog, size_bytes, signature, is_active)
-     VALUES ($1,$2,$3,$4,$5,$6,FALSE)
+    `INSERT INTO firmware_versions (version, filename, checksum, changelog, size_bytes, signature, is_active, organization_id)
+     VALUES ($1,$2,$3,$4,$5,$6,FALSE, COALESCE($7, (SELECT id FROM organizations WHERE slug = 'default')))
      RETURNING *`,
-    [version, filename, checksum, changelog, sizeBytes, signature]
+    [version, filename, checksum, changelog, sizeBytes, signature, organizationId]
   );
   return rows[0];
 }
 
-/** Activate a staged firmware version — the only way a version becomes the
- *  OTA target. Atomic: deactivates whatever is currently active, then marks
- *  this row active. Returns null when the id doesn't exist.
- *
- *  The advisory lock serializes concurrent activations: without it, two
- *  activations could interleave their deactivate/update steps and whichever
- *  COMMIT lands last would win, leaving an older version active after a
- *  newer one was acknowledged. */
 /* Activate a staged firmware version — the only way a version becomes the
- *  OTA target. Atomic: deactivates whatever is currently active, then marks
- *  this row active. Returns null when the id doesn't exist.
+ *  OTA target. Atomic: deactivates whatever is currently active within the
+ *  version's organization, then marks this row active. Returns null when the
+ *  id doesn't exist.
+ *
+ *  Multi-tenant: `organizationId` pins the org. When it's null (super-admin
+ *  activating without ?orgId=) the scope is resolved from the target row's
+ *  own organization_id, so one org's activation can never deactivate another
+ *  tenant's rollout.
  *
  *  rolloutPct / rolloutRegion set the staged-rollout envelope for the
  *  activation; defaults (100 / null) reproduce the pre-rollout behavior of
  *  targeting the whole fleet. Re-activating also clears any auto/manual
  *  rollout_paused flag, which is how a paused rollout is resumed.
  *
- *  The advisory lock serializes concurrent activations: without it, two
- *  activations could interleave their deactivate/update steps and whichever
- *  COMMIT lands last would win, leaving an older version active after a
- *  newer one was acknowledged. */
-async function activateFirmwareVersion(id, { rolloutPct = 100, rolloutRegion = null } = {}) {
+ *  The advisory lock is per-org (hashtext on org + key), so concurrent
+ *  activations within one tenant serialize while different tenants publish
+ *  independently. */
+async function activateFirmwareVersion(id, { rolloutPct = 100, rolloutRegion = null } = {}, organizationId = null) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query("SELECT pg_advisory_xact_lock(hashtext('firmware_publish'))");
     const { rows: target } = await client.query(
-      'SELECT id FROM firmware_versions WHERE id = $1', [id]
+      'SELECT id, organization_id FROM firmware_versions WHERE id = $1', [id]
     );
     if (target.length === 0) {
       await client.query('ROLLBACK');
       return null;
     }
-    await client.query('UPDATE firmware_versions SET is_active = FALSE WHERE is_active = TRUE');
+    /* Scope of this activation: the caller's org, else the version's own. */
+    const scope = organizationId ?? target[0].organization_id;
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('firmware_publish_' || $1))", [String(scope ?? 'global')]);
+    /* The target must belong to the scope — an org admin activating another
+       org's version is a cross-tenant op and must resolve to "not found". */
+    if (scope !== null && target[0].organization_id !== scope) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    await client.query(
+      'UPDATE firmware_versions SET is_active = FALSE WHERE is_active = TRUE AND organization_id = $1',
+      [scope]
+    );
     const { rows } = await client.query(
       `UPDATE firmware_versions
        SET is_active = TRUE, rollout_pct = $2, rollout_region = $3, rollout_paused = FALSE
@@ -1529,18 +1580,33 @@ async function activateFirmwareVersion(id, { rolloutPct = 100, rolloutRegion = n
   }
 }
 
-/* The current OTA target, excluding auto/manually paused versions — a paused
- * rollout must stop being offered immediately, without waiting for an admin. */
-async function getActiveFirmware() {
+/* The current OTA target for an org, excluding auto/manually paused versions
+ * — a paused rollout must stop being offered immediately. orgId null (only
+ * reachable from the super-admin global view) matches any org's latest. */
+async function getActiveFirmware(orgId = null) {
   const { rows } = await q(
-    'SELECT * FROM firmware_versions WHERE is_active = TRUE AND rollout_paused = FALSE ORDER BY created_at DESC LIMIT 1'
+    `SELECT * FROM firmware_versions
+     WHERE is_active = TRUE AND rollout_paused = FALSE
+       AND ($1::int IS NULL OR organization_id = $1)
+     ORDER BY created_at DESC LIMIT 1`,
+    [orgId]
   );
   return rows[0] ?? null;
 }
 
-async function getLatestFirmware() {
+/* The latest active target for an org (including paused) — feeds the admin
+   rollout-status endpoint so a paused rollout still shows who the target is.
+   The LEFT JOIN to organizations supplies org_name for the super-admin
+   cross-org view (mirrors listFirmwareVersions). */
+async function getLatestFirmware(orgId = null) {
   const { rows } = await q(
-    'SELECT * FROM firmware_versions WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1'
+    `SELECT fv.*, o.name AS org_name
+     FROM firmware_versions fv
+     LEFT JOIN organizations o ON o.id = fv.organization_id
+     WHERE fv.is_active = TRUE
+       AND ($1::int IS NULL OR fv.organization_id = $1)
+     ORDER BY fv.created_at DESC LIMIT 1`,
+    [orgId]
   );
   return rows[0] ?? null;
 }
@@ -1557,74 +1623,93 @@ async function setFirmwareSignature(id, signature) {
 
 /* ── Boot reports (2-strike rollback) ──────────────────────────────────── */
 
-async function recordBootReport({ deviceId, version, status }) {
+async function recordBootReport({ deviceId, version, status, organizationId = null }) {
+  /* The reporting device's org (resolved by the route from the device row) —
+     the 2-strike auto-pause counts failures within one org only. Falls back
+     to the device's org via subselect for legacy callers. */
+  /* $1 is used both as the INSERT value and inside the scalar subquery —
+     the explicit ::VARCHAR pins its type so Postgres doesn't reject the
+     statement with "inconsistent types deduced for parameter $1". */
   await q(
-    'INSERT INTO firmware_boot_reports (device_id, firmware_version, status) VALUES ($1,$2,$3)',
-    [deviceId, version, status]
+    `INSERT INTO firmware_boot_reports (device_id, firmware_version, status, organization_id)
+     VALUES ($1,$2,$3, COALESCE($4, (SELECT d.organization_id FROM devices d WHERE d.device_id = $1::VARCHAR),
+                                    (SELECT id FROM organizations WHERE slug = 'default')))`,
+    [deviceId, version, status, organizationId]
   );
 }
 
-/* How many DISTINCT devices reported a boot-failure for this version within
- * the window (hours). The fleet-wide auto-pause requires evidence from 2+
- * devices — a single buggy or compromised device must not be able to pause a
- * rollout for everyone (it still rolls itself back locally via quarantine +
- * the /latest `previous` pointer). */
-async function getDistinctFailingDevices(version, hours = 24) {
+/* How many DISTINCT devices within an org reported a boot-failure for this
+ * version within the window (hours). The fleet-wide auto-pause requires
+ * evidence from 2+ devices of the SAME org — a single buggy or compromised
+ * device, or a different tenant's failures, must not pause a rollout for
+ * everyone (each affected device still rolls itself back locally via
+ * quarantine + the /latest `previous` pointer). */
+async function getDistinctFailingDevices(version, orgId = null, hours = 24) {
   const { rows: [r] } = await q(
     `SELECT COUNT(DISTINCT device_id)::int AS n
      FROM firmware_boot_reports
      WHERE firmware_version = $1 AND status = 'fail'
-       AND created_at > NOW() - make_interval(hours => $2)`,
-    [version, hours]
+       AND ($2::int IS NULL OR organization_id = $2)
+       AND created_at > NOW() - make_interval(hours => $3)`,
+    [version, orgId, hours]
   );
   return r?.n ?? 0;
 }
 
 /* Boot-fail stats for the admin rollout-status endpoint: how many fail
- * reports and how many distinct devices in the last `hours`, alongside the
- * pause threshold, so an operator can see how close a rollout is to being
- * auto-paused. */
-async function getRolloutStats(version, hours = 24) {
+ * reports and how many distinct devices in the last `hours`, within one org,
+ * alongside the pause threshold, so an operator can see how close a rollout
+ * is to being auto-paused. */
+async function getRolloutStats(version, orgId = null, hours = 24) {
   const { rows: [r] } = await q(
     `SELECT COUNT(*)::int                 AS fail_reports,
             COUNT(DISTINCT device_id)::int AS failing_devices
      FROM firmware_boot_reports
      WHERE firmware_version = $1 AND status = 'fail'
-       AND created_at > NOW() - make_interval(hours => $2)`,
-    [version, hours]
+       AND ($2::int IS NULL OR organization_id = $2)
+       AND created_at > NOW() - make_interval(hours => $3)`,
+    [version, orgId, hours]
   );
   return r ?? { fail_reports: 0, failing_devices: 0 };
 }
 
 /* Pause the ACTIVE firmware matching a version string — used by the 2-strike
  * auto-rollback path (the device reports its own target version, not a row
- * id). Only touches the active row so a paused older version can't be
- * resurrected by a stray report. */
-async function pauseActiveFirmwareByVersion(version) {
+ * id). Only touches the active row of the reporting device's org so a
+ * different tenant's same-named version can't be paused by a stray report. */
+async function pauseActiveFirmwareByVersion(version, orgId = null) {
   const { rows } = await q(
     `UPDATE firmware_versions SET rollout_paused = TRUE
-     WHERE version = $1 AND is_active = TRUE RETURNING *`,
-    [version]
+     WHERE version = $1 AND is_active = TRUE
+       AND ($2::int IS NULL OR organization_id = $2) RETURNING *`,
+    [version, orgId]
   );
   return rows[0] ?? null;
 }
 
-/* Manual pause by row id (POST /api/firmware/pause/:id). */
-async function pauseFirmware(id) {
+/* Manual pause by row id (POST /api/firmware/pause/:id), org-scoped. */
+async function pauseFirmware(id, orgId = null) {
   const { rows } = await q(
-    'UPDATE firmware_versions SET rollout_paused = TRUE WHERE id = $1 RETURNING *',
-    [id]
+    `UPDATE firmware_versions SET rollout_paused = TRUE
+     WHERE id = $1 AND ($2::int IS NULL OR organization_id = $2) RETURNING *`,
+    [id, orgId]
   );
   return rows[0] ?? null;
 }
 
 /* The last version this device booted into and confirmed OK — the server's
  * record of "known good", offered to the device as `previous` so a
- * quarantined unit can re-download it (the downgrade half of rollback). */
+ * quarantined unit can re-download it (the downgrade half of rollback).
+ * The join is org-scoped: with per-org versions, the same version string can
+ * exist in two tenants, and a device must only ever be pointed back at a
+ * build from its own org. */
 async function getLastGoodFirmwareForDevice(deviceId) {
   const { rows } = await q(
     `SELECT fv.* FROM firmware_boot_reports r
-     JOIN firmware_versions fv ON fv.version = r.firmware_version
+     JOIN firmware_versions fv
+       ON fv.version = r.firmware_version
+      AND fv.organization_id = COALESCE(r.organization_id,
+            (SELECT d.organization_id FROM devices d WHERE d.device_id = r.device_id))
      WHERE r.device_id = $1 AND r.status = 'ok'
      ORDER BY r.created_at DESC LIMIT 1`,
     [deviceId]
@@ -1632,35 +1717,26 @@ async function getLastGoodFirmwareForDevice(deviceId) {
   return rows[0] ?? null;
 }
 
-async function getFirmwareById(id) {
-  const { rows } = await q('SELECT * FROM firmware_versions WHERE id = $1', [id]);
-  return rows[0] ?? null;
-}
-
-async function listFirmwareVersions(limit = 20) {
+/* Org-scoped lookup — orgId null (super-admin) matches any org's version. */
+async function getFirmwareById(id, orgId = null) {
   const { rows } = await q(
-    'SELECT * FROM firmware_versions ORDER BY created_at DESC LIMIT $1',
-    [limit]
-  );
-  return rows;
-}
-
-async function getLatestFirmware() {
-  const { rows } = await q(
-    'SELECT * FROM firmware_versions WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1'
+    'SELECT * FROM firmware_versions WHERE id = $1 AND ($2::int IS NULL OR organization_id = $2)',
+    [id, orgId]
   );
   return rows[0] ?? null;
 }
 
-async function getFirmwareById(id) {
-  const { rows } = await q('SELECT * FROM firmware_versions WHERE id = $1', [id]);
-  return rows[0] ?? null;
-}
-
-async function listFirmwareVersions(limit = 20) {
+/* Org-scoped version list, newest first. orgId null (super-admin global
+ * view) returns every org's versions; the LEFT JOIN adds the org name so the
+ * dashboard can label which tenant each build belongs to. */
+async function listFirmwareVersions(orgId = null, limit = 20) {
   const { rows } = await q(
-    'SELECT * FROM firmware_versions ORDER BY created_at DESC LIMIT $1',
-    [limit]
+    `SELECT fv.*, o.name AS org_name
+     FROM firmware_versions fv
+     LEFT JOIN organizations o ON o.id = fv.organization_id
+     WHERE ($1::int IS NULL OR fv.organization_id = $1)
+     ORDER BY fv.created_at DESC LIMIT $2`,
+    [orgId, limit]
   );
   return rows;
 }
