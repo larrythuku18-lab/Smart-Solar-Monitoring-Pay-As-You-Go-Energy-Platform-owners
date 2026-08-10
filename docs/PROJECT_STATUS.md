@@ -56,8 +56,22 @@ Four statistical models, warm-seeded from PostgreSQL on startup:
 - Split by audience (`public/admin`, `public/customer`, `public/shared`) with
   a role-aware nav and device selector that respects admin vs customer roles.
 
+### Multi-Tenant (organizations)
+- **`organizations` table** — every user, device, and payment belongs to one
+  organization; a `default` org is auto-created and all pre-existing rows
+  backfilled, so single-tenant installs upgrade in place.
+- **Three roles** — `admin` (platform super-admin, sees all orgs),
+  `org_admin` (scoped to exactly one org), `customer` (their own data).
+- **Backend-enforced scoping** — every admin/audit/analytics aggregate is
+  filtered by org (`?orgId=` narrows a super-admin's view; org admins are
+  hard-scoped and cannot widen it), device-level routes (rotate/locate/
+  assign/energy reads) refuse cross-tenant devices, and org admins cannot
+  create privileged accounts.
+- **Org management API** — super-admin creates organizations and org admins;
+  new signups land in the default org.
+
 ### Security & Ops
-- JWT auth (admin/customer/device), bcrypt PIN login, password complexity,
+- JWT auth (admin/org_admin/customer/device), bcrypt PIN login, password complexity,
   login-alert emails, per-device rate limiting
 - **Observability** (`observability.js` + `observability/prometheus-alerts.yml`):
   Prometheus `/metrics` (bearer-token protected), structured JSON logs, alert
@@ -68,8 +82,8 @@ Four statistical models, warm-seeded from PostgreSQL on startup:
 - **CI/CD** — GitHub Actions (build, test, firmware compile, keep-warm),
   Docker, Render config, DB backup workflow
 - **Idempotent migrations** — safe redeploys, `runMigrations()` on boot
-- **139 passing tests** — payments, OTA, telemetry security, observability,
-  dashboard shape invariants, API, token engine, SMS
+- **158 passing tests** — payments, OTA, telemetry security, observability,
+  multi-tenant isolation, dashboard shape invariants, API, token engine, SMS
 
 ---
 
@@ -166,5 +180,5 @@ technologies already in the repo or one deliberate new dependency:
 | Dashboards (admin, analytics, analysis, customer) | ✅ Built |
 | Observability (metrics, logs, alerts) | ✅ Built |
 | SMS + email notifications | ✅ Built |
-| Multi-tenant, MQTT, WebSockets, PWA, mapping | 🚧 Buildable |
+| MQTT, WebSockets, PWA, mapping, org-scoped frontends | 🚧 Buildable (backend multi-tenancy shipped) |
 | Live M-Pesa approval, real hardware, offline fleet, native apps | ❌ Not buildable here |

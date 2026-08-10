@@ -62,7 +62,10 @@
 
   function applyRole(nav, role, user) {
     const isAuth  = role !== 'guest' && role !== '';
-    const isAdmin = role === 'admin';
+    /* org admins share the admin nav (Dashboard / Analytics / Analysis
+       Board) — every one of those pages is org-scoped on the backend, so
+       they see only their own tenant's data. */
+    const isAdmin = role === 'admin' || role === 'org_admin';
     const isCust  = role === 'customer';
 
     nav.querySelectorAll('[data-nav-role]').forEach(el => {
@@ -78,7 +81,13 @@
 
     const badge = nav.querySelector('#nav-user-badge');
     if (badge && user) {
-      badge.textContent = user.deviceId ? `Device ${user.deviceId}` : (user.name || user.role || 'User');
+      /* Org admins get their organization's name in the badge so it's
+         always obvious which tenant they're operating in. */
+      if (user.role === 'org_admin' && user.organization?.name) {
+        badge.textContent = `Org: ${user.organization.name}`;
+      } else {
+        badge.textContent = user.deviceId ? `Device ${user.deviceId}` : (user.name || user.role || 'User');
+      }
     }
 
     const logoutBtn = nav.querySelector('#nav-logout-btn');

@@ -261,6 +261,7 @@
     <div class="topbar-title" id="topbar-date">SolGrid — Live Monitor</div>
     <div class="topbar-right">
       <span class="topbar-sep"></span>
+      <span class="badge badge-amber" id="org-badge" style="display:none"></span>
       <span class="badge badge-amber" id="badge-alerts">— Alerts</span>
       <span class="badge badge-green">IoT Live</span>
       <span class="badge badge-blue">M-Pesa Active</span>
@@ -545,6 +546,46 @@
       </div>
     </div>
 
+    <!-- Organizations — super-admin tenant directory (create orgs, view
+         fleet/user counts, provision org admins). Hidden for non-super-admins
+         the same way the Device Fleet hides on 403. -->
+    <div class="panel" id="organizations-panel">
+      <div class="panel-head">
+        <span class="panel-title">Organizations</span>
+        <span class="badge badge-teal" style="font-size:9px">Multi-tenant</span>
+      </div>
+      <form id="org-create-form" style="display:flex;gap:8px;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--border)">
+        <input id="org-create-name" type="text" placeholder="Organization name (e.g. Acme Solar Ltd)" aria-label="Organization name" required
+          style="flex:1;min-width:200px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
+        <input id="org-create-slug" type="text" placeholder="Slug (optional — e.g. acme-solar)" aria-label="Organization slug"
+          style="flex:1;min-width:160px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
+        <button type="submit" id="org-create-btn"
+          style="background:var(--purple);color:#fff;border:none;border-radius:8px;padding:7px 16px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">
+          + Create Organization
+        </button>
+      </form>
+      <div id="org-result" style="display:none;padding:12px 18px;border-bottom:1px solid var(--border);font-size:11px"></div>
+      <div id="org-error" style="display:none;padding:12px 18px;border-bottom:1px solid var(--border);font-size:11px;color:var(--red)"></div>
+      <div class="tx-table-wrap">
+        <table class="tx-table">
+          <thead>
+            <tr>
+              <th>Organization</th>
+              <th>Slug</th>
+              <th>Devices</th>
+              <th>Users</th>
+              <th>Org Admins</th>
+              <th>Created</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="organizations-body">
+            <tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading organizations…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Quick navigation cards -->
     <div class="panel">
       <div class="panel-head">
@@ -754,8 +795,12 @@
       // aggregates, customer phone numbers, M-Pesa receipt data) — must be sent
       // with this dashboard's auth token.
       const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
+      // Use the org-resolved device published by index.js (window.__solgridDeviceId)
+      // — passing DEMO-001 would 403 for an org admin whose tenant owns a
+      // different unit. Super-admins keep the platform demo device default.
+      const devId = encodeURIComponent(window.__solgridDeviceId || 'DEMO-001');
       const [chartRes, statsRes] = await Promise.all([
-        fetch(`${API}/audit/charts`, { headers: authHeaders }).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch(`${API}/audit/charts?deviceId=${devId}`, { headers: authHeaders }).then(r => r.ok ? r.json() : null).catch(() => null),
         fetch(`${API}/payments/stats`, { headers: authHeaders }).then(r => r.ok ? r.json() : null).catch(() => null),
       ]);
 
@@ -1234,8 +1279,168 @@
 
   setTimeout(updateSmsStatus, 500);
 
+  /* ── Organizations: super-admin tenant directory ──
+     GET/POST /api/admin/organizations and POST /api/admin/admins
+     (role=org_admin) exist in the backend — this wires a browser UI:
+     create a tenant, see its fleet/user/admin counts, and provision an
+     org admin scoped to that tenant. Super-admin only; the panel hides
+     itself on 403 exactly like the Device Fleet. */
+  function showOrgError(message) {
+    const el = document.getElementById('org-error');
+    if (!el) return;
+    if (!message) { el.style.display = 'none'; el.textContent = ''; return; }
+    el.textContent = message;
+    el.style.display = 'block';
+  }
+
+  function showOrgResult(message, isError) {
+    const el = document.getElementById('org-result');
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.color = isError ? 'var(--red)' : 'var(--green)';
+    el.innerHTML = message;
+  }
+
+  function renderOrganizations(orgs) {
+    const tbody = document.getElementById('organizations-body');
+    if (!tbody) return;
+    if (!orgs || !orgs.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">No organizations yet — create the first one above.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = orgs.map(o => {
+      const id   = escapeHtml(o.name);
+      const slug = escapeHtml(o.slug || '—');
+      const isDefault = o.slug === 'default';
+      const devices = fmtCount(o.device_count);
+      const users   = fmtCount(o.user_count);
+      const admins  = fmtCount(o.admin_count);
+      const created = fmtDate(o.created_at);
+      const adminBadge = admins > 0
+        ? `<span class="badge badge-green" style="font-size:9px">${admins}</span>`
+        : `<span style="color:var(--muted)">0</span>`;
+      return `
+      <tr>
+        <td style="font-size:11px;font-weight:600">${id}${isDefault ? ' <span class="badge badge-blue" style="font-size:9px">default</span>' : ''}</td>
+        <td style="font-family:monospace;font-size:10px;color:var(--sub)">${slug}</td>
+        <td style="font-size:11px">${devices}</td>
+        <td style="font-size:11px">${users}</td>
+        <td style="font-size:11px">${adminBadge}</td>
+        <td style="font-size:10px;color:var(--muted)">${created}</td>
+        <td style="white-space:nowrap">
+          <button type="button" class="org-admin-btn" data-org-id="${o.id}" data-org-name="${escapeHtml(o.name)}"
+              style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--green);font-size:10px;padding:4px 9px;cursor:pointer;font-family:inherit">
+              + Org Admin</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('.org-admin-btn').forEach(btn => {
+      btn.addEventListener('click', () => provisionOrgAdmin(btn.dataset.orgId, btn.dataset.orgName, btn));
+    });
+  }
+
+  async function loadOrganizations() {
+    try {
+      const res = await fetch(`${API}/admin/organizations`, { headers: authHeaders() });
+      if (!res.ok) {
+        // Org admins / customers get 403 — hide the panel, it's super-admin-only.
+        if (res.status === 403) {
+          document.getElementById('organizations-panel')?.style.setProperty('display', 'none');
+          return;
+        }
+        throw new Error(`Failed to load organizations (${res.status})`);
+      }
+      const data = await res.json();
+      showOrgError(null);
+      renderOrganizations(data.organizations || []);
+    } catch (e) {
+      console.warn('Organizations load error:', e);
+      showOrgError('Could not load organizations — check your connection and try again.');
+    }
+  }
+
+  async function createOrganization(name, slug) {
+    const res = await fetch(`${API}/admin/organizations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ name, slug: slug || undefined })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.errors?.[0]?.msg || data?.message || data?.error || `Request failed (${res.status})`);
+    }
+    return data.organization;
+  }
+
+  /* Provision an org admin scoped to the chosen tenant. Uses a small inline
+     form (name / email / password) rather than a prompt chain — password
+     fields in prompts get echoed by some terminals and defeat password
+     managers, so this keeps the credential out of browser chrome. */
+  function provisionOrgAdmin(orgId, orgName, triggerBtn) {
+    if (!orgId) return;
+    const name = window.prompt(`Org admin name for "${orgName}":`);
+    if (name === null) return;
+    const email = window.prompt(`Org admin email for "${orgName}":`);
+    if (email === null) return;
+    const password = window.prompt(`Set a password (min 8 chars) for ${email}:`);
+    if (password === null) return;
+    if (!name.trim() || !email.trim() || !password) return;
+
+    triggerBtn.disabled = true;
+    triggerBtn.textContent = 'Creating…';
+    (async () => {
+      try {
+        const res = await fetch(`${API}/admin/admins`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ name: name.trim(), email: email.trim(), password, role: 'org_admin', organizationId: orgId })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.errors?.[0]?.msg || data?.message || data?.error || `Request failed (${res.status})`);
+        showOrgResult(
+          `Org admin <strong>${escapeHtml(data.admin?.name || name.trim())}</strong> (${escapeHtml(data.admin?.email || email.trim())}) created for <strong>${escapeHtml(orgName)}</strong>.`,
+          false
+        );
+        await loadOrganizations();
+      } catch (e) {
+        showOrgResult(`Failed to create org admin: ${escapeHtml(e.message)}`, true);
+      } finally {
+        triggerBtn.disabled = false;
+        triggerBtn.textContent = '+ Org Admin';
+      }
+    })();
+  }
+
+  document.getElementById('org-create-form')?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const nameInput = document.getElementById('org-create-name');
+    const slugInput = document.getElementById('org-create-slug');
+    const btn = document.getElementById('org-create-btn');
+    const name = nameInput.value.trim();
+    if (!name) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Creating…';
+    try {
+      const org = await createOrganization(name, slugInput.value.trim());
+      showOrgResult(`Created <strong>${escapeHtml(org.name)}</strong> (<code style="font-family:monospace">${escapeHtml(org.slug)}</code>).`);
+      nameInput.value = '';
+      slugInput.value = '';
+      showOrgError(null);
+      await loadOrganizations();
+    } catch (e) {
+      showOrgError(e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '+ Create Organization';
+    }
+  });
+
   setTimeout(loadDeviceFleet, 1200);
   setInterval(loadDeviceFleet, 30000);
+  setTimeout(loadOrganizations, 1400);
+  setInterval(loadOrganizations, 45000);
 </script>
 </body>
 </html>

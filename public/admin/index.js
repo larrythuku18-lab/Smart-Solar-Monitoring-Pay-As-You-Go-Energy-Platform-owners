@@ -603,6 +603,16 @@ async function fetchState() {
         const data = await response.json();
         Object.assign(state, data);
         cache.set('state', data);
+        /* Publish the org-resolved device (index.html's inline script reads it
+           for /api/audit/charts — hardcoding DEMO-001 there 403s for org
+           admins since that unit belongs to the default tenant). */
+        window.__solgridDeviceId = data.deviceId || 'DEMO-001';
+        window.__solgridOrg = data.organization || null;
+        const orgBadge = document.getElementById('org-badge');
+        if (orgBadge && data.organization?.name) {
+          orgBadge.style.display = 'inline-flex';
+          orgBadge.textContent = `Org: ${data.organization.name}`;
+        }
         loadingTracker.updateProgress(35, 'Core state ready');
       }
     } catch (error) {
@@ -628,8 +638,11 @@ async function fetchState() {
 
     if (refreshNonCritical) {
       lastNonCriticalFetch = now;
+      /* Org admins must see their own tenant's AI predictions, not the
+         default org's demo device (server defaults to DEMO-001). */
+      const aiDevice = encodeURIComponent(window.__solgridDeviceId || 'DEMO-001');
       Promise.all([
-        fetchWithTimeout(`${API_BASE}/forecast`, NON_CRITICAL_TIMEOUT)
+        fetchWithTimeout(`${API_BASE}/forecast?deviceId=${aiDevice}`, NON_CRITICAL_TIMEOUT)
           .then(data => {
             if (data?.forecast?.predictions) {
               state.forecast = data.forecast.predictions;
@@ -640,7 +653,7 @@ async function fetchState() {
             const cached = cache.get('forecast', 300000);
             if (cached) state.forecast = cached;
           }),
-        fetchWithTimeout(`${API_BASE}/maintenance-alerts`, NON_CRITICAL_TIMEOUT)
+        fetchWithTimeout(`${API_BASE}/maintenance-alerts?deviceId=${aiDevice}`, NON_CRITICAL_TIMEOUT)
           .then(data => {
             if (data?.maintenance?.alerts) {
               state.maintenanceAlerts = data.maintenance.alerts;

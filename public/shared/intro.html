@@ -523,9 +523,13 @@
 </section>
 
 <script>
-  /* ── Role / destination ── */
+  /* ── Role / destination ──
+     Both super-admins and org admins land on the admin dashboard — org
+     admins see only their own organization's data (backend-enforced via
+     the organization_id scoping in every admin aggregate). */
   const role = localStorage.getItem('userRole') || 'customer';
-  const DEST = role === 'admin' ? '/index.html' : '/customer.html';
+  const isAdminRole = role === 'admin' || role === 'org_admin';
+  const DEST = isAdminRole ? '/index.html' : '/customer.html';
 
   /* ════════════════════════════════════════════════════
      ORCHESTRAL SYNTH — A-major string swell, hall reverb
@@ -661,7 +665,9 @@
     clearTimeout(autoTimer);
     const veil   = document.getElementById('redirectVeil');
     const rvRole = document.getElementById('rvRole');
-    rvRole.textContent = role === 'admin' ? 'Admin Dashboard' : 'Customer Portal';
+    rvRole.textContent = role === 'admin' ? 'Admin Dashboard'
+      : role === 'org_admin' ? 'Organization Dashboard'
+      : 'Customer Portal';
     veil.classList.add('show');
     setTimeout(() => { globalThis.location.href = DEST; }, 700);
   }

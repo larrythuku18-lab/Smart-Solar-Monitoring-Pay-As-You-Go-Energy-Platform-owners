@@ -269,6 +269,37 @@ async function runMigrations() {
       created_at       TIMESTAMPTZ  DEFAULT NOW()
     );
 
+    -- ── Organizations (multi-tenant) ───────────────────────────────────────
+    -- Every user, device, and payment belongs to exactly one organization.
+    -- The 'default' org is created on first boot and pre-existing rows are
+    -- backfilled into it, so single-tenant installs keep working unchanged;
+    -- org-scoped admins (role='org_admin') only ever see their own org.
+    CREATE TABLE IF NOT EXISTS organizations (
+      id         SERIAL       PRIMARY KEY,
+      name       VARCHAR(128) NOT NULL,
+      slug       VARCHAR(64)  NOT NULL UNIQUE,
+      created_at TIMESTAMPTZ  DEFAULT NOW()
+    );
+
+    INSERT INTO organizations (name, slug)
+    SELECT 'Default Organization', 'default'
+    WHERE NOT EXISTS (SELECT 1 FROM organizations WHERE slug = 'default');
+
+    ALTER TABLE users    ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id);
+    ALTER TABLE devices  ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id);
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id);
+
+    -- Backfill every pre-existing row into the default org (idempotent —
+    -- rows already assigned keep their org). Payments are backfilled from
+    -- their owning user's org when the user has one (which at migration
+    -- time is the default org anyway).
+    UPDATE users    SET organization_id = (SELECT id FROM organizations WHERE slug = 'default') WHERE organization_id IS NULL;
+    UPDATE devices  SET organization_id = (SELECT id FROM organizations WHERE slug = 'default') WHERE organization_id IS NULL;
+    UPDATE payments SET organization_id = COALESCE(
+      (SELECT u.organization_id FROM users u WHERE u.id = payments.user_id),
+      (SELECT id FROM organizations WHERE slug = 'default')
+    ) WHERE organization_id IS NULL;
+
     -- Data fix: category icons were originally seeded as emojis; the UI no
     -- longer renders them and the product style is text-only. seedProducts()
     -- only runs on an empty catalogue, so existing databases keep the old
@@ -337,9 +368,73 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS idx_firmware_active   ON firmware_versions (is_active) WHERE is_active;
     -- Boot-report trail for the 2-strike rollback check (per device+version)
     CREATE INDEX IF NOT EXISTS idx_boot_reports_device ON firmware_boot_reports (device_id, firmware_version, created_at DESC);
+    -- Multi-tenant lookup indexes — every org-scoped aggregate scans these
+    CREATE INDEX IF NOT EXISTS idx_users_org     ON users(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_devices_org   ON devices(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_payments_org  ON payments(organization_id);
   `);
 
   console.log('[DB] PostgreSQL migrations complete');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ORGANIZATION QUERIES (multi-tenant)
+══════════════════════════════════════════════════════════════════════════ */
+
+/* Create a new organization. slug is the stable tenant identifier used in
+   URLs; name is human-facing. Returns the new row. */
+async function createOrganization({ name, slug }) {
+  const { rows } = await q(
+    'INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING *',
+    [name, slug]
+  );
+  return rows[0];
+}
+
+async function getOrganizationById(id) {
+  const { rows } = await q('SELECT * FROM organizations WHERE id = $1', [id]);
+  return rows[0] ?? null;
+}
+
+async function getOrganizationBySlug(slug) {
+  const { rows } = await q('SELECT * FROM organizations WHERE slug = $1', [slug]);
+  return rows[0] ?? null;
+}
+
+/* All organizations with their fleet/user/admin counts, oldest first —
+   feeds the super-admin org directory. */
+async function getOrganizations() {
+  const { rows } = await q(`
+    SELECT o.*,
+           COUNT(DISTINCT d.id)::int AS device_count,
+           COUNT(DISTINCT u.id)::int AS user_count,
+           COUNT(DISTINCT CASE WHEN u.role = 'org_admin' THEN u.id END)::int AS admin_count
+    FROM   organizations o
+    LEFT JOIN devices d ON d.organization_id = o.id
+    LEFT JOIN users   u ON u.organization_id = o.id
+    GROUP  BY o.id
+    ORDER  BY o.created_at ASC, o.id ASC
+  `);
+  return rows;
+}
+
+/* Assign an organization to a user (used when provisioning org admins or
+   moving a customer between tenants). Returns the updated user row. */
+async function setUserOrganization(userId, organizationId) {
+  const { rows } = await q(
+    'UPDATE users SET organization_id = $1 WHERE id = $2 RETURNING *',
+    [organizationId, userId]
+  );
+  return rows[0] ?? null;
+}
+
+/* Default-org lookup helper. Organizations table is created by
+   runMigrations(), and the 'default' row is inserted there — so callers
+   only hit this after migrations have run (same guarantee as every other
+   query below). */
+async function getDefaultOrganizationId() {
+  const { rows } = await q("SELECT id FROM organizations WHERE slug = 'default'");
+  return rows[0]?.id ?? null;
 }
 
 /* Upsert a named demo user by device_id, tolerating leftover rows from
@@ -356,9 +451,13 @@ async function upsertDemoUser({ deviceId, pin, email, passwordHash, role, name, 
     await q('UPDATE users SET email = NULL WHERE id = $1', [byEmail[0].id]);
   }
 
+  /* Demo accounts live in the default org — on a fresh database the
+     organizations table + default row were just created by runMigrations(),
+     so the subselect always resolves. On an existing database the org
+     columns were backfilled, so the ON CONFLICT branch leaves org alone. */
   await q(
-    `INSERT INTO users (device_id, pin, email, password_hash, role, name, phone, wallet_balance, relay_unlocked)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    `INSERT INTO users (device_id, pin, email, password_hash, role, name, phone, wallet_balance, relay_unlocked, organization_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, (SELECT id FROM organizations WHERE slug = 'default'))
      ON CONFLICT (device_id) DO UPDATE
        SET email         = EXCLUDED.email,
            pin           = EXCLUDED.pin,
@@ -423,8 +522,8 @@ async function seedDemoData() {
   ];
   for (const [id, name, location, active] of demoFleet) {
     await q(
-      `INSERT INTO devices (device_id, name, location, status, is_active, relay_state)
-       VALUES ($1,$2,$3,'active',$4,'on')
+      `INSERT INTO devices (device_id, name, location, status, is_active, relay_state, organization_id)
+       VALUES ($1,$2,$3,'active',$4,'on', (SELECT id FROM organizations WHERE slug = 'default'))
        ON CONFLICT (device_id) DO UPDATE
          SET location = COALESCE(devices.location, EXCLUDED.location)`,
       [id, name, location, active]
@@ -540,7 +639,7 @@ async function getUserByEmail(email) {
   return rows[0] ?? null;
 }
 
-async function createUser({ deviceId, name, email, passwordHash, phone, pin, role = 'customer' }) {
+async function createUser({ deviceId, name, email, passwordHash, phone, pin, role = 'customer', organizationId = null }) {
   /* Always bcrypt-hash the PIN — callers pass plaintext only. There is
      deliberately no pass-through for values that already "look like a hash"
      ($2...): if a caller-controlled string reached storage verbatim, the
@@ -548,11 +647,16 @@ async function createUser({ deviceId, name, email, passwordHash, phone, pin, rol
      through upsertDemoUser, which does not call this.) */
   const finalPin = await bcrypt.hash(String(pin ?? '0000'), 10);
 
+  /* New users land in the default org unless the caller says otherwise —
+     an org admin provisioning a customer for their own tenant passes
+     organizationId explicitly. */
+  const orgId = organizationId ?? (await getDefaultOrganizationId());
+
   const { rows } = await q(
-    `INSERT INTO users (device_id, name, email, password_hash, phone, pin, role)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO users (device_id, name, email, password_hash, phone, pin, role, organization_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
-    [deviceId, name || null, email?.toLowerCase() || null, passwordHash || null, phone || null, finalPin, role]
+    [deviceId, name || null, email?.toLowerCase() || null, passwordHash || null, phone || null, finalPin, role, orgId]
   );
   return rows[0];
 }
@@ -668,10 +772,14 @@ async function getDevice(deviceId) {
  * non-empty — a device that stops sending it (or an older build without the
  * field) must not wipe out the last known version.
  */
-async function upsertDeviceHeartbeat({ deviceId, ip, name, firmwareVersion }) {
+async function upsertDeviceHeartbeat({ deviceId, ip, name, firmwareVersion, organizationId = null }) {
+  /* Auto-registered devices (first-ever telemetry) land in the caller's org
+     when one is supplied, otherwise the default org — the org column is
+     deliberately NOT updated on conflict, so an org cannot be silently
+     changed by a stray heartbeat from a device already assigned elsewhere. */
   await q(
-    `INSERT INTO devices (device_id, device_ip, name, status, is_active, relay_state, last_seen)
-     VALUES ($1,$2,$3,'active',TRUE,'on',NOW())
+    `INSERT INTO devices (device_id, device_ip, name, status, is_active, relay_state, last_seen, organization_id)
+     VALUES ($1,$2,$3,'active',TRUE,'on',NOW(), COALESCE($4, (SELECT id FROM organizations WHERE slug = 'default')))
      ON CONFLICT (device_id) DO UPDATE
        SET device_ip = COALESCE(EXCLUDED.device_ip, devices.device_ip),
            status    = 'active',
@@ -680,8 +788,8 @@ async function upsertDeviceHeartbeat({ deviceId, ip, name, firmwareVersion }) {
            /* NULLIF('', …) -> NULL, so an empty/missing version never
               overwrites the last known good value. Explicit ::VARCHAR cast
               so Postgres can pin the parameter type. */
-           firmware_version = COALESCE(NULLIF($4::VARCHAR, ''), devices.firmware_version)`,
-    [deviceId, ip || null, name || deviceId, firmwareVersion || null]
+           firmware_version = COALESCE(NULLIF($5::VARCHAR, ''), devices.firmware_version)`,
+    [deviceId, ip || null, name || deviceId, organizationId ?? null, firmwareVersion || null]
   );
 }
 
@@ -715,7 +823,7 @@ async function setRelayState(deviceId, state) {
   }
 }
 
-async function getAllDevices() {
+async function getAllDevices(orgId = null) {
   // Owner columns feed the admin fleet panel's Owner column; the LATERAL
   // join pulls each device's most recent battery reading so the fleet view
   // can flag low-battery units without N+1 queries.
@@ -731,7 +839,9 @@ async function getAllDevices() {
        ORDER BY er.recorded_at DESC
        LIMIT 1
      ) e ON TRUE
-     ORDER BY d.created_at DESC`
+     WHERE  ($1::int IS NULL OR d.organization_id = $1)
+     ORDER BY d.created_at DESC`,
+    [orgId]
   );
   return rows.map(d => ({ ...d, online: isDeviceOnline(d.last_seen) }));
 }
@@ -750,17 +860,21 @@ async function assignDeviceToUser(deviceId, userId) {
  * device row if it doesn't exist yet (admin pre-provisioning a unit before
  * it's ever powered on), or rotates the key if it's already provisioned.
  */
-async function provisionDevice(deviceId, name, location) {
+async function provisionDevice(deviceId, name, location, organizationId = null) {
   const apiKey = crypto.randomBytes(24).toString('hex');
+  /* Newly provisioned units belong to the caller's org (org admin) or the
+     default org (super-admin / no org context). On conflict (key rotation)
+     the org is deliberately untouched — rotating a key must not reassign
+     the device to another tenant. */
   const { rows } = await q(
-    `INSERT INTO devices (device_id, name, api_key, status, is_active, relay_state, location)
-     VALUES ($1, $2, $3, 'active', TRUE, 'on', $4)
+    `INSERT INTO devices (device_id, name, api_key, status, is_active, relay_state, location, organization_id)
+     VALUES ($1, $2, $3, 'active', TRUE, 'on', $4, COALESCE($5, (SELECT id FROM organizations WHERE slug = 'default')))
      ON CONFLICT (device_id) DO UPDATE
        SET api_key  = EXCLUDED.api_key,
            name     = COALESCE(EXCLUDED.name, devices.name),
            location = COALESCE(EXCLUDED.location, devices.location)
      RETURNING *`,
-    [deviceId, name || deviceId, apiKey, location || null]
+    [deviceId, name || deviceId, apiKey, location || null, organizationId ?? null]
   );
   return rows[0];
 }
@@ -884,19 +998,25 @@ async function getEnergyHistory48hAllDevices() {
    PAYMENT QUERIES
 ══════════════════════════════════════════════════════════════════════════ */
 
-async function createPayment({ userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId, paymentType = 'energy', productId = null, productName = null }) {
+async function createPayment({ userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId, paymentType = 'energy', productId = null, productName = null, organizationId = null }) {
   /* Idempotent by design: checkoutRequestId is the M-Pesa idempotency key.
      If the same STK push is re-sent (client retry, Safaricom replay), we
      return the ORIGINAL payment row instead of creating a duplicate — the
      uq_payments_checkout index enforces this at the DB level too, so even
      a racing double-request collapses to one row. */
+  /* Multi-tenant: payments inherit their org from the paying user, falling
+     back to the default org for legacy/unknown callers. Storing it on the
+     payment row (not deriving via JOIN at read time) keeps every org-scoped
+     aggregate a single-table scan on idx_payments_org. */
   const { rows } = await q(
     `INSERT INTO payments
-       (user_id, device_id, amount, phone_number, status, merchant_request_id, checkout_request_id, payment_type, product_id, product_name)
-     VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9)
+       (user_id, device_id, amount, phone_number, status, merchant_request_id, checkout_request_id, payment_type, product_id, product_name, organization_id)
+     SELECT $1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,
+            COALESCE($10, (SELECT u.organization_id FROM users u WHERE u.id = $1),
+                          (SELECT id FROM organizations WHERE slug = 'default'))
      ON CONFLICT (checkout_request_id) DO NOTHING
      RETURNING id`,
-    [userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId, paymentType, productId, productName]
+    [userId, deviceId, amount, phoneNumber, merchantRequestId, checkoutRequestId, paymentType, productId, productName, organizationId ?? null]
   );
   if (rows[0]) return rows[0];
   /* Duplicate checkoutRequestId — fetch and return the original row's id. */
@@ -956,19 +1076,22 @@ async function setPaymentFraudScore(paymentId, score) {
 
 /** Recent completed payments with their fraud score, for the admin Fraud
  *  Risk chart — real amount/score pairs instead of the old mock data. */
-async function getFraudRiskPayments(limit = 60) {
+async function getFraudRiskPayments(limit = 60, orgId = null) {
   const { rows } = await q(
     `SELECT amount, fraud_score, created_at
      FROM   payments
      WHERE  status = 'completed'
+     AND    ($1::int IS NULL OR organization_id = $1)
      ORDER  BY created_at DESC
-     LIMIT  $1`,
-    [limit]
+     LIMIT  $2`,
+    [orgId, limit]
   );
   return rows;
 }
 
-async function getPaymentStats() {
+/* orgId null → all orgs (super-admin). The single-table filter keeps every
+   org-scoped stats call on idx_payments_org. */
+async function getPaymentStats(orgId = null) {
   const { rows: [s] } = await q(`
     SELECT
       COUNT(*)                                              ::int   AS count,
@@ -980,18 +1103,20 @@ async function getPaymentStats() {
       COUNT(*) FILTER (WHERE status = 'failed')             ::int   AS failed,
       COALESCE(SUM(amount) FILTER (WHERE status='completed'), 0)    AS total_revenue
     FROM payments
-  `);
+    WHERE ($1::int IS NULL OR organization_id = $1)
+  `, [orgId]);
   return s;
 }
 
-async function getRecentPayments(limit = 20) {
+async function getRecentPayments(limit = 20, orgId = null) {
   const { rows } = await q(
     `SELECT p.*, u.device_id AS user_device_id
      FROM   payments p
      LEFT JOIN users u ON p.user_id = u.id
+     WHERE  ($2::int IS NULL OR p.organization_id = $2)
      ORDER  BY p.created_at DESC
      LIMIT  $1`,
-    [limit]
+    [limit, orgId]
   );
   return rows;
 }
@@ -1012,16 +1137,17 @@ async function getAlertsByUserId(userId, limit = 10) {
   return rows;
 }
 
-async function getPaymentTrend() {
+async function getPaymentTrend(orgId = null) {
   const { rows } = await q(`
     SELECT created_at::date::text                                          AS day,
            COALESCE(SUM(amount) FILTER (WHERE status='completed'), 0)     AS revenue,
            COUNT(*)::int                                                   AS total
     FROM   payments
+    WHERE  ($1::int IS NULL OR organization_id = $1)
     GROUP  BY created_at::date
     ORDER  BY day ASC
     LIMIT  14
-  `);
+  `, [orgId]);
   return rows;
 }
 
@@ -1032,17 +1158,18 @@ async function getPaymentTrend() {
  *  -1 for a month with no activity at all, clamped to [0, 100]. Bucketing is
  *  done in JS (not SQL date_trunc) to avoid Postgres session-timezone
  *  shifting a payment into the wrong month. */
-async function getCustomerCreditScoreTrend(months = 12, customerLimit = 3) {
+async function getCustomerCreditScoreTrend(months = 12, customerLimit = 3, orgId = null) {
   const { rows: customers } = await q(
     `SELECT u.id, u.name,
             COALESCE(SUM(p.amount) FILTER (WHERE p.status = 'completed'), 0) AS total_paid
      FROM   users u
      JOIN   payments p ON p.user_id = u.id
      WHERE  u.role = 'customer'
+     AND    ($2::int IS NULL OR u.organization_id = $2)
      GROUP  BY u.id, u.name
      ORDER  BY total_paid DESC
      LIMIT  $1`,
-    [customerLimit]
+    [customerLimit, orgId]
   );
 
   const monthStarts = Array.from({ length: months }, (_, i) => {
@@ -1107,17 +1234,40 @@ async function createAlert({ userId, deviceId, type, severity, message }) {
   );
 }
 
-async function getAlerts(limit = 20) {
+/* Alerts are scoped through their owning user (and, for device-level
+   alerts with no user, through the device's org). The LEFT JOINs keep rows
+   whose user/device rows have since been deleted visible to org-scoped
+   callers when they can't be attributed to any org — safer to show an
+   orphaned alert than to hide a real incident. */
+async function getAlerts(limit = 20, orgId = null) {
   const { rows } = await q(
-    'SELECT * FROM maintenance_alerts ORDER BY created_at DESC LIMIT $1',
-    [limit]
+    `SELECT a.*
+     FROM   maintenance_alerts a
+     LEFT JOIN users   u ON u.id = a.user_id
+     LEFT JOIN devices d ON d.device_id = a.device_id
+     WHERE  ($1::int IS NULL
+             OR u.organization_id = $1
+             OR d.organization_id = $1
+             OR (u.id IS NULL AND d.id IS NULL))
+     ORDER  BY a.created_at DESC
+     LIMIT  $2`,
+    [orgId, limit]
   );
   return rows;
 }
 
-async function getAlertSeverityCounts() {
+async function getAlertSeverityCounts(orgId = null) {
   const { rows } = await q(
-    'SELECT severity, COUNT(*)::int AS count FROM maintenance_alerts GROUP BY severity'
+    `SELECT a.severity, COUNT(*)::int AS count
+     FROM   maintenance_alerts a
+     LEFT JOIN users   u ON u.id = a.user_id
+     LEFT JOIN devices d ON d.device_id = a.device_id
+     WHERE  ($1::int IS NULL
+             OR u.organization_id = $1
+             OR d.organization_id = $1
+             OR (u.id IS NULL AND d.id IS NULL))
+     GROUP  BY a.severity`,
+    [orgId]
   );
   return rows;
 }
@@ -1157,7 +1307,7 @@ async function pruneOldRows(energyDays, predictionDays) {
    AUDIT TIMELINE
 ══════════════════════════════════════════════════════════════════════════ */
 
-async function getAuditTimeline(limit = 30) {
+async function getAuditTimeline(limit = 30, orgId = null) {
   const { rows } = await q(
     `SELECT 'payment'             AS category,
             id, created_at        AS ts,
@@ -1165,16 +1315,23 @@ async function getAuditTimeline(limit = 30) {
             amount::text          AS detail,
             device_id             AS ref_id
      FROM   payments
+     WHERE  ($1::int IS NULL OR organization_id = $1)
      UNION ALL
      SELECT 'alert',
-            id, created_at,
-            severity,
-            message,
-            device_id
-     FROM   maintenance_alerts
+            a.id, a.created_at,
+            a.severity,
+            a.message,
+            a.device_id
+     FROM   maintenance_alerts a
+     LEFT JOIN users   u ON u.id = a.user_id
+     LEFT JOIN devices d ON d.device_id = a.device_id
+     WHERE  ($1::int IS NULL
+             OR u.organization_id = $1
+             OR d.organization_id = $1
+             OR (u.id IS NULL AND d.id IS NULL))
      ORDER  BY ts DESC
-     LIMIT  $1`,
-    [limit]
+     LIMIT  $2`,
+    [orgId, limit]
   );
   return rows;
 }
@@ -1217,12 +1374,12 @@ async function removePendingCommand(id) {
    DASHBOARD / ADMIN AGGREGATES
 ══════════════════════════════════════════════════════════════════════════ */
 
-async function getDashboardState(deviceId = 'DEMO-001') {
+async function getDashboardState(deviceId = 'DEMO-001', orgId = null) {
   const [device, user, latest, stats] = await Promise.all([
     getDevice(deviceId),
     getUserByDeviceId(deviceId),
     getLatestEnergy(deviceId),
-    getPaymentStats()
+    getPaymentStats(orgId)
   ]);
 
   return {
@@ -1239,19 +1396,20 @@ async function getDashboardState(deviceId = 'DEMO-001') {
   };
 }
 
-async function getAdminSummary() {
+async function getAdminSummary(orgId = null) {
   const [uRes, dRes, oRes, stats] = await Promise.all([
-    q('SELECT COUNT(*)::int AS n FROM users'),
-    q('SELECT COUNT(*)::int AS n FROM devices'),
+    q('SELECT COUNT(*)::int AS n FROM users WHERE ($1::int IS NULL OR organization_id = $1)', [orgId]),
+    q('SELECT COUNT(*)::int AS n FROM devices WHERE ($1::int IS NULL OR organization_id = $1)', [orgId]),
     // Offline = never reported in, or hasn't reported within the configured
     // timeout — derived from last_seen, not the admin-set is_active flag
     // (is_active only reflects manual enable/disable, not liveness).
     q(
       `SELECT COUNT(*)::int AS n FROM devices
-       WHERE last_seen IS NULL OR last_seen < NOW() - make_interval(secs => $1 / 1000.0)`,
-      [deviceOfflineTimeoutMs()]
+       WHERE (last_seen IS NULL OR last_seen < NOW() - make_interval(secs => $1 / 1000.0))
+       AND   ($2::int IS NULL OR organization_id = $2)`,
+      [deviceOfflineTimeoutMs(), orgId]
     ),
-    getPaymentStats()
+    getPaymentStats(orgId)
   ]);
   return {
     users:        uRes.rows[0].n,
@@ -1514,6 +1672,13 @@ module.exports = {
   pool,
   runMigrations,
   seedDemoData,
+  /* organizations (multi-tenant) */
+  createOrganization,
+  getOrganizationById,
+  getOrganizationBySlug,
+  getOrganizations,
+  setUserOrganization,
+  getDefaultOrganizationId,
   /* users */
   getUserByDeviceId,
   getUserByEmail,

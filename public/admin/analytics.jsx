@@ -786,9 +786,26 @@ const AnalyticsDashboard = () => {
     // in dashboard.jsx and index.html.
     const token = localStorage.getItem('authToken');
     const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-    const [stateR, energyR, payR, aiR] = await Promise.allSettled([
-      fetch('/api/state', { headers: authHeaders }).then(r => r.json()),
-      fetch('/api/energy/history?limit=48&deviceId=DEMO-001', { headers: authHeaders }).then(r => r.json()),
+    // /api/state first — the server resolves the device within the caller's
+    // org (org admins get their own tenant's first unit, or none). Fetching
+    // energy history for the hardcoded DEMO-001 would 403 for an org admin
+    // (that device belongs to the default tenant) and leave the charts mock.
+    const stateR = await fetch('/api/state', { headers: authHeaders })
+      .then(r => r.json()).then(v => ({ status: 'fulfilled', value: v }))
+      .catch(e => ({ status: 'rejected', reason: e }));
+    const st0 = stateR.status === 'fulfilled' ? stateR.value : null;
+    /* An org with no provisioned units gets noDevices=true and deviceId=null
+       from /api/state — skip the energy fetch entirely (DEMO-001 would 403
+       cross-tenant, and a fabricated device id is a pointless junk request).
+       A pre-rejected promise keeps the array index stable for allSettled. */
+    const noDevices = !!st0?.noDevices;
+    const deviceId = (!noDevices && st0?.deviceId) ? st0.deviceId : 'DEMO-001';
+    const energyPromise = noDevices
+      ? Promise.reject(new Error('org has no provisioned devices'))
+      : fetch(`/api/energy/history?limit=48&deviceId=${encodeURIComponent(deviceId)}`, { headers: authHeaders }).then(r => r.json());
+
+    const [energyR, payR, aiR] = await Promise.allSettled([
+      energyPromise,
       fetch('/api/payments/stats', { headers: authHeaders }).then(r => r.json()),
       fetch('/api/ai-insights').then(r => r.json())
     ]);
@@ -925,14 +942,29 @@ const AnalyticsDashboard = () => {
         }}>
           {/* Title block */}
           <div>
-            <p style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: '#475569', fontWeight: 500 }}>
-              SolGrid
-            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <p style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.12em', color: '#475569', fontWeight: 500 }}>
+                SolGrid
+              </p>
+              {/* Tenant badge — org admins see which org's data this is */}
+              {apiState?.organization?.name && (
+                <span style={{
+                  fontSize: 11, padding: '3px 10px', borderRadius: 999,
+                  background: 'rgba(245,158,11,0.10)', color: '#f59e0b',
+                  border: '1px solid rgba(245,158,11,0.25)',
+                  fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5
+                }}>
+                  🏢 {apiState.organization.name}
+                </span>
+              )}
+            </div>
             <h1 style={{ marginTop: 4, fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em', color: '#f8fafc', lineHeight: 1.2 }}>
               Analytics Dashboard
             </h1>
             <p style={{ marginTop: 4, fontSize: 13, color: '#64748b' }}>
-              Real-time energy monitoring · Pay-as-you-go insights
+              {apiState?.organization?.name
+                ? `Tenant-scoped analytics for ${apiState.organization.name} · Pay-as-you-go insights`
+                : 'Real-time energy monitoring · Pay-as-you-go insights'}
             </p>
           </div>
 

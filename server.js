@@ -46,6 +46,11 @@ const jwt = require('jsonwebtoken');
 const {
   runMigrations,
   seedDemoData,
+  /* organizations (multi-tenant) */
+  createOrganization,
+  getOrganizationById,
+  getOrganizationBySlug,
+  getOrganizations,
   getUserByDeviceId,
   getUserById,
   getDevice,
@@ -95,6 +100,58 @@ const {
 } = require('./db');
 
 const { authMiddleware, signToken } = require('./authMiddleware');
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MULTI-TENANT AUTHORIZATION HELPERS
+   Roles: 'admin' (super-admin — sees every org) · 'org_admin' (scoped to
+   req.user.organizationId) · 'customer'. Every admin route funnels through
+   these so scoping can never be accidentally bypassed by a copy-pasted
+   role check. The legacy deviceId === 'ADMIN' super-admin token (from the
+   SQLite-era schema) is still honored for backward compatibility.
+══════════════════════════════════════════════════════════════════════════ */
+
+/* Super-admins: role 'admin', or the legacy ADMIN device token. */
+function isSuperAdmin(user) {
+  return user?.role === 'admin' || user?.deviceId === 'ADMIN';
+}
+
+/* Org admins can access the admin surface but ONLY their own organization's
+   data. Their JWT always carries the organizationId claim. */
+function isOrgAdmin(user) {
+  return user?.role === 'org_admin';
+}
+
+/* Anything the admin dashboards / analytics call: super-admin or org admin. */
+function canAccessAdmin(user) {
+  return isSuperAdmin(user) || isOrgAdmin(user);
+}
+
+/* Resolve the org scope for the current request:
+   - super-admin: null (all orgs) unless they opt into ?orgId= to drill
+     into a single tenant's numbers
+   - org_admin:   always their own organizationId — a query param can never
+     widen an org admin's view (the param is ignored)
+   - anyone else: null (never reaches scoped queries — routes guard first) */
+function resolveOrgScope(req) {
+  if (isOrgAdmin(req.user)) return req.user.organizationId ?? null;
+  if (isSuperAdmin(req.user)) {
+    /* Strict parse — Number('12abc') is NaN, so trailing garbage can't
+       silently narrow to 12. */
+    const orgId = Number(req.query.orgId);
+    return Number.isInteger(orgId) && orgId > 0 ? orgId : null;
+  }
+  return null;
+}
+
+/* Org admins may only touch devices that belong to their organization —
+   guard for the device-level admin routes (location/assign/rotate-key).
+   Super-admins pass through; an org mismatch is a hard 403. */
+async function assertDeviceInScope(req, device) {
+  if (!device) return true; // caller handles 404
+  if (isSuperAdmin(req.user)) return true;
+  if (isOrgAdmin(req.user) && device.organization_id === req.user.organizationId) return true;
+  return false;
+}
 
 /* Observability — Prometheus metrics + structured JSON logging (Section 8
    of the production-hardening spec). All optional: METRICS_ENABLED=true
@@ -467,14 +524,44 @@ app.get('/api/demo-credentials', (req, res) => {
    consumers (admin dashboard index.js, analytics page) run post-login and
    send the JWT. */
 app.get('/api/state', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
-    const [state, stats] = await Promise.all([getDashboardState(), getPaymentStats()]);
+    const orgId = resolveOrgScope(req);
+    /* Org identity — lets the Analysis Board / Analytics headers show which
+       tenant an org admin is operating in ("Org: Acme Solar"). */
+    let organization = null;
+    if (isOrgAdmin(req.user) && req.user.organizationId) {
+      const org = await getOrganizationById(req.user.organizationId);
+      if (org) organization = { id: org.id, name: org.name, slug: org.slug };
+    }
+    /* Resolve the dashboard's device within the caller's org: super-admins
+       get the platform demo device (DEMO-001), org admins get their own
+       org's first unit — passing DEMO-001 to an org admin would leak the
+       default org's demo customer wallet/device data across tenants. */
+    let dashboardDeviceId = 'DEMO-001';
+    if (isOrgAdmin(req.user)) {
+      const orgDevices = await getAllDevices(req.user.organizationId);
+      /* An org with no provisioned units must NOT fall back to DEMO-001 —
+         that would hand the demo customer's wallet/telemetry to another
+         tenant. Return an empty-state dashboard instead. */
+      if (orgDevices.length === 0) {
+        return res.json({
+          batteryLevel: 0, generation: 0, consumption: 0, voltage: 0, current: 0,
+          powerEnabled: false, walletBalance: 0, dueAmount: 0, deviceId: null,
+          paymentStats: await getPaymentStats(orgId),
+          otaEnabled: false, noDevices: true, organization
+        });
+      }
+      dashboardDeviceId = orgDevices[0].device_id;
+    }
+    const [state, stats] = await Promise.all([getDashboardState(dashboardDeviceId, orgId), getPaymentStats(orgId)]);
     /* otaEnabled lets the admin dashboard conditionally show the Firmware
-       tab without hardcoding env knowledge into the browser. */
-    res.json({ ...state, paymentStats: stats, otaEnabled: otaEnabled() });
+       tab without hardcoding env knowledge into the browser. The firmware
+       routes are super-admin-only (firmware.js's isAdminRequest), so org
+       admins must not see the tab — every action would 403. */
+    res.json({ ...state, paymentStats: stats, otaEnabled: otaEnabled() && isSuperAdmin(req.user), organization });
   } catch (err) {
     console.error('Dashboard state error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
@@ -665,7 +752,7 @@ app.get('/api/weather', async (req, res) => {
     }
     try {
       const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
-      if (decoded.role !== 'admin' && decoded.deviceId !== 'ADMIN') {
+      if (!canAccessAdmin(decoded)) {
         return res.status(403).json({ error: 'Admin access required for debug mode' });
       }
     } catch {
@@ -800,7 +887,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       const match = await bcrypt.compare(password, user.password_hash);
       if (!match) return res.status(401).json({ error: 'Invalid email or password' });
 
-      const token = signToken({ id: user.id, deviceId: user.device_id, role: user.role });
+      const token = signToken({
+        id:             user.id,
+        deviceId:       user.device_id,
+        role:           user.role,
+        organizationId: user.organization_id ?? null
+      });
 
       /* Fire-and-forget login notification — never blocks or fails the response */
       sendLoginAlert(user.email, {
@@ -812,7 +904,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
       return res.json({
         token,
-        user: { id: user.id, deviceId: user.device_id, role: user.role, walletBalance: user.wallet_balance }
+        user: { id: user.id, deviceId: user.device_id, role: user.role, organizationId: user.organization_id ?? null, walletBalance: user.wallet_balance }
       });
     }
 
@@ -838,7 +930,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid device ID or PIN' });
     }
 
-    const token = signToken({ id: user.id, deviceId: user.device_id, role: user.role || 'customer' });
+    const token = signToken({
+      id:             user.id,
+      deviceId:       user.device_id,
+      role:           user.role || 'customer',
+      organizationId: user.organization_id ?? null
+    });
 
     /* Fire-and-forget login notification — same as the email+password path.
        sendLoginAlert no-ops if the account has no email on file, which is
@@ -852,7 +949,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
     return res.json({
       token,
-      user: { id: user.id, deviceId: user.device_id, role: user.role || 'customer', walletBalance: user.wallet_balance }
+      user: { id: user.id, deviceId: user.device_id, role: user.role || 'customer', organizationId: user.organization_id ?? null, walletBalance: user.wallet_balance }
     });
 
   } catch (err) {
@@ -879,9 +976,16 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
     const newDeviceId  = deviceId || `USER-${Date.now()}`;
+    /* Public self-signup always lands in the default org — an org admin
+       provisions customers for their own tenant via the admin surface. */
     const user = await createUser({ deviceId: newDeviceId, name, email, passwordHash, phone, role: 'customer' });
 
-    const token = signToken({ id: user.id, deviceId: user.device_id, role: user.role });
+    const token = signToken({
+      id:             user.id,
+      deviceId:       user.device_id,
+      role:           user.role,
+      organizationId: user.organization_id ?? null
+    });
 
     /* Fire-and-forget signup confirmation — never blocks or fails the response */
     sendSignupConfirmation(user.email, { name: user.name })
@@ -889,7 +993,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 
     res.status(201).json({
       token,
-      user: { id: user.id, deviceId: user.device_id, role: user.role, walletBalance: user.wallet_balance }
+      user: { id: user.id, deviceId: user.device_id, role: user.role, organizationId: user.organization_id ?? null, walletBalance: user.wallet_balance }
     });
   } catch (err) {
     console.error('Registration error:', err.message);
@@ -958,11 +1062,21 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     const user = await getUserById(req.user.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
+    /* Organization identity — lets the frontend show which tenant an
+       org admin is operating in (e.g. the nav badge / dashboard header). */
+    let organization = null;
+    if (user.organization_id) {
+      const org = await getOrganizationById(user.organization_id);
+      if (org) organization = { id: org.id, name: org.name, slug: org.slug };
+    }
     res.json({
-      id:            user.id,
-      deviceId:      user.device_id,
-      role:          req.user.role || (user.device_id === 'ADMIN' ? 'admin' : 'customer'),
-      walletBalance: user.wallet_balance
+      id:             user.id,
+      deviceId:       user.device_id,
+      name:           user.name || null,
+      role:           req.user.role || (user.device_id === 'ADMIN' ? 'admin' : 'customer'),
+      organizationId: user.organization_id ?? null,
+      organization,
+      walletBalance:  user.wallet_balance
     });
   } catch (err) {
     console.error('Auth /me error:', err.message);
@@ -1071,8 +1185,10 @@ app.post('/api/fraud-check', authMiddleware, [
   /* Admin-only: this can lock ANY device's relay (auto_lock_relay) based on
      fully client-supplied userId/deviceId. Without this check, any logged-in
      customer could lock another customer's power off by spamming this
-     endpoint with someone else's deviceId. */
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+     endpoint with someone else's deviceId. Org admins may only run it against
+     devices inside their own org — the lock would otherwise be a cross-
+     tenant denial-of-power vector. */
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
 
@@ -1081,6 +1197,12 @@ app.post('/api/fraud-check', authMiddleware, [
 
   try {
     const { userId, deviceId, amount, timestamp } = req.body;
+    if (isOrgAdmin(req.user)) {
+      const target = await getDevice(deviceId);
+      if (!target || target.organization_id !== req.user.organizationId) {
+        return res.status(403).json({ error: 'Device belongs to another organization' });
+      }
+    }
     const result = safeFraudCheck(userId, deviceId, amount, timestamp);
 
     if (!result.success) {
@@ -1331,11 +1453,11 @@ app.post('/api/mpesa/callback', async (req, res) => {
 });
 
 app.get('/api/admin/summary', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
-    res.json(await getAdminSummary());
+    res.json(await getAdminSummary(resolveOrgScope(req)));
   } catch (err) {
     console.error('Admin summary error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
@@ -1344,11 +1466,11 @@ app.get('/api/admin/summary', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/admin/alerts', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
-    res.json({ alerts: await getAlerts() });
+    res.json({ alerts: await getAlerts(50, resolveOrgScope(req)) });
   } catch (err) {
     console.error('Admin alerts error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
@@ -1359,11 +1481,11 @@ app.get('/api/admin/alerts', authMiddleware, async (req, res) => {
 /* Admin-only — total_revenue is a business-sensitive aggregate, same
    sensitivity class as /api/audit/charts just above. */
 app.get('/api/payments/stats', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
-    res.json(await getPaymentStats());
+    res.json(await getPaymentStats(resolveOrgScope(req)));
   } catch (err) {
     console.error('Payment stats error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
@@ -1376,11 +1498,11 @@ app.get('/api/payments/stats', authMiddleware, async (req, res) => {
    at payment-completion time and defaults to 0, so unflagged payments are
    real "no rule fired" points, not fabricated risk values. */
 app.get('/api/admin/fraud-risk', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
-    const payments = await getFraudRiskPayments(60);
+    const payments = await getFraudRiskPayments(60, resolveOrgScope(req));
     const points = payments.map(p => ({
       x:       Number(p.amount),
       y:       Number(p.fraud_score) || 0,
@@ -1400,11 +1522,11 @@ app.get('/api/admin/fraud-risk', authMiddleware, async (req, res) => {
    (needed to flash/re-flash firmware), and rotate a compromised device's
    key without affecting the rest of the fleet. ── */
 app.get('/api/admin/devices', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
-    res.json({ devices: await getAllDevices() });
+    res.json({ devices: await getAllDevices(resolveOrgScope(req)) });
   } catch (err) {
     console.error('Admin devices list error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
@@ -1415,14 +1537,16 @@ app.get('/api/admin/devices', authMiddleware, async (req, res) => {
 app.post('/api/admin/devices', authMiddleware, [
   body('deviceId').isString().trim().notEmpty().withMessage('deviceId is required')
 ], async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
   try {
-    const device = await provisionDevice(req.body.deviceId, req.body.name, req.body.location);
+    /* An org admin provisions devices into their own org; a super-admin
+       provisions into the default org unless they pass ?orgId=. */
+    const device = await provisionDevice(req.body.deviceId, req.body.name, req.body.location, resolveOrgScope(req));
     res.json({ device });
   } catch (err) {
     console.error('Device provisioning error:', err.message);
@@ -1434,12 +1558,16 @@ app.post('/api/admin/devices', authMiddleware, [
 /* Set/replace the region shown for a device on the fleet panel — admin-only.
    Body: { location } ({ location: null } clears it back to "Unassigned"). */
 app.post('/api/admin/devices/:deviceId/location', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
+    const existing = await getDevice(req.params.deviceId);
+    if (!existing) return res.status(404).json({ error: 'Device not found' });
+    if (!(await assertDeviceInScope(req, existing))) {
+      return res.status(403).json({ error: 'Device belongs to another organization' });
+    }
     const device = await setDeviceLocation(req.params.deviceId, req.body.location);
-    if (!device) return res.status(404).json({ error: 'Device not found' });
     res.json({ device });
   } catch (err) {
     console.error('Device location error:', err.message);
@@ -1453,18 +1581,27 @@ app.post('/api/admin/devices/:deviceId/location', authMiddleware, async (req, re
    unassign. Closes the gap where devices.user_id could only be set by hand
    in SQL, which made onboarding a real installation a developer task. */
 app.post('/api/admin/devices/:deviceId/assign', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
     const device = await getDevice(req.params.deviceId);
     if (!device) return res.status(404).json({ error: 'Device not found' });
+    if (!(await assertDeviceInScope(req, device))) {
+      return res.status(403).json({ error: 'Device belongs to another organization' });
+    }
 
     let userId = null;
     let owner  = null;
     if (req.body.email) {
       const user = await getUserByEmail(req.body.email);
       if (!user) return res.status(404).json({ error: 'No account with that email' });
+      /* Org admins may only link devices to customers inside their own
+         org — linking to a foreign customer would hand a tenant a device
+         it shouldn't be able to control. */
+      if (isOrgAdmin(req.user) && user.organization_id !== req.user.organizationId) {
+        return res.status(403).json({ error: 'Customer belongs to another organization' });
+      }
       userId = user.id;
       owner  = { id: user.id, email: user.email, name: user.name };
     }
@@ -1481,10 +1618,17 @@ app.post('/api/admin/devices/:deviceId/assign', authMiddleware, async (req, res)
 /* Same handler as creation — provisionDevice rotates the key on conflict,
    so re-provisioning an existing deviceId is exactly how you revoke/rotate it. */
 app.post('/api/admin/devices/:deviceId/rotate-key', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
+    const existing = await getDevice(req.params.deviceId);
+    if (!existing) return res.status(404).json({ error: 'Device not found' });
+    if (!(await assertDeviceInScope(req, existing))) {
+      return res.status(403).json({ error: 'Device belongs to another organization' });
+    }
+    /* provisionDevice rotates the key on conflict and deliberately leaves
+       the org untouched — a rotation can never reassign the tenant. */
     const device = await provisionDevice(req.params.deviceId);
     res.json({ device });
   } catch (err) {
@@ -1499,7 +1643,7 @@ app.post('/api/admin/devices/:deviceId/rotate-key', authMiddleware, async (req, 
    Lets the admin dashboard show the integration status on page load without
    requiring a test send first. */
 app.get('/api/admin/sms-status', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   res.json({
@@ -1519,7 +1663,7 @@ app.post('/api/admin/test-sms', authMiddleware, [
   body('phone').isString().trim().notEmpty().withMessage('phone is required (e.g. +254712345678)'),
   body('message').optional().isString().trim()
 ], async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   const errors = validationResult(req);
@@ -1570,14 +1714,33 @@ app.post('/api/admin/admins', authMiddleware, [
   /* Password strength is validated inline below (same pattern as registration
      and password-reset) so the error response format stays consistent — a
      plain { error: '...' } instead of express-validator's wrapped format. */
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
-    return res.status(403).json({ error: 'Admin access required' });
+  /* SUPER-ADMIN ONLY. Creating any privileged account (super-admin OR org
+     admin) is a platform bootstrap action: an org admin creating another
+     org admin would be a privilege-escalation path out of their tenant,
+     and an org admin creating a super-admin (the default role here) would
+     mint a full platform account. There is no scenario where a tenant-
+     scoped admin legitimately provisions another privileged user. */
+  if (!isSuperAdmin(req.user)) {
+    return res.status(403).json({ error: 'Super-admin access required' });
   }
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
   try {
     const { name, email, password, phone } = req.body;
+    /* Optional multi-tenant knobs: role 'admin' (super-admin, default) or
+       'org_admin' scoped to organizationId. Only super-admins reach this
+       handler, so both roles are valid targets here. */
+    const targetRole = req.body.role === 'org_admin' ? 'org_admin' : 'admin';
+    let organizationId = null;
+    if (targetRole === 'org_admin') {
+      organizationId = Number.parseInt(req.body.organizationId, 10);
+      if (!Number.isInteger(organizationId) || organizationId <= 0) {
+        return res.status(400).json({ error: 'organizationId is required to create an org admin' });
+      }
+      const org = await getOrganizationById(organizationId);
+      if (!org) return res.status(404).json({ error: 'Organization not found' });
+    }
     const pwError = validatePasswordStrength(password);
     if (pwError) return res.status(400).json({ error: pwError });
     const existing = await getUserByEmail(email);
@@ -1585,15 +1748,58 @@ app.post('/api/admin/admins', authMiddleware, [
 
     const passwordHash = await bcrypt.hash(password, 12);
     const deviceId      = `ADMIN-${Date.now()}`;
-    const admin = await createUser({ deviceId, name, email, passwordHash, phone, role: 'admin' });
+    const admin = await createUser({ deviceId, name, email, passwordHash, phone, role: targetRole, organizationId });
 
     res.status(201).json({
-      admin: { id: admin.id, deviceId: admin.device_id, name: admin.name, email: admin.email, role: admin.role }
+      admin: { id: admin.id, deviceId: admin.device_id, name: admin.name, email: admin.email, role: admin.role, organizationId: admin.organization_id }
     });
   } catch (err) {
     console.error('Admin account creation error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to create admin account', message: err.message });
+  }
+});
+
+/* ── Organization management (multi-tenant, super-admin only) ────────────
+   The platform-level org directory. Org admins never reach these — they
+   operate inside their own tenant via the regular admin routes, which are
+   already scoped by resolveOrgScope(). */
+app.get('/api/admin/organizations', authMiddleware, async (req, res) => {
+  if (!isSuperAdmin(req.user)) {
+    return res.status(403).json({ error: 'Super-admin access required' });
+  }
+  try {
+    res.json({ organizations: await getOrganizations() });
+  } catch (err) {
+    console.error('Organizations list error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load organizations', message: err.message });
+  }
+});
+
+app.post('/api/admin/organizations', authMiddleware, [
+  body('name').isString().trim().notEmpty().withMessage('name is required'),
+  body('slug').optional().isString().trim().matches(/^[a-z0-9-]+$/).withMessage('slug must be lowercase letters, numbers, or dashes')
+], async (req, res) => {
+  if (!isSuperAdmin(req.user)) {
+    return res.status(403).json({ error: 'Super-admin access required' });
+  }
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  try {
+    /* slug defaults to a URL-safe form of the name when omitted */
+    const name = req.body.name.trim();
+    const slug = (req.body.slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')).trim();
+    if (!slug) return res.status(400).json({ error: 'Could not derive a slug — provide one explicitly' });
+    const existing = await getOrganizationBySlug(slug);
+    if (existing) return res.status(409).json({ error: 'An organization with that slug already exists' });
+    const org = await createOrganization({ name, slug });
+    res.status(201).json({ organization: org });
+  } catch (err) {
+    console.error('Organization creation error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to create organization', message: err.message });
   }
 });
 
@@ -1762,10 +1968,26 @@ app.post('/api/telemetry', [
 /* Raw device telemetry for an arbitrary deviceId is customer data on a real
    fleet — require a logged-in session (any role) on all three energy
    endpoints. Every consumer (admin dashboard/analytics, customer Energy tab)
-   already runs post-login and sends the JWT. */
+   already runs post-login and sends the JWT.
+   Multi-tenant: org admins may only read devices inside their org; customers
+   only their own device; super-admins any device. */
+async function assertDeviceReadable(req, deviceId) {
+  if (isSuperAdmin(req.user)) return true;
+  const device = await getDevice(deviceId);
+  if (!device) return false; // 404 handled by the route
+  if (isOrgAdmin(req.user)) {
+    return device.organization_id === req.user.organizationId;
+  }
+  /* customer — may only read their own linked device */
+  return device.user_id === req.user.id;
+}
+
 app.get('/api/energy/history', authMiddleware, async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
+    if (!(await assertDeviceReadable(req, deviceId))) {
+      return res.status(403).json({ error: 'Device belongs to another organization or user' });
+    }
     const limit    = Math.min(Number.parseInt(req.query.limit, 10) || 48, 200);
     const readings = await getEnergyHistoryAsc(deviceId, limit);
     res.json({
@@ -1791,6 +2013,9 @@ app.get('/api/energy/history', authMiddleware, async (req, res) => {
 app.get('/api/energy/hourly', authMiddleware, async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
+    if (!(await assertDeviceReadable(req, deviceId))) {
+      return res.status(403).json({ error: 'Device belongs to another organization or user' });
+    }
     const hours    = Math.min(Number.parseInt(req.query.hours, 10) || 24, 72);
     const rows     = await getEnergyHourly(deviceId, hours);
     res.json({
@@ -1814,6 +2039,9 @@ app.get('/api/energy/hourly', authMiddleware, async (req, res) => {
 app.get('/api/energy/daily', authMiddleware, async (req, res) => {
   try {
     const deviceId = req.query.deviceId || 'DEMO-001';
+    if (!(await assertDeviceReadable(req, deviceId))) {
+      return res.status(403).json({ error: 'Device belongs to another organization or user' });
+    }
     const days     = Math.min(Number.parseInt(req.query.days, 10) || 7, 30);
     const rows     = await getEnergyDaily(deviceId, days);
     res.json({
@@ -1830,12 +2058,12 @@ app.get('/api/energy/daily', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/audit/timeline', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 30, 100);
-    res.json({ events: await getAuditTimeline(limit) });
+    res.json({ events: await getAuditTimeline(limit, resolveOrgScope(req)) });
   } catch (err) {
     console.error('Audit timeline error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
@@ -1846,22 +2074,26 @@ app.get('/api/audit/timeline', authMiddleware, async (req, res) => {
 /* Admin-only — recentPayments below includes customer phone numbers and M-Pesa
    receipt data, so this must never be reachable without authentication. */
 app.get('/api/audit/charts', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
+    const orgId    = resolveOrgScope(req);
     const deviceId = req.query.deviceId || 'DEMO-001';
+    if (!(await assertDeviceReadable(req, deviceId))) {
+      return res.status(403).json({ error: 'Device belongs to another organization or user' });
+    }
     const forecast = safeForecast(deviceId, 6);
     const [energy, payments, paymentTrend, recentPayments, alerts, alertSeverity, timeline, summary] =
       await Promise.all([
         getEnergyHistoryAsc(deviceId, 48),
-        getPaymentStats(),
-        getPaymentTrend(),
-        getRecentPayments(10),
-        getAlerts(15),
-        getAlertSeverityCounts(),
-        getAuditTimeline(20),
-        getAdminSummary()
+        getPaymentStats(orgId),
+        getPaymentTrend(orgId),
+        getRecentPayments(10, orgId),
+        getAlerts(15, orgId),
+        getAlertSeverityCounts(orgId),
+        getAuditTimeline(20, orgId),
+        getAdminSummary(orgId)
       ]);
     res.json({ energy, payments, paymentTrend, recentPayments, alerts, alertSeverity, forecast: forecast.data || [], timeline, summary });
   } catch (err) {
@@ -1876,13 +2108,13 @@ app.get('/api/audit/charts', authMiddleware, async (req, res) => {
    Trend" chart, which previously plotted Math.random() instead of real
    payment behavior. */
 app.get('/api/customers/credit-score-trend', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
     const months = Math.min(Number.parseInt(req.query.months, 10) || 12, 24);
     const limit  = Math.min(Number.parseInt(req.query.limit, 10) || 3, 10);
-    const trend  = await getCustomerCreditScoreTrend(months, limit);
+    const trend  = await getCustomerCreditScoreTrend(months, limit, resolveOrgScope(req));
     res.json(trend);
   } catch (err) {
     console.error('Credit score trend error:', err.message);
@@ -1893,11 +2125,15 @@ app.get('/api/customers/credit-score-trend', authMiddleware, async (req, res) =>
 
 /* ── Analytics summary (admin-only — includes getAdminSummary() revenue data) ── */
 app.get('/api/analytics/summary', authMiddleware, async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.deviceId !== 'ADMIN') {
+  if (!canAccessAdmin(req.user)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   try {
+    const orgId    = resolveOrgScope(req);
     const deviceId = req.query.deviceId || 'DEMO-001';
+    if (!(await assertDeviceReadable(req, deviceId))) {
+      return res.status(403).json({ error: 'Device belongs to another organization or user' });
+    }
     const readings = await getEnergyHistoryAsc(deviceId, 200);
 
     // Aggregate into daily buckets
@@ -1922,9 +2158,9 @@ app.get('/api/analytics/summary', authMiddleware, async (req, res) => {
       }));
 
     const [paymentTrend, payments, summary] = await Promise.all([
-      getPaymentTrend(),
-      getPaymentStats(),
-      getAdminSummary()
+      getPaymentTrend(orgId),
+      getPaymentStats(orgId),
+      getAdminSummary(orgId)
     ]);
 
     res.json({ dailyData, paymentTrend, payments, summary });

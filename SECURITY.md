@@ -420,6 +420,44 @@ in the database and are used on re-enforcement.
 
 ---
 
+## 🏢 Multi-Tenant Access Control (organizations)
+
+Every user, device, and payment belongs to an `organizations` row; a
+`default` org is created on first boot and all legacy rows are backfilled,
+so existing single-tenant deployments are unchanged until they create more
+orgs. Three roles:
+
+| Role | Visibility | Can create privileged accounts? |
+|---|---|---|
+| `admin` (super-admin) | All orgs (`?orgId=` narrows the view) | Yes — super-admins and org admins |
+| `org_admin` | Exactly one org (`organization_id` claim in the JWT) | **No** — never |
+| `customer` | Own data only (unchanged per-user scoping) | No |
+
+Enforcement points (`server.js` — all admin routes funnel through
+`canAccessAdmin()` / `resolveOrgScope()`):
+
+- **Aggregates** — `/api/admin/summary`, `/api/admin/devices`,
+  `/api/payments/stats`, `/api/audit/*`, `/api/analytics/summary`,
+  `/api/admin/fraud-risk`, `/api/customers/credit-score-trend` are all
+  filtered by `organization_id` in SQL. An org admin's `?orgId=` query
+  param is **ignored** — it can narrow a super-admin's view, never widen an
+  org admin's.
+- **Device routes** — `/rotate-key`, `/location`, `/assign`, `/api/energy/*`
+  and `/api/audit/charts` refuse devices outside the caller's org (403).
+- **Privilege escalation** — `POST /api/admin/admins` is super-admin-only:
+  an org admin can never mint another org admin (which would escape their
+  tenant) *or* a super-admin.
+- **Key rotation** — `provisionDevice` preserves `organization_id` on
+  conflict, so rotating a key can never silently reassign a device to
+  another tenant.
+
+### Tested by
+`__tests__/multi-tenant.test.js` — schema/backfill, scoped helpers, JWT org
+claims, cross-tenant device/energy refusal, escalation guards, and
+super-admin `?orgId=` drill-down.
+
+---
+
 ## 🔐 OTA Firmware Integrity (production hardening)
 
 The OTA pipeline now fails closed end-to-end:

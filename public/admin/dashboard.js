@@ -190,13 +190,17 @@ const fetchPaymentStats = async () => {
     return null;
   }
 };
-const fetchPaymentTrend = async () => {
+const fetchPaymentTrend = async (deviceId = 'DEMO-001') => {
   try {
     const token = localStorage.getItem('authToken');
     const headers = token ? {
       Authorization: `Bearer ${token}`
     } : {};
-    const res = await fetch('/api/audit/charts?deviceId=DEMO-001', {
+    /* deviceId must match the org-scoped selection — passing DEMO-001 while
+       an org admin's selected unit belongs to their tenant would 403 (the
+       route refuses devices outside the caller's org) and silently drop
+       the revenue chart back to mock data. */
+    const res = await fetch(`/api/audit/charts?deviceId=${encodeURIComponent(deviceId)}`, {
       headers
     });
     if (!res.ok) return null;
@@ -593,6 +597,10 @@ const SolarDashboard = () => {
   /* OTA feature flag — surfaced by the server on /api/state; when false the
      Firmware tab is never rendered and the tab bar matches the old layout. */
   const [otaEnabled, setOtaEnabled] = useState(false);
+  /* Tenant identity for org admins — /api/state includes { organization }
+     when the caller is scoped to one org, so the header can say which
+     tenant this dashboard is operating in. */
+  const [orgInfo, setOrgInfo] = useState(null);
   const [firmwareVersions, setFirmwareVersions] = useState([]);
   const [rolloutStatus, setRolloutStatus] = useState(null);
   const [uploadState, setUploadState] = useState({
@@ -733,7 +741,7 @@ const SolarDashboard = () => {
         data.datasets[1].data = newGenVsCons.datasets[1].data;
       });
     }
-    const [paymentStats, paymentTrend, forecast, maintenanceAlerts, devices] = await Promise.all([fetchPaymentStats(), fetchPaymentTrend(), fetchForecast(selectedDeviceId), fetchMaintenanceAlerts(selectedDeviceId), fetchDevices()]);
+    const [paymentStats, paymentTrend, forecast, maintenanceAlerts, devices] = await Promise.all([fetchPaymentStats(), fetchPaymentTrend(selectedDeviceId), fetchForecast(selectedDeviceId), fetchMaintenanceAlerts(selectedDeviceId), fetchDevices()]);
     if (paymentStats) {
       const total = paymentStats.count || 892;
       const paid = paymentStats.cleared || paymentStats.completed || 0;
@@ -1004,6 +1012,7 @@ const SolarDashboard = () => {
         if (res.ok) {
           const state = await res.json();
           setOtaEnabled(!!state.otaEnabled);
+          setOrgInfo(state.organization || null);
         }
       } catch {/* flag stays off */}
     })();
@@ -1278,11 +1287,29 @@ const SolarDashboard = () => {
     className: "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("p", {
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2 flex-wrap"
+  }, /*#__PURE__*/React.createElement("p", {
     className: "text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400"
-  }, "SolGrid"), /*#__PURE__*/React.createElement("h1", {
+  }, "SolGrid"), orgInfo && /*#__PURE__*/React.createElement("span", {
+    className: "inline-flex items-center gap-1.5 rounded-full bg-amber-100 dark:bg-amber-900/40 px-3 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-400"
+  }, /*#__PURE__*/React.createElement("svg", {
+    className: "w-3 h-3",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2.5"
+  }, /*#__PURE__*/React.createElement("path", {
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    d: "M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6"
+  })), orgInfo.name)), /*#__PURE__*/React.createElement("h1", {
     className: "mt-1 text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50"
-  }, "Analysis Board")), /*#__PURE__*/React.createElement("div", {
+  }, "Analysis Board"), orgInfo && /*#__PURE__*/React.createElement("p", {
+    className: "mt-1 text-sm text-slate-500 dark:text-slate-400"
+  }, "Tenant-scoped view \u2014 showing only ", /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold text-amber-600 dark:text-amber-400"
+  }, orgInfo.name), "'s devices, payments & analytics")), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-3 shadow-sm"
   }, devicesList.length > 1 && /*#__PURE__*/React.createElement("div", {
     className: "flex items-center gap-2"
