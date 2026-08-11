@@ -2,7 +2,8 @@
 
 > A honest, engineering-grade view of what this platform **is**, what it can
 > realistically **become**, and what it **cannot** do — even in principle.
-> Last updated with the OTA + observability + per-device-keys release.
+> Last updated with the multi-tenant + org frontend release (org directory,
+> org settings, tenant-aware dashboards, onboarding empty-states).
 
 ---
 
@@ -56,19 +57,40 @@ Four statistical models, warm-seeded from PostgreSQL on startup:
 - Split by audience (`public/admin`, `public/customer`, `public/shared`) with
   a role-aware nav and device selector that respects admin vs customer roles.
 
-### Multi-Tenant (organizations)
-- **`organizations` table** — every user, device, and payment belongs to one
-  organization; a `default` org is auto-created and all pre-existing rows
-  backfilled, so single-tenant installs upgrade in place.
+### Multi-Tenant (organizations) — shipped end-to-end
+- **`organizations` table** — every user, device, payment, and firmware
+  version belongs to one organization; a `default` org is auto-created and
+  all pre-existing rows backfilled, so single-tenant installs upgrade in
+  place.
 - **Three roles** — `admin` (platform super-admin, sees all orgs),
   `org_admin` (scoped to exactly one org), `customer` (their own data).
 - **Backend-enforced scoping** — every admin/audit/analytics aggregate is
   filtered by org (`?orgId=` narrows a super-admin's view; org admins are
-  hard-scoped and cannot widen it), device-level routes (rotate/locate/
-  assign/energy reads) refuse cross-tenant devices, and org admins cannot
-  create privileged accounts.
-- **Org management API** — super-admin creates organizations and org admins;
-  new signups land in the default org.
+  hard-scoped and **cannot** widen it — the param is ignored), device-level
+  routes (rotate/locate/assign/energy reads) refuse cross-tenant devices,
+  and org admins cannot create privileged accounts.
+- **Org management API** — `GET/POST /api/admin/organizations` + `POST
+  /api/admin/admins` (super-admin); `GET/PUT /api/org` + `GET
+  /api/org/members` (org-scoped profile & membership). New signups land in
+  the default org.
+- **Per-org OTA** — `firmware_versions` and `firmware_boot_reports` are
+  org-scoped; org admins publish signed, staged rollouts only to their own
+  fleet, and a device can never see another tenant's firmware target.
+
+### Org Frontends
+- **Org directory** (`/index.html` → Organizations panel) — super-admins
+  create organizations, view device/user counts, and provision org admins
+  from the browser.
+- **Org Settings page** (`/org-settings.html`) — org admins manage their
+  tenant profile (name, description, contact email, phone, location) and
+  view the membership roster with role badges and wallet balances.
+- **Tenant-aware dashboards** — org admins land on the same admin console,
+  but every KPI, chart, payment row, device selector, and firmware tab shows
+  only their org's data, with the org name in the header badge.
+- **Onboarding empty-state** — a tenant with no provisioned devices gets a
+  friendly setup guide (provision → flash → go live) with a "Check for
+  devices" button instead of zeroed charts; no placeholder-KPI flash and no
+  junk `DEMO-001` fetches while onboarding.
 
 ### Security & Ops
 - JWT auth (admin/org_admin/customer/device), bcrypt PIN login, password complexity,
@@ -82,8 +104,9 @@ Four statistical models, warm-seeded from PostgreSQL on startup:
 - **CI/CD** — GitHub Actions (build, test, firmware compile, keep-warm),
   Docker, Render config, DB backup workflow
 - **Idempotent migrations** — safe redeploys, `runMigrations()` on boot
-- **158 passing tests** — payments, OTA, telemetry security, observability,
-  multi-tenant isolation, dashboard shape invariants, API, token engine, SMS
+- **168 passing tests** — payments, OTA, telemetry security, observability,
+  multi-tenant isolation + org settings, dashboard shape invariants, API,
+  token engine, SMS, migration idempotency
 
 ---
 
@@ -121,13 +144,15 @@ technologies already in the repo or one deliberate new dependency:
 - **Carbon/ESG reporting** — solar kWh → CO₂ avoided, exportable reports
 
 ### Platform & Ops
-- **Multi-tenant / community operator model** — an `organizations` table
-  scoping devices/users/payments (schema currently single-tenant)
+- **Multi-org admin UX polish** — org-scoped audit export, per-org billing
+  statements, tenant-level spend/usage limits, org transfer & archiving
 - **Mobile-first PWA** — the frontends are already responsive; a manifest +
   service worker gets installability
 - **Rate-limit + abuse analytics** — alert on the existing 429 counters
 - **Backup restore + point-in-time recovery** — scripts around the existing
   DB backup workflow
+- **SSO / OAuth** — org admins authenticate via Google/GitHub OIDC instead
+  of email+password (JWT issuance point already exists)
 
 ---
 
@@ -180,5 +205,7 @@ technologies already in the repo or one deliberate new dependency:
 | Dashboards (admin, analytics, analysis, customer) | ✅ Built |
 | Observability (metrics, logs, alerts) | ✅ Built |
 | SMS + email notifications | ✅ Built |
-| MQTT, WebSockets, PWA, mapping, org-scoped frontends | 🚧 Buildable (backend multi-tenancy shipped) |
+| Multi-tenancy (orgs, scoping, per-org OTA) | ✅ Built |
+| Org frontends (directory, settings, tenant dashboards, onboarding) | ✅ Built |
+| MQTT, WebSockets, PWA, mapping, SSO | 🚧 Buildable |
 | Live M-Pesa approval, real hardware, offline fleet, native apps | ❌ Not buildable here |

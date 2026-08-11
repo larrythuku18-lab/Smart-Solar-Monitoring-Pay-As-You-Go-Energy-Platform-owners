@@ -11,14 +11,16 @@
 3. [Key Features](#key-features)
 4. [Architecture](#architecture)
 5. [Dashboard Pages](#dashboard-pages)
-6. [AI Engine](#ai-engine)
-7. [Getting Started](#getting-started)
-8. [Environment Variables](#environment-variables)
-9. [API Reference](#api-reference)
-10. [IoT / ESP32 Setup](#iot--esp32-setup)
-11. [Deployment](#deployment)
-12. [Project Structure](#project-structure)
-13. [Contributing](#contributing)
+6. [Multi-Tenancy (Organizations)](#multi-tenancy-organizations)
+7. [AI Engine](#ai-engine)
+8. [Getting Started](#getting-started)
+9. [Environment Variables](#environment-variables)
+10. [API Reference](#api-reference)
+11. [IoT / ESP32 Setup](#iot--esp32-setup)
+12. [Deployment](#deployment)
+13. [Project Structure](#project-structure)
+14. [Database Schema](#database-schema)
+15. [Contributing](#contributing)
 
 ---
 
@@ -62,7 +64,8 @@ SolGrid solves two problems at once.
 - **Async Express API** — all database calls use `pg` connection pooling with `async`/`await`; no blocking the event loop
 - **ESP32 relay control** — HTTP commands to IoT devices with an automatic retry queue (failed commands retried every 5 minutes)
 - **Docker-ready** — `docker-compose.yml` included with PostgreSQL, Redis, and MQTT broker
-- **JWT authentication** — role-based access (`admin`, `customer`) with configurable token expiry
+- **JWT authentication** — role-based access (`admin`, `org_admin`, `customer`, device) with configurable token expiry
+- **Multi-tenant by default** — every user, device, and payment belongs to an `organizations` row; org admins see only their own tenant's data (see [Multi-Tenancy](#multi-tenancy-organizations))
 
 ---
 
@@ -150,7 +153,49 @@ Deep-dive technical charts for engineers and data scientists.
 - Device health by region (stacked bar), panel efficiency vs age (scatter), agent leaderboard
 
 ### 🔐 Login — `/login.html`
-Supports device ID + PIN (for field agents / ESP32 devices) and email + password (for admin and customer web login).
+Supports device ID + PIN (for field agents / ESP32 devices) and email + password (for admin, org admin, and customer web login).
+
+### 🏢 Org Settings — `/org-settings.html`
+Tenant profile + membership management for org admins (name, description, contact email, phone, and the member roster with role badges and wallet balances). Super-admins can drill into any org with `?orgId=`.
+
+---
+
+## Multi-Tenancy (Organizations)
+
+SolGrid is multi-tenant: every `user`, `device`, `payment`, and firmware version belongs to an `organizations` row. A `default` org is auto-created on first boot and all pre-existing rows are backfilled, so existing single-tenant deployments upgrade in place with no data changes.
+
+### Roles
+
+| Role | Scope | Can create privileged accounts? |
+|---|---|---|
+| `admin` | Platform super-admin — sees all orgs, can drill into one with `?orgId=` | ✅ Yes (orgs + org admins) |
+| `org_admin` | Exactly one org (`organization_id` claim in the JWT) | ❌ No — never |
+| `customer` | Own data only (unchanged per-user scoping) | ❌ No |
+
+### How the scoping works
+
+- **Backend-enforced, not cosmetic** — every admin, audit, and analytics aggregate funnels through `resolveOrgScope()`; an org admin's `?orgId=` query param is **ignored** (they are hard-pinned to their own org), while a super-admin's `?orgId=` is strictly parsed (malformed values → 404, never a silent narrowing).
+- **Devices are tenant-bound** — a device row carries `organization_id`; device-level routes (key rotation, location, energy reads) refuse cross-tenant devices, and a device can never see another tenant's firmware target or binary.
+- **Per-org OTA** — `firmware_versions` and `firmware_boot_reports` are org-scoped; org admins publish updates and staged rollouts only to their own fleet (see [OTA updates](#ota-updates-production-grade)).
+- **No privilege escalation** — org admins cannot create admins or other org admins; new signups land in the default org.
+
+### Org management API
+
+| Method | Path | Who | Description |
+|---|---|---|---|
+| `GET` | `/api/admin/organizations` | super-admin | List all orgs + device/user counts |
+| `POST` | `/api/admin/organizations` | super-admin | Create an org (`name`, `slug`) |
+| `POST` | `/api/admin/admins` | super-admin | Provision an org admin into an org |
+| `GET` | `/api/org` | admin / org_admin | Caller's own org profile |
+| `PUT` | `/api/org` | admin / org_admin | Update profile (name, description, contact email, phone, location — `slug` is locked) |
+| `GET` | `/api/org/members` | admin / org_admin | Membership roster for the caller's org |
+
+### Org frontends
+
+- **Org directory** — super-admins create organizations, view device/user counts, and provision org admins from the browser (`/index.html` → Organizations panel).
+- **Org Settings page** — org admins manage their tenant profile and view membership (`/org-settings.html`).
+- **Tenant-aware dashboards** — org admins land on the same admin console but every KPI, chart, payment row, and firmware tab shows only their org's data, with the org name in the header badge.
+- **Onboarding empty-state** — a tenant with no provisioned devices sees a friendly setup guide (provision → flash → go live) with a "Check for devices" button instead of zeroed charts.
 
 ---
 
@@ -328,9 +373,15 @@ Authorization: Bearer <token>
 | `GET` | `/api/auth/me` | Current user profile |
 | `POST` | `/api/pay` | Initiate M-Pesa STK Push |
 | `POST` | `/api/fraud-check` | Run fraud detection on a transaction |
-| `GET` | `/api/admin/summary` | Fleet summary (admin role required) |
+| `GET` | `/api/admin/summary` | Fleet summary (admin/org_admin — org-scoped) |
 | `GET` | `/api/admin/alerts` | All system alerts |
 | `POST` | `/api/mpesa/callback` | Safaricom payment webhook |
+| `GET` | `/api/admin/organizations` | List orgs + counts (super-admin) |
+| `POST` | `/api/admin/organizations` | Create an organization (super-admin) |
+| `POST` | `/api/admin/admins` | Provision an org admin (super-admin) |
+| `GET` | `/api/org` | Caller's org profile |
+| `PUT` | `/api/org` | Update caller's org profile |
+| `GET` | `/api/org/members` | Caller's org membership roster |
 
 ### Example — Initiate payment
 
@@ -442,22 +493,27 @@ solar-paygo-platform/
 ├── db.js                   # PostgreSQL pool, migrations, all query helpers (async)
 ├── ai-models.js            # 4 AI models + DB warm-up functions
 ├── relay.js                # ESP32 HTTP relay control + retry queue
+├── firmware.js             # OTA: signed uploads, staged rollouts, boot-failure auto-pause
+├── observability.js        # Prometheus /metrics + structured JSON logging
+├── sms.js / mailer.js      # SMS alerts (Africa's Talking) + email (Resend)
 ├── authMiddleware.js       # JWT sign and verify middleware
 │
 ├── public/                 # Split by audience; every file is still served at
 │   │                       # its original flat URL (see server.js's static mounts)
 │   ├── admin/
-│   │   ├── index.html      # Live Dashboard
+│   │   ├── index.html      # Live Dashboard (+ Organizations directory panel)
 │   │   ├── index.js        # Dashboard JavaScript (API fetching, AI display)
 │   │   ├── ai-models.js    # Client-side AI model display logic (index.js only)
 │   │   ├── analytics.html  # Analytics Dashboard shell
 │   │   ├── analytics.jsx   # Analytics React components + Chart.js charts (source)
 │   │   ├── dashboard.html  # Analysis Board shell
-│   │   └── dashboard.jsx   # Analysis Board React components + Chart.js charts (source)
+│   │   ├── dashboard.jsx   # Analysis Board React components + Chart.js charts (source)
+│   │   ├── org-settings.html  # Org Settings — tenant profile + membership
+│   │   └── .jsx→.js        # Compiled bundles (regenerated from .jsx with @babel/standalone)
 │   ├── customer/
 │   │   └── customer.html   # Customer "My Account" page
 │   ├── shared/
-│   │   ├── login.html      # Login page
+│   │   ├── login.html      # Login page (device PIN + email/password, org_admin aware)
 │   │   ├── intro.html      # Pre-login welcome/marketing page
 │   │   ├── nav.html        # Global navigation (injected into every page)
 │   │   ├── nav.css         # Navigation + bottom status bar styles
@@ -468,6 +524,9 @@ solar-paygo-platform/
 ├── firmware/
 │   └── esp32-firmware.ino  # Arduino sketch for ESP32 solar controller
 │
+├── scripts/                # generate-ota-keys, migrate-device-keys, check-mpesa-config…
+├── observability/          # prometheus-alerts.yml
+├── docs/                   # mpesa-production.md, PROJECT_STATUS.md
 ├── docker-compose.yml      # Full stack: Node + PostgreSQL + Redis + MQTT
 ├── Dockerfile              # Production container image
 ├── package.json
@@ -482,13 +541,16 @@ All tables are created automatically by `runMigrations()` inside `db.js` on ever
 
 | Table | Purpose |
 |---|---|
-| `users` | Customer accounts — device_id, PIN, wallet balance, relay state |
-| `devices` | Registered ESP32 units — IP address, location, relay state, active status |
+| `users` | Accounts (admin/org_admin/customer) — device_id, PIN, wallet balance, relay state, `organization_id` |
+| `organizations` | Tenants — name, slug, description, contact email, phone, location |
+| `devices` | Registered ESP32 units — IP, location, relay state, `organization_id` |
 | `energy_readings` | IoT telemetry — generation W, consumption W, battery %, voltage, current — inserted every 30 s |
-| `payments` | M-Pesa transactions — amount, status, receipt number, fraud score |
+| `payments` | M-Pesa transactions — amount, status, receipt number, fraud score, `organization_id` |
 | `maintenance_alerts` | AI-generated and operator alerts with severity levels |
 | `ai_predictions` | Stored forecasts and fraud scores (JSONB column) |
 | `pending_commands` | Failed relay commands queued for automatic retry |
+| `firmware_versions` | OTA binaries — org-scoped versions, signatures, staged rollout metadata |
+| `firmware_boot_reports` | Device boot success/failure — feeds the 2-strike auto-pause |
 
 ---
 
