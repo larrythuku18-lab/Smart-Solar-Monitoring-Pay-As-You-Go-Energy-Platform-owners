@@ -582,6 +582,75 @@ const LiveClock = () => {
     className: "text-sm font-semibold tabular-nums"
   }, t.toLocaleTimeString());
 };
+
+/* Friendly onboarding empty-state — shown when the tenant has no provisioned
+   devices yet. Guides the admin through the first steps instead of a wall of
+   zeroed charts. `onRefresh` re-polls /api/state so the page can flip into
+   the live dashboard the moment a device reports in. */
+const OnboardingState = ({
+  orgName,
+  onRefresh
+}) => /*#__PURE__*/React.createElement("div", {
+  className: "mt-6 overflow-hidden rounded-3xl border border-dashed border-amber-300/70 dark:border-amber-500/40 bg-gradient-to-br from-amber-50 via-white to-emerald-50/40 dark:from-amber-950/20 dark:via-slate-900 dark:to-slate-900"
+}, /*#__PURE__*/React.createElement("div", {
+  className: "px-8 py-12 sm:px-14 text-center"
+}, /*#__PURE__*/React.createElement("div", {
+  className: "mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 shadow-lg shadow-amber-500/30"
+}, /*#__PURE__*/React.createElement("svg", {
+  className: "h-8 w-8 text-white",
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: "2",
+  strokeLinecap: "round",
+  strokeLinejoin: "round"
+}, /*#__PURE__*/React.createElement("circle", {
+  cx: "12",
+  cy: "12",
+  r: "4"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+}))), /*#__PURE__*/React.createElement("h2", {
+  className: "mt-6 text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-50"
+}, orgName ? `${orgName} is ready — let's connect its first device` : 'Welcome — let\'s connect your first device'), /*#__PURE__*/React.createElement("p", {
+  className: "mx-auto mt-3 max-w-xl text-sm text-slate-500 dark:text-slate-400"
+}, "No devices are reporting in yet. Provision an ESP32 unit and this dashboard will fill with live generation, battery, and revenue charts automatically."), /*#__PURE__*/React.createElement("div", {
+  className: "mx-auto mt-8 grid max-w-2xl grid-cols-1 gap-4 sm:grid-cols-3"
+}, [{
+  step: '1',
+  title: 'Provision a device',
+  body: 'Add your unit in the admin console or via POST /api/admin/devices.'
+}, {
+  step: '2',
+  title: 'Flash the firmware',
+  body: 'Load firmware/esp32-firmware.ino onto the ESP32 with its device key.'
+}, {
+  step: '3',
+  title: 'Watch it go live',
+  body: 'Telemetry starts flowing within seconds — no restart needed.'
+}].map(s => /*#__PURE__*/React.createElement("div", {
+  key: s.step,
+  className: "rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 text-left shadow-sm"
+}, /*#__PURE__*/React.createElement("span", {
+  className: "flex h-7 w-7 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white"
+}, s.step), /*#__PURE__*/React.createElement("p", {
+  className: "mt-3 text-sm font-semibold text-slate-800 dark:text-slate-200"
+}, s.title), /*#__PURE__*/React.createElement("p", {
+  className: "mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400"
+}, s.body)))), /*#__PURE__*/React.createElement("button", {
+  onClick: onRefresh,
+  className: "mt-8 inline-flex items-center gap-2 rounded-full bg-amber-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-amber-500/30 transition-all duration-200 hover:bg-amber-600 hover:shadow-amber-500/40 active:scale-95"
+}, /*#__PURE__*/React.createElement("svg", {
+  className: "h-4 w-4",
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: "2",
+  strokeLinecap: "round",
+  strokeLinejoin: "round"
+}, /*#__PURE__*/React.createElement("path", {
+  d: "M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"
+})), "Check for devices")));
 const SolarDashboard = () => {
   const isDark = usePrefersDarkMode();
   const [activeTab, setActiveTab] = useState('energy');
@@ -601,6 +670,13 @@ const SolarDashboard = () => {
      when the caller is scoped to one org, so the header can say which
      tenant this dashboard is operating in. */
   const [orgInfo, setOrgInfo] = useState(null);
+  /* An org with no provisioned devices gets a friendly onboarding
+     empty-state instead of a wall of zeroed charts + placeholder KPIs. */
+  const [noDevices, setNoDevices] = useState(false);
+  /* False until /api/state has resolved once — keeps the placeholder KPI
+     strip from flashing on a brand-new tenant before the onboarding
+     empty-state swaps in. */
+  const [stateLoaded, setStateLoaded] = useState(false);
   const [firmwareVersions, setFirmwareVersions] = useState([]);
   const [rolloutStatus, setRolloutStatus] = useState(null);
   const [uploadState, setUploadState] = useState({
@@ -978,7 +1054,7 @@ const SolarDashboard = () => {
   }, [selectedDeviceId]);
   useEffect(() => {
     const stats = setInterval(() => {
-      if (document.hidden) return;
+      if (document.hidden || noDevices) return;
       setGlobalStats(prev => ({
         devicesOnline: Math.max(832, prev.devicesOnline + Math.round(Math.random() * 16 - 8)),
         todayRevenue: Math.max(12000, prev.todayRevenue + Math.round(Math.random() * 1400 - 650)),
@@ -986,37 +1062,46 @@ const SolarDashboard = () => {
       }));
     }, 30000);
     const live = setInterval(() => {
-      if (document.hidden) return;
+      if (document.hidden || noDevices) return;
       refreshAllCharts();
     }, 60000);
     return () => {
       clearInterval(stats);
       clearInterval(live);
     };
-  }, [refreshAllCharts]);
-  useEffect(() => {
-    refreshAllCharts();
-  }, [refreshAllCharts]);
+  }, [refreshAllCharts, noDevices]);
 
-  /* Read the OTA feature flag from the server; without it the Firmware tab
-     stays hidden even if the dashboard is served by an OTA-enabled build. */
+  /* Don't fire the DEMO-001 chart fetch on a brand-new tenant — the
+     onboarding empty-state is showing and the call would just 403.  Charts
+     kick in automatically once a device exists (noDevices flips false). */
   useEffect(() => {
-    (async () => {
-      try {
-        const token = localStorage.getItem('authToken');
-        const res = await fetch('/api/state', {
-          headers: token ? {
-            Authorization: `Bearer ${token}`
-          } : {}
-        });
-        if (res.ok) {
-          const state = await res.json();
-          setOtaEnabled(!!state.otaEnabled);
-          setOrgInfo(state.organization || null);
-        }
-      } catch {/* flag stays off */}
-    })();
+    if (stateLoaded && !noDevices) refreshAllCharts();
+  }, [refreshAllCharts, stateLoaded, noDevices]);
+
+  /* Read /api/state once and on demand (the onboarding empty-state's
+     "Check for devices" button re-invokes it). Supplies the OTA feature
+     flag, tenant identity, and the noDevices flag that swaps in the
+     onboarding empty-state for empty orgs. */
+  const loadState = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('authToken');
+      const res = await fetch('/api/state', {
+        headers: token ? {
+          Authorization: `Bearer ${token}`
+        } : {}
+      });
+      if (res.ok) {
+        const state = await res.json();
+        setOtaEnabled(!!state.otaEnabled);
+        setOrgInfo(state.organization || null);
+        setNoDevices(!!state.noDevices);
+      }
+    } catch {/* flags stay off */}
+    setStateLoaded(true);
   }, []);
+  useEffect(() => {
+    loadState();
+  }, [loadState]);
 
   /* Fetch device list for the device selector. Works for both admin and customer roles. */
   useEffect(() => {
@@ -1326,7 +1411,18 @@ const SolarDashboard = () => {
     className: "flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"
   }), /*#__PURE__*/React.createElement("span", {
     className: "text-sm font-medium text-slate-500 dark:text-slate-400"
-  }, "Live \u2014"), /*#__PURE__*/React.createElement(LiveClock, null))), /*#__PURE__*/React.createElement("div", {
+  }, "Live \u2014"), /*#__PURE__*/React.createElement(LiveClock, null))), !stateLoaded ? /*#__PURE__*/React.createElement("div", {
+    className: "mt-6 grid place-items-center rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-20 shadow-sm"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-col items-center gap-3"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h-8 w-8 animate-spin rounded-full border-2 border-amber-500 border-t-transparent"
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "text-sm text-slate-500 dark:text-slate-400"
+  }, "Loading your workspace\u2026"))) : noDevices ? /*#__PURE__*/React.createElement(OnboardingState, {
+    orgName: orgInfo?.name,
+    onRefresh: loadState
+  }) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3"
   }, [{
     title: 'Devices Online',
@@ -1905,7 +2001,7 @@ const SolarDashboard = () => {
     }, activateState.busyId === v.id ? 'Activating…' : 'Activate'))));
   })), activateState.error && /*#__PURE__*/React.createElement("p", {
     className: "mt-3 text-sm text-rose-600 dark:text-rose-400"
-  }, activateState.error)))));
+  }, activateState.error))))));
 };
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(/*#__PURE__*/React.createElement(SolarDashboard, null));

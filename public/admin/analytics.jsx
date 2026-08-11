@@ -678,6 +678,67 @@ const EmptyState = ({ message = 'No data available' }) => (
   </div>
 );
 
+/* Friendly onboarding empty-state — shown when the tenant has no provisioned
+   devices yet (apiState.noDevices from /api/state). Inline-styled to match
+   the dark analytics aesthetic. `onRefresh` re-polls the data so the page
+   flips into the live dashboard the moment a device reports in. */
+const OnboardingState = ({ orgName, onRefresh }) => (
+  <div style={{
+    marginTop: 24, padding: '56px 32px', textAlign: 'center',
+    borderRadius: 24,
+    border: '1px dashed rgba(245,158,11,0.35)',
+    background: 'linear-gradient(160deg, rgba(245,158,11,0.07), rgba(13,21,32,0) 60%)'
+  }}>
+    <div style={{
+      width: 64, height: 64, margin: '0 auto', display: 'flex',
+      alignItems: 'center', justifyContent: 'center', borderRadius: 18,
+      background: 'linear-gradient(135deg, #fbbf24, #f97316)',
+      boxShadow: '0 12px 28px rgba(245,158,11,0.30)'
+    }}>
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+      </svg>
+    </div>
+    <h2 style={{ marginTop: 20, fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', color: '#f8fafc' }}>
+      {orgName ? `${orgName} is ready — let's connect its first device` : "Welcome — let's connect your first device"}
+    </h2>
+    <p style={{ maxWidth: 520, margin: '10px auto 0', fontSize: 13, lineHeight: 1.6, color: '#64748b' }}>
+      No devices are reporting in yet. Provision an ESP32 unit and this
+      dashboard will fill with live generation, battery, and revenue charts automatically.
+    </p>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, maxWidth: 640, margin: '28px auto 0', textAlign: 'left' }}>
+      {[
+        { step: '1', title: 'Provision a device', body: 'Add your unit in the admin console or via POST /api/admin/devices.' },
+        { step: '2', title: 'Flash the firmware', body: 'Load firmware/esp32-firmware.ino onto the ESP32 with its device key.' },
+        { step: '3', title: 'Watch it go live', body: 'Telemetry starts flowing within seconds — no restart needed.' }
+      ].map(s => (
+        <div key={s.step} style={{ padding: 16, borderRadius: 14, background: 'rgba(13,21,32,0.85)', border: '1px solid rgba(148,163,184,0.12)' }}>
+          <span style={{ display: 'flex', width: 26, height: 26, alignItems: 'center', justifyContent: 'center', borderRadius: '50%', background: '#f59e0b', color: '#fff', fontSize: 12, fontWeight: 700 }}>{s.step}</span>
+          <p style={{ marginTop: 10, fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{s.title}</p>
+          <p style={{ marginTop: 4, fontSize: 12, lineHeight: 1.5, color: '#64748b' }}>{s.body}</p>
+        </div>
+      ))}
+    </div>
+    <button
+      onClick={onRefresh}
+      style={{
+        marginTop: 28, padding: '11px 22px', borderRadius: 999, fontSize: 13,
+        fontWeight: 600, color: '#fff', cursor: 'pointer',
+        background: '#f59e0b', border: '1px solid #f59e0b',
+        boxShadow: '0 8px 20px rgba(245,158,11,0.25)',
+        transition: 'background 0.18s, transform 0.12s'
+      }}
+      onMouseOver={e => { e.currentTarget.style.background = '#d97706'; }}
+      onMouseOut={e  => { e.currentTarget.style.background = '#f59e0b'; }}
+      onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.96)'; }}
+      onMouseUp={e   => { e.currentTarget.style.transform = 'scale(1)'; }}
+    >
+      ↻ Check for devices
+    </button>
+  </div>
+);
+
 /* ══════════════════════════════════════════════════════════════
    LIVE CLOCK — isolated so its 1-second tick never re-renders the charts
 ══════════════════════════════════════════════════════════════ */
@@ -716,6 +777,10 @@ const AnalyticsDashboard = () => {
 
   /* Live API state */
   const [apiState,    setApiState]    = useState(null);
+  /* Set once /api/state has resolved (success or failure) — prevents the
+     placeholder KPI cards from flashing before the onboarding empty-state
+     (or real data) swaps in. */
+  const [stateLoaded, setStateLoaded] = useState(false);
   const [energyHist,  setEnergyHist]  = useState(null);
   const [payStats,    setPayStats]    = useState(null);
   const [aiInsights,  setAiInsights]  = useState(null);
@@ -814,6 +879,7 @@ const AnalyticsDashboard = () => {
     if (stateR.status === 'fulfilled' && !stateR.value?.error) {
       setApiState(stateR.value);
     }
+    setStateLoaded(true);
 
     if (energyR.status === 'fulfilled' && energyR.value?.labels?.length) {
       const e = energyR.value;
@@ -990,6 +1056,17 @@ const AnalyticsDashboard = () => {
           </div>
         </div>
 
+        {/* An empty tenant gets a friendly onboarding hero instead of the
+            KPI cards, tabs, and charts — all of which would render as zeros. */}
+        {!stateLoaded ? (
+          <div style={{ display: 'grid', placeItems: 'center', padding: '72px 0', gap: 14 }}>
+            <div style={{ width: 30, height: 30, borderRadius: '50%', border: '3px solid rgba(245,158,11,0.25)', borderTopColor: '#f59e0b', animation: 'spin 0.8s linear infinite' }} />
+            <p style={{ color: '#475569', fontSize: 14, letterSpacing: 0.2 }}>Loading your workspace…</p>
+          </div>
+        ) : apiState?.noDevices ? (
+          <OnboardingState orgName={apiState.organization?.name} onRefresh={fetchAll} />
+        ) : (
+          <>
         {/* ══ SUMMARY KPI CARDS ══ */}
         <div style={{
           display: 'grid',
@@ -1513,6 +1590,8 @@ const AnalyticsDashboard = () => {
             </div>
 
           </div>
+        )}
+          </>
         )}
 
       </div>{/* /max-w-7xl */}
