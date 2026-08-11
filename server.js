@@ -51,6 +51,8 @@ const {
   getOrganizationById,
   getOrganizationBySlug,
   getOrganizations,
+  updateOrganization,
+  getOrgMembers,
   getUserByDeviceId,
   getUserById,
   getDevice,
@@ -1801,6 +1803,83 @@ app.post('/api/admin/organizations', authMiddleware, [
     console.error('Organization creation error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to create organization', message: err.message });
+  }
+});
+
+/* ── Org Settings (org-admin self-service) ──────────────────────────────
+   The tenant's own profile + membership roster, scoped hard to the caller's
+   org. Org admins reach these via the Org Settings page; super-admins can
+   drill into any tenant with ?orgId=. An org admin's ?orgId= param is
+   ignored (resolveOrgScope), so a tenant can never read/write another. */
+
+/* The org the caller is operating on — org admin → their own org,
+   super-admin → ?orgId= (or 404 when omitted, since a settings page needs
+   a concrete tenant). */
+async function resolveSettingsOrg(req) {
+  const orgId = resolveOrgScope(req);
+  if (orgId == null) return null;
+  return getOrganizationById(orgId);
+}
+
+app.get('/api/org', authMiddleware, async (req, res) => {
+  if (!canAccessAdmin(req.user)) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  try {
+    const org = await resolveSettingsOrg(req);
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
+    res.json({ organization: org });
+  } catch (err) {
+    console.error('Org profile error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load organization', message: err.message });
+  }
+});
+
+/* Update the tenant profile. slug is NOT editable (stable tenant
+   identifier) — everything else (name, description, contact, phone,
+   location) is. Returns the refreshed org row. */
+app.put('/api/org', authMiddleware, async (req, res) => {
+  if (!canAccessAdmin(req.user)) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  try {
+    const org = await resolveSettingsOrg(req);
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
+    const name = typeof req.body.name === 'string' ? req.body.name.trim() : null;
+    if (name !== null && (name.length < 1 || name.length > 128)) {
+      return res.status(400).json({ error: 'name must be between 1 and 128 characters' });
+    }
+    const updated = await updateOrganization(org.id, {
+      name,
+      description:   typeof req.body.description   === 'string' ? req.body.description.trim().slice(0, 1000) : null,
+      contactEmail:  typeof req.body.contactEmail  === 'string' ? req.body.contactEmail.trim().slice(0, 255) : null,
+      phone:         typeof req.body.phone         === 'string' ? req.body.phone.trim().slice(0, 32) : null,
+      location:      typeof req.body.location      === 'string' ? req.body.location.trim().slice(0, 256) : null
+    });
+    res.json({ organization: updated });
+  } catch (err) {
+    console.error('Org profile update error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to update organization', message: err.message });
+  }
+});
+
+/* Membership roster — every user in the caller's org. Org admins can see
+   who belongs to their tenant (admins + customers), never anyone else's. */
+app.get('/api/org/members', authMiddleware, async (req, res) => {
+  if (!canAccessAdmin(req.user)) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  try {
+    const org = await resolveSettingsOrg(req);
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
+    const members = await getOrgMembers(org.id);
+    res.json({ organization: org, members });
+  } catch (err) {
+    console.error('Org members error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load members', message: err.message });
   }
 });
 

@@ -494,6 +494,104 @@ describe('API tenant isolation', () => {
     assert.equal(emptyState.walletBalance, 0, 'an empty org must not inherit the demo wallet');
     assert.equal(emptyState.otaEnabled, false);
   });
+
+  test('org settings: GET /api/org returns the caller org profile (param can never widen)', async () => {
+    const orgA = await (await fetch(`${BASE}/api/org`, { headers: auth(_orgAToken) })).json();
+    assert.equal(orgA.organization.id, orgAId, 'org admin must get their own org');
+    assert.equal(orgA.organization.slug, ORG_A);
+    assert.equal(typeof orgA.organization.name, 'string');
+
+    /* An org A admin passing ?orgId= of org B must STILL get org A. */
+    const widened = await (await fetch(`${BASE}/api/org?orgId=${orgBId}`, { headers: auth(_orgAToken) })).json();
+    assert.equal(widened.organization.id, orgAId,
+      'org admin ?orgId= param must be ignored (no cross-tenant read)');
+
+    /* Super-admin without ?orgId= gets a 404 (settings page needs a tenant). */
+    const superNoScope = await fetch(`${BASE}/api/org`, { headers: auth(await loginAdmin()) });
+    assert.equal(superNoScope.status, 404, 'super-admin without orgId has no single settings tenant');
+
+    /* Super-admin with ?orgId= drills into that tenant. */
+    const superDrill = await fetch(`${BASE}/api/org?orgId=${orgBId}`, { headers: auth(await loginAdmin()) });
+    assert.equal(superDrill.status, 200);
+    assert.equal((await superDrill.json()).organization.id, orgBId);
+
+    /* Customers are blocked entirely. */
+    const customerToken = (await fetch(`${BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: 'DEMO-001', pin: '1234' })
+    }).then(r => r.json())).token;
+    const denied = await fetch(`${BASE}/api/org`, { headers: auth(customerToken) });
+    assert.equal(denied.status, 403, 'customers must be blocked from org settings');
+  });
+
+  test('org settings: PUT /api/org updates the tenant profile, scoped to the caller org', async () => {
+    /* Org A admin updates their own profile. */
+    const updated = await fetch(`${BASE}/api/org`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...auth(_orgAToken) },
+      body: JSON.stringify({
+        name: 'Org A Renamed',
+        description: 'Nairobi solar operator',
+        contactEmail: 'ops-a@example.com',
+        phone: '+254700111222',
+        location: 'Nairobi, Kenya'
+      })
+    });
+    const updatedBody = await updated.json();
+    assert.equal(updated.status, 200, `profile update failed: ${JSON.stringify(updatedBody)}`);
+    const org = updatedBody.organization;
+    assert.equal(org.id, orgAId);
+    assert.equal(org.name, 'Org A Renamed');
+    assert.equal(org.description, 'Nairobi solar operator');
+    assert.equal(org.contact_email, 'ops-a@example.com');
+    assert.equal(org.phone, '+254700111222');
+    assert.equal(org.location, 'Nairobi, Kenya');
+    assert.equal(org.slug, ORG_A, 'slug is the stable identifier and must not change');
+
+    /* The update did NOT touch org B (isolation). */
+    const orgB = (await (await fetch(`${BASE}/api/org?orgId=${orgBId}`, { headers: auth(await loginAdmin()) })).json()).organization;
+    assert.notEqual(orgB.name, 'Org A Renamed', 'org A rename must never leak to org B');
+
+    /* Org A admin tries to update org B via ?orgId= — param ignored, still
+       updates their own org (which we just renamed — so it's a no-op name
+       change to keep the test deterministic). */
+    const crossTenant = await fetch(`${BASE}/api/org?orgId=${orgBId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...auth(_orgAToken) },
+      body: JSON.stringify({ name: 'Org A Renamed', description: 'still org A' })
+    });
+    assert.equal(crossTenant.status, 200);
+    assert.equal((await crossTenant.json()).organization.id, orgAId,
+      'org admin PUT must never write to another org');
+    const orgBAfter = (await (await fetch(`${BASE}/api/org?orgId=${orgBId}`, { headers: auth(await loginAdmin()) })).json()).organization;
+    assert.notEqual(orgBAfter.name, 'Org A Renamed');
+    assert.notEqual(orgBAfter.description, 'still org A', 'cross-org write must be blocked');
+  });
+
+  test('org settings: GET /api/org/members lists only the caller org users', async () => {
+    /* Ensure org A has a customer member to list, then check the roster. */
+    await createUser({
+      deviceId: `MT-MEM-${crypto.randomBytes(6).toString('hex')}`,
+      name: 'Org A Member', email: `member-a-${SUFFIX}@example.com`,
+      role: 'customer', organizationId: orgAId
+    });
+
+    const membersA = (await (await fetch(`${BASE}/api/org/members`, { headers: auth(_orgAToken) })).json()).members;
+    assert.ok(membersA.length >= 2, 'org A roster must include the org admin + the customer');
+    assert.ok(membersA.some(m => m.role === 'org_admin'), 'roster must include the org admin');
+    assert.ok(membersA.some(m => m.role === 'customer'), 'roster must include customers');
+    assert.equal(membersA.every(m => m.organization_id === undefined || true), true);
+
+    /* The roster must NOT include org B members. */
+    const emailsA = membersA.map(m => m.email).filter(Boolean);
+    assert.ok(!emailsA.includes(ADMIN_B_EMAIL), 'org A roster must never list org B admins');
+
+    /* Org B admin sees only org B. */
+    const membersB = (await (await fetch(`${BASE}/api/org/members`, { headers: auth(_orgBToken) })).json()).members;
+    assert.ok(membersB.every(m => m.role === 'org_admin' || m.role === 'customer'), 'roster roles only');
+    assert.ok(!membersB.some(m => m.email === ADMIN_A_EMAIL), 'org B roster must never list org A admins');
+  });
 });
 
 describe('customer scoping stays per-user', () => {

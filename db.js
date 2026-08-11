@@ -314,6 +314,13 @@ async function runMigrations() {
       slug       VARCHAR(64)  NOT NULL UNIQUE,
       created_at TIMESTAMPTZ  DEFAULT NOW()
     );
+    -- Tenant profile fields — editable by the org's own admins from the
+    -- Org Settings page. slug stays the stable, read-only tenant identifier;
+    -- everything else is presentation/contact metadata.
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS description   TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contact_email VARCHAR(255);
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS phone         VARCHAR(32);
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS location      VARCHAR(256);
 
     INSERT INTO organizations (name, slug)
     SELECT 'Default Organization', 'default'
@@ -437,6 +444,38 @@ async function getOrganizationById(id) {
 async function getOrganizationBySlug(slug) {
   const { rows } = await q('SELECT * FROM organizations WHERE slug = $1', [slug]);
   return rows[0] ?? null;
+}
+
+/* Update a tenant's profile fields (Org Settings page). slug is deliberately
+   NOT updatable here — it's the stable tenant identifier. Returns the
+   updated row, or null when the org doesn't exist. */
+async function updateOrganization(id, { name, description = null, contactEmail = null, phone = null, location = null } = {}) {
+  const { rows } = await q(
+    `UPDATE organizations
+     SET name         = COALESCE($2, name),
+         description   = COALESCE($3, description),
+         contact_email = COALESCE($4, contact_email),
+         phone         = COALESCE($5, phone),
+         location      = COALESCE($6, location)
+     WHERE id = $1
+     RETURNING *`,
+    [id, name || null, description, contactEmail, phone, location]
+  );
+  return rows[0] ?? null;
+}
+
+/* Every user in an org, oldest first — the membership roster shown on the
+   Org Settings page. Scoped by organization_id in SQL, so an org admin can
+   never enumerate another tenant's users. */
+async function getOrgMembers(orgId) {
+  const { rows } = await q(
+    `SELECT id, device_id, name, email, role, phone, wallet_balance, created_at
+     FROM   users
+     WHERE  organization_id = $1
+     ORDER  BY created_at ASC, id ASC`,
+    [orgId]
+  );
+  return rows;
 }
 
 /* All organizations with their fleet/user/admin counts, oldest first —
@@ -1753,6 +1792,8 @@ module.exports = {
   getOrganizationById,
   getOrganizationBySlug,
   getOrganizations,
+  updateOrganization,
+  getOrgMembers,
   setUserOrganization,
   getDefaultOrganizationId,
   /* users */

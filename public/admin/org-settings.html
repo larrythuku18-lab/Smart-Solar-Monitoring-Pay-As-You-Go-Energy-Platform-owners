@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SolGrid — Organization Settings</title>
+  <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="manifest" href="/manifest.json" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #060b16; --surface: #0d1520; --card: #111d2e; --border: #1a2840;
+      --amber: #f59e0b; --green: #10b981; --blue: #3b82f6; --red: #ef4444;
+      --teal: #14b8a6; --purple: #8b5cf6; --text: #f1f5f9; --muted: #64748b; --sub: #94a3b8;
+    }
+    html, body { overflow-x: hidden; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: radial-gradient(ellipse at top, rgba(59,130,246,0.10) 0%, transparent 55%),
+                  linear-gradient(180deg, #060b16 0%, #0a1120 60%, #040810 100%);
+      color: var(--text); min-height: 100vh;
+    }
+
+    /* ── Loading ── */
+    #loading-overlay {
+      position: fixed; inset: 0; background: rgba(6,11,22,0.97);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 9999; transition: opacity 0.4s ease, visibility 0.4s ease;
+    }
+    #loading-overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+    .loading-spinner { width: 40px; height: 40px; border: 3px solid rgba(245,158,11,0.2); border-top-color: var(--amber); border-radius: 50%; animation: spin 0.9s linear infinite; }
+    .loading-text { margin-top: 18px; color: var(--muted); font-size: 13px; text-align: center; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Shell ── */
+    .shell { position: relative; z-index: 2; min-height: 100vh; display: flex; flex-direction: column; }
+    .content { flex: 1; width: 100%; max-width: 980px; margin: 0 auto; padding: 22px 18px 64px; }
+
+    /* ── Status bar (fixed bottom) ── */
+    .topbar {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 36px; padding: 0 20px; gap: 10px;
+      background: rgba(5,9,18,0.98); backdrop-filter: blur(20px);
+      border-top: 1px solid rgba(255,255,255,.07);
+      box-shadow: 0 -4px 32px rgba(0,0,0,.5);
+    }
+    .topbar-title { font-size: 10px; color: var(--muted); letter-spacing: .025em; white-space: nowrap; }
+    .topbar-title::before {
+      content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 8px;
+      border-radius: 50%; background: var(--green); animation: statusPulse 2.4s ease-in-out infinite;
+    }
+    @keyframes statusPulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+    .topbar-right { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+    .badge { font-size: 9px; padding: 2px 9px; border-radius: 20px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+    .badge-amber { background: rgba(245,158,11,.12); color: var(--amber); border: 1px solid rgba(245,158,11,.24); }
+    .badge-green { background: rgba(16,185,129,.12); color: var(--green); border: 1px solid rgba(16,185,129,.24); }
+    .badge-blue  { background: rgba(59,130,246,.12);  color: var(--blue);  border: 1px solid rgba(59,130,246,.24); }
+    .badge-teal  { background: rgba(20,184,166,.12);   color: var(--teal);  border: 1px solid rgba(20,184,166,.24); }
+    .badge-purple{ background: rgba(139,92,246,.14);  color: var(--purple); border: 1px solid rgba(139,92,246,.28); }
+    .topbar-sep { width: 1px; height: 16px; background: rgba(255,255,255,.1); margin: 0 4px; }
+
+    /* ── Page header ── */
+    .page-head { margin-bottom: 18px; }
+    .page-title { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+    .page-sub { margin-top: 4px; font-size: 12px; color: var(--muted); }
+
+    /* ── Panels ── */
+    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 18px; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap; }
+    .panel-title { font-size: 12px; font-weight: 600; color: var(--sub); }
+    .panel-body { padding: 16px 18px; }
+
+    /* ── Form ── */
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 6px; }
+    .field input, .field textarea {
+      width: 100%; background: rgba(255,255,255,.04); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 10px; font-size: 12px; color: var(--text);
+      font-family: inherit; outline: none; transition: border-color .15s ease;
+    }
+    .field input:focus, .field textarea:focus { border-color: var(--amber); }
+    .field input[readonly] { opacity: .55; cursor: not-allowed; }
+    .field .hint { margin-top: 4px; font-size: 10px; color: var(--muted); }
+
+    .btn {
+      border: none; border-radius: 8px; padding: 9px 18px; font-size: 12px; font-weight: 700;
+      cursor: pointer; font-family: inherit; color: #fff; transition: filter .15s ease, opacity .15s ease;
+    }
+    .btn:hover { filter: brightness(1.12); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary { background: var(--amber); }
+    .btn-save { background: var(--green); }
+
+    .form-result { display: none; margin-top: 12px; font-size: 12px; }
+    .form-result.ok { color: var(--green); }
+    .form-result.err { color: var(--red); }
+
+    /* ── Slug identity chip ── */
+    .slug-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(139,92,246,.1); border: 1px solid rgba(139,92,246,.25);
+      color: var(--purple); border-radius: 8px; padding: 3px 10px;
+      font-family: monospace; font-size: 11px; font-weight: 600;
+    }
+
+    /* ── Members table ── */
+    .tx-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .tx-table th { padding: 10px 16px; text-align: left; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); border-bottom: 1px solid var(--border); background: rgba(255,255,255,.02); }
+    .tx-table td { padding: 11px 16px; border-bottom: 1px solid rgba(255,255,255,.04); vertical-align: middle; }
+    .tx-table tr:last-child td { border-bottom: none; }
+    .tx-table tr:hover td { background: rgba(255,255,255,.02); }
+    .tx-device { font-size: 10px; color: var(--blue); font-family: monospace; }
+    .tx-date { font-size: 10px; color: var(--muted); white-space: nowrap; }
+    .role-badge { font-size: 9px; padding: 2px 8px; border-radius: 20px; font-weight: 700; }
+    .role-admin  { background: rgba(245,158,11,.12); color: var(--amber); border: 1px solid rgba(245,158,11,.24); }
+    .role-org_admin { background: rgba(139,92,246,.14); color: var(--purple); border: 1px solid rgba(139,92,246,.28); }
+    .role-customer { background: rgba(16,185,129,.12); color: var(--green); border: 1px solid rgba(16,185,129,.24); }
+    .empty-row td { text-align: center; padding: 26px; color: var(--muted); }
+
+    /* ── Access denied ── */
+    #access-denied { display: none; text-align: center; padding: 60px 20px; }
+    #access-denied h2 { font-size: 18px; margin-bottom: 8px; }
+    #access-denied p { font-size: 12px; color: var(--muted); }
+    #access-denied a { color: var(--amber); text-decoration: none; }
+
+    @media (max-width: 640px) {
+      .tx-table th, .tx-table td { padding: 8px 10px; }
+      .content { padding: 16px 12px 64px; }
+    }
+  </style>
+  <link rel="stylesheet" href="/nav.css">
+</head>
+<body class="with-nav">
+
+<!-- Loading overlay -->
+<div id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Loading Organization Settings…</div>
+</div>
+
+<!-- Main app -->
+<div class="shell" id="app" style="display:none;">
+
+  <!-- Status bar (fixed bottom) -->
+  <div class="topbar">
+    <div class="topbar-title">SolGrid — Organization Settings</div>
+    <div class="topbar-right">
+      <span class="badge badge-teal" id="org-badge" style="display:none"></span>
+      <span class="badge badge-purple">Tenant Settings</span>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- Access denied (non-admin / expired session) -->
+    <div id="access-denied">
+      <h2>Access denied</h2>
+      <p>You need an admin or organization-admin account to view this page.</p>
+      <p style="margin-top:14px"><a href="/login.html">Back to login</a></p>
+    </div>
+
+    <div id="settings-root" style="display:none">
+      <div class="page-head">
+        <h1 class="page-title">Organization Settings</h1>
+        <p class="page-sub" id="page-sub">Manage your tenant's profile and membership.</p>
+      </div>
+
+      <!-- ── Profile panel ── -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">Tenant Profile</span>
+          <span class="slug-chip" id="profile-slug">—</span>
+        </div>
+        <div class="panel-body">
+          <form id="profile-form">
+            <div class="field">
+              <label for="f-name">Organization name</label>
+              <input id="f-name" type="text" maxlength="128" required placeholder="e.g. Acme Solar Ltd">
+            </div>
+            <div class="field">
+              <label for="f-description">Description</label>
+              <textarea id="f-description" rows="3" maxlength="1000" placeholder="What does this organization do?"></textarea>
+            </div>
+            <div class="field">
+              <label for="f-email">Contact email</label>
+              <input id="f-email" type="email" maxlength="255" placeholder="ops@acmesolar.co.ke">
+            </div>
+            <div class="field">
+              <label for="f-phone">Phone</label>
+              <input id="f-phone" type="text" maxlength="32" placeholder="+254 700 000 000">
+            </div>
+            <div class="field">
+              <label for="f-location">Location / region</label>
+              <input id="f-location" type="text" maxlength="256" placeholder="e.g. Nairobi, Kenya">
+            </div>
+            <button type="submit" class="btn btn-save" id="profile-save-btn">Save changes</button>
+            <div class="form-result" id="profile-result"></div>
+          </form>
+        </div>
+      </div>
+
+      <!-- ── Membership panel ── -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">Members</span>
+          <span class="badge badge-teal" id="members-count">0 users</span>
+        </div>
+        <div class="tx-table-wrap">
+          <table class="tx-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Device</th>
+                <th>Joined</th>
+              </tr>
+            </thead>
+            <tbody id="members-body">
+              <tr class="empty-row"><td colspan="5">Loading members…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ── Auth gate ── */
+  const token = localStorage.getItem('authToken');
+  const cachedRole = localStorage.getItem('userRole') || '';
+  const app = document.getElementById('app');
+  const denied = document.getElementById('access-denied');
+  const overlay = document.getElementById('loading-overlay');
+  const root = document.getElementById('settings-root');
+
+  function isAdminRole(role) {
+    return role === 'admin' || role === 'org_admin';
+  }
+
+  /* Only admins may proceed. The backend also enforces this (403), so this
+     is purely a UX guard for users landing directly on the URL. */
+  if (!token || !isAdminRole(cachedRole)) {
+    overlay.classList.add('hidden');
+    denied.style.display = 'block';
+    return;
+  }
+
+  const authHeaders = { Authorization: 'Bearer ' + token };
+
+  function showResult(el, message, isError) {
+    el.textContent = message;
+    el.className = 'form-result ' + (isError ? 'err' : 'ok');
+    el.style.display = 'block';
+    clearTimeout(el._t);
+    el._t = setTimeout(() => { el.style.display = 'none'; }, 5000);
+  }
+
+  /* ── Load profile + membership in parallel ── */
+  async function loadSettings() {
+    try {
+      const [profileRes, membersRes] = await Promise.all([
+        fetch('/api/org', { headers: authHeaders }),
+        fetch('/api/org/members', { headers: authHeaders })
+      ]);
+
+      if (profileRes.status === 403 || profileRes.status === 401) {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('userRole');
+        overlay.classList.add('hidden');
+        denied.style.display = 'block';
+        return;
+      }
+
+      const profileData = await profileRes.json();
+      if (!profileRes.ok) throw new Error(profileData.error || 'Failed to load organization');
+
+      const org = profileData.organization;
+      const badge = document.getElementById('org-badge');
+      badge.textContent = org.name;
+      badge.style.display = '';
+
+      document.getElementById('profile-slug').textContent = '/' + org.slug;
+      document.getElementById('f-name').value = org.name || '';
+      document.getElementById('f-description').value = org.description || '';
+      document.getElementById('f-email').value = org.contact_email || '';
+      document.getElementById('f-phone').value = org.phone || '';
+      document.getElementById('f-location').value = org.location || '';
+      document.getElementById('page-sub').textContent =
+        'Manage ' + org.name + ' — profile and membership.';
+
+      /* Membership table */
+      const members = membersRes.ok ? (await membersRes.json()).members || [] : [];
+      const tbody = document.getElementById('members-body');
+      document.getElementById('members-count').textContent =
+        members.length + (members.length === 1 ? ' user' : ' users');
+
+      if (members.length === 0) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No members yet.</td></tr>';
+      } else {
+        tbody.innerHTML = members.map(m => {
+          const roleClass = m.role === 'admin' ? 'role-admin'
+            : m.role === 'org_admin' ? 'role-org_admin' : 'role-customer';
+          const roleLabel = m.role === 'org_admin' ? 'Org Admin' : (m.role === 'admin' ? 'Super Admin' : 'Customer');
+          const joined = m.created_at
+            ? new Date(m.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+            : '—';
+          return '<tr>' +
+            '<td>' + (m.name ? escapeHtml(m.name) : '—') + '</td>' +
+            '<td style="font-size:11px;color:var(--sub)">' + (m.email ? escapeHtml(m.email) : '—') + '</td>' +
+            '<td><span class="role-badge ' + roleClass + '">' + roleLabel + '</span></td>' +
+            '<td class="tx-device">' + escapeHtml(m.device_id) + '</td>' +
+            '<td class="tx-date">' + joined + '</td>' +
+            '</tr>';
+        }).join('');
+      }
+
+      app.style.display = '';
+      root.style.display = '';
+      overlay.classList.add('hidden');
+    } catch (err) {
+      console.error('Org settings load failed:', err);
+      overlay.classList.add('hidden');
+      app.style.display = '';
+      root.style.display = '';
+      document.getElementById('profile-result').textContent = 'Failed to load settings: ' + err.message;
+      document.getElementById('profile-result').style.display = 'block';
+      document.getElementById('profile-result').className = 'form-result err';
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  /* ── Save profile ── */
+  document.getElementById('profile-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('profile-save-btn');
+    const result = document.getElementById('profile-result');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/org', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({
+          name: document.getElementById('f-name').value.trim(),
+          description: document.getElementById('f-description').value.trim(),
+          contactEmail: document.getElementById('f-email').value.trim(),
+          phone: document.getElementById('f-phone').value.trim(),
+          location: document.getElementById('f-location').value.trim()
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Save failed');
+      const org = data.organization;
+      document.getElementById('org-badge').textContent = org.name;
+      document.getElementById('org-badge').style.display = '';
+      document.getElementById('page-sub').textContent = 'Manage ' + org.name + ' — profile and membership.';
+      showResult(result, 'Organization profile saved.', false);
+    } catch (err) {
+      showResult(result, err.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  loadSettings();
+}());
+</script>
+<script src="/nav-init.js"></script>
+</body>
+</html>
