@@ -224,6 +224,44 @@ async function runMigrations() {
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_id   INTEGER REFERENCES products(id) ON DELETE SET NULL;
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_name VARCHAR(255);
 
+    -- ── Organizations (multi-tenant) ───────────────────────────────────────
+    -- Every user, device, and payment belongs to exactly one organization.
+    -- The 'default' org is created on first boot and pre-existing rows are
+    -- backfilled into it, so single-tenant installs keep working unchanged;
+    -- org-scoped admins (role='org_admin') only ever see their own org.
+    CREATE TABLE IF NOT EXISTS organizations (
+      id         SERIAL       PRIMARY KEY,
+      name       VARCHAR(128) NOT NULL,
+      slug       VARCHAR(64)  NOT NULL UNIQUE,
+      created_at TIMESTAMPTZ  DEFAULT NOW()
+    );
+    -- Tenant profile fields — editable by the org's own admins from the
+    -- Org Settings page. slug stays the stable, read-only tenant identifier;
+    -- everything else is presentation/contact metadata.
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS description   TEXT;
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contact_email VARCHAR(255);
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS phone         VARCHAR(32);
+    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS location      VARCHAR(256);
+
+    INSERT INTO organizations (name, slug)
+    SELECT 'Default Organization', 'default'
+    WHERE NOT EXISTS (SELECT 1 FROM organizations WHERE slug = 'default');
+
+    ALTER TABLE users    ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id);
+    ALTER TABLE devices  ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id);
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id);
+
+    -- Backfill every pre-existing row into the default org (idempotent —
+    -- rows already assigned keep their org). Payments are backfilled from
+    -- their owning user's org when the user has one (which at migration
+    -- time is the default org anyway).
+    UPDATE users    SET organization_id = (SELECT id FROM organizations WHERE slug = 'default') WHERE organization_id IS NULL;
+    UPDATE devices  SET organization_id = (SELECT id FROM organizations WHERE slug = 'default') WHERE organization_id IS NULL;
+    UPDATE payments SET organization_id = COALESCE(
+      (SELECT u.organization_id FROM users u WHERE u.id = payments.user_id),
+      (SELECT id FROM organizations WHERE slug = 'default')
+    ) WHERE organization_id IS NULL;
+
     -- ── Firmware versions (OTA updates) ────────────────────────────────────
     -- One row per published binary; exactly one row per org may be active at
     -- a time (enforced by activateFirmwareVersion's transaction). Checksum
@@ -302,44 +340,6 @@ async function runMigrations() {
       FROM devices d
      WHERE r.device_id = d.device_id
        AND r.organization_id IS NULL;
-
-    -- ── Organizations (multi-tenant) ───────────────────────────────────────
-    -- Every user, device, and payment belongs to exactly one organization.
-    -- The 'default' org is created on first boot and pre-existing rows are
-    -- backfilled into it, so single-tenant installs keep working unchanged;
-    -- org-scoped admins (role='org_admin') only ever see their own org.
-    CREATE TABLE IF NOT EXISTS organizations (
-      id         SERIAL       PRIMARY KEY,
-      name       VARCHAR(128) NOT NULL,
-      slug       VARCHAR(64)  NOT NULL UNIQUE,
-      created_at TIMESTAMPTZ  DEFAULT NOW()
-    );
-    -- Tenant profile fields — editable by the org's own admins from the
-    -- Org Settings page. slug stays the stable, read-only tenant identifier;
-    -- everything else is presentation/contact metadata.
-    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS description   TEXT;
-    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contact_email VARCHAR(255);
-    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS phone         VARCHAR(32);
-    ALTER TABLE organizations ADD COLUMN IF NOT EXISTS location      VARCHAR(256);
-
-    INSERT INTO organizations (name, slug)
-    SELECT 'Default Organization', 'default'
-    WHERE NOT EXISTS (SELECT 1 FROM organizations WHERE slug = 'default');
-
-    ALTER TABLE users    ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id);
-    ALTER TABLE devices  ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id);
-    ALTER TABLE payments ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id);
-
-    -- Backfill every pre-existing row into the default org (idempotent —
-    -- rows already assigned keep their org). Payments are backfilled from
-    -- their owning user's org when the user has one (which at migration
-    -- time is the default org anyway).
-    UPDATE users    SET organization_id = (SELECT id FROM organizations WHERE slug = 'default') WHERE organization_id IS NULL;
-    UPDATE devices  SET organization_id = (SELECT id FROM organizations WHERE slug = 'default') WHERE organization_id IS NULL;
-    UPDATE payments SET organization_id = COALESCE(
-      (SELECT u.organization_id FROM users u WHERE u.id = payments.user_id),
-      (SELECT id FROM organizations WHERE slug = 'default')
-    ) WHERE organization_id IS NULL;
 
     -- Data fix: category icons were originally seeded as emojis; the UI no
     -- longer renders them and the product style is text-only. seedProducts()
