@@ -77,6 +77,8 @@ const state = {
     solarImpact: 1,
     forecast: []
   },
+  // 5-day forecast (OpenWeatherMap) — null until the feed responds
+  weatherForecast: null,
   // AI Models state
   aiModels: {
     completed: 0,
@@ -464,6 +466,22 @@ function renderWeatherWidget() {
   renderRainDrops(weather.condition === 'rainy' || weather.condition === 'thunderstorm');
 }
 
+function renderWeatherForecast() {
+  const wrap = document.getElementById('weather-forecast');
+  const grid = document.getElementById('weather-forecast-days');
+  if (!wrap || !grid) return;
+  const days = state.weatherForecast?.days;
+  if (!days || !days.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  grid.innerHTML = days.map(d => `
+    <div style="text-align:center;padding:10px 4px;border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:9px;color:var(--muted)">${d.label}</div>
+      <div style="font-size:16px;margin:4px 0">${d.emoji}</div>
+      <div style="font-size:11px;font-weight:700">${d.maxTemp}° / ${d.minTemp}°</div>
+      <div style="font-size:9px;color:var(--muted);margin-top:2px">${d.pop ? d.pop + '% rain' : 'dry'}</div>
+    </div>`).join('');
+}
+
 function renderForecast() {
   if (!elements.forecastCells) return;
   
@@ -630,7 +648,23 @@ async function fetchState() {
       const cachedWeather = cache.get('weather', 60000);
       if (cachedWeather) state.weather = cachedWeather;
     }
-    
+
+    // 5-day forecast — non-critical; the strip stays hidden when no
+    // OPENWEATHER_API_KEY is configured (the server 503s).
+    fetchWithTimeout(`${API_BASE}/weather/forecast`, 8000)
+      .then(data => {
+        if (data?.forecast?.days) {
+          state.weatherForecast = data.forecast;
+          cache.set('weatherForecast', data.forecast);
+        }
+        renderWeatherForecast();
+      })
+      .catch(() => {
+        const cached = cache.get('weatherForecast', 600000);
+        if (cached) state.weatherForecast = cached;
+        renderWeatherForecast();
+      });
+
     loadingTracker.updateProgress(55, 'Loading forecasts...');
     
     const now = Date.now();
@@ -705,6 +739,7 @@ async function fetchState() {
     updateClock();
     renderDashboardMetrics();
     renderWeatherWidget();
+    renderWeatherForecast();
     renderForecast();
     renderMaintenanceAlerts();
     renderTransactionCounts();

@@ -281,6 +281,28 @@
     .support-label { font-size: 11px; color: var(--sub); }
     .support-val   { font-size: 12px; font-weight: 600; color: var(--text); margin-top: 1px; }
 
+    /* ── Toggle switch (notification prefs) ── */
+    .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 0; }
+    .switch-info { min-width: 0; }
+    .switch-title { font-size: 13px; font-weight: 600; color: var(--text); }
+    .switch-desc  { font-size: 10px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+    .switch {
+      position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .slider {
+      position: absolute; inset: 0; border-radius: 999px; cursor: pointer;
+      background: rgba(255,255,255,.12); border: 1px solid var(--border);
+      transition: background .2s, border-color .2s;
+    }
+    .switch .slider::before {
+      content: ''; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px;
+      border-radius: 50%; background: var(--muted); transition: transform .2s, background .2s;
+    }
+    .switch input:checked + .slider { background: rgba(16,185,129,.25); border-color: rgba(16,185,129,.5); }
+    .switch input:checked + .slider::before { transform: translateX(20px); background: var(--green); }
+    .switch input:disabled + .slider { opacity: .45; cursor: not-allowed; }
+
     /* ── Alerts ── */
     .alert-banner {
       display: none; padding: 11px 16px; border-radius: 10px; font-size: 12px;
@@ -433,6 +455,16 @@
           <div class="metric-trend">Gen − Load</div>
         </div>
       </div>
+    </div>
+
+    <!-- 5-day weather forecast (OpenWeatherMap) — hidden until the feed
+         responds; loadWeatherForecast() fills and reveals it. -->
+    <div class="panel" id="weather-forecast-panel" style="display:none">
+      <div class="panel-head">
+        <span class="panel-title">5-Day Weather Forecast</span>
+        <span class="chip chip-blue">OpenWeatherMap</span>
+      </div>
+      <div id="weather-forecast-days" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:8px;padding:14px"></div>
     </div>
 
     <div class="panel">
@@ -631,6 +663,19 @@
         <div class="info-row"><span class="info-key">Efficiency Score</span><span class="info-val" style="color:var(--green)">94%</span></div>
       </div>
       <div class="account-section">
+        <div class="account-section-title">Notifications</div>
+        <div class="switch-row">
+          <div class="switch-info">
+            <div class="switch-title">Daily weather & energy tips</div>
+            <div class="switch-desc" id="weather-alerts-desc">An evening SMS/email with tomorrow's forecast and a personalised energy tip. Delivered around 18:00 EAT.</div>
+          </div>
+          <label class="switch" aria-label="Daily weather and energy tips">
+            <input type="checkbox" id="weather-alerts-toggle" />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+      <div class="account-section">
         <div class="account-section-title">Support</div>
         <div class="support-row">
           <div class="support-icon" style="background:rgba(16,185,129,.1)">Tel</div>
@@ -749,8 +794,19 @@ async function loadState() {
       email:         data.user.email,
       phone:         data.user.phone,
       walletBalance: data.user.walletBalance,
-      role:          'customer'
+      role:          'customer',
+      dailyWeatherAlerts: data.user.dailyWeatherAlerts !== false
     };
+    /* Sync the Account tab's notification toggle to the server's opt-in
+       state. The listener is attached once; checked re-syncs on every 30s
+       poll, but is skipped while a toggle request is in flight (the input
+       is disabled during that window, so we'd fight the user's action). */
+    const wt = document.getElementById('weather-alerts-toggle');
+    if (wt && !wt.disabled) wt.checked = userInfo.dailyWeatherAlerts;
+    if (wt && !wt.dataset.initialized) {
+      wt.dataset.initialized = '1';
+      wt.addEventListener('change', onWeatherAlertsToggle);
+    }
 
     state = {
       walletBalance: data.user.walletBalance,
@@ -778,6 +834,33 @@ async function loadState() {
     }
   } catch (e) {
     console.warn('loadState error:', e);
+  }
+}
+
+/* ══ DAILY WEATHER ALERTS OPT-IN ══ */
+async function onWeatherAlertsToggle() {
+  const wt = document.getElementById('weather-alerts-toggle');
+  if (!wt) return;
+  wt.disabled = true;
+  const enabled = wt.checked;
+  try {
+    const r = await authFetch(`${API}/user/daily-weather-alerts`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled })
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    userInfo.dailyWeatherAlerts = enabled;
+    const desc = document.getElementById('weather-alerts-desc');
+    if (desc) {
+      desc.textContent = enabled
+        ? 'On — you\'ll get an evening SMS/email with tomorrow\'s forecast and an energy tip.'
+        : 'Off — you won\'t receive daily weather tips. You can turn them back on anytime.';
+    }
+  } catch (e) {
+    wt.checked = !enabled; // revert on failure
+    console.warn('Failed to update weather alert preference:', e);
+  } finally {
+    wt.disabled = false;
   }
 }
 
@@ -1189,10 +1272,38 @@ function logout() {
   window.location.href = '/login.html';
 }
 
+/* ══ 5-DAY WEATHER FORECAST — OpenWeatherMap (public endpoint, same as the
+   current-conditions feed; hidden whenever the server has no key) ══ */
+async function loadWeatherForecast() {
+  try {
+    const panel = document.getElementById('weather-forecast-panel');
+    const grid  = document.getElementById('weather-forecast-days');
+    if (!panel || !grid) return;
+    const r = await fetch(`${API}/weather/forecast`);
+    if (!r.ok) { panel.style.display = 'none'; return; }
+    const data = await r.json();
+    const days = data?.forecast?.days;
+    if (!days || !days.length) { panel.style.display = 'none'; return; }
+    grid.innerHTML = days.map(d => `
+      <div style="text-align:center;padding:10px 4px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+        <div style="font-size:9px;color:var(--muted)">${d.label}</div>
+        <div style="font-size:16px;margin:4px 0">${d.emoji}</div>
+        <div style="font-size:11px;font-weight:700">${d.maxTemp}° / ${d.minTemp}°</div>
+        <div style="font-size:9px;color:var(--muted);margin-top:2px">${d.pop ? d.pop + '% rain' : 'dry'}</div>
+      </div>`).join('');
+    panel.style.display = 'block';
+  } catch (e) {
+    /* hide the card on any failure — the forecast is a nice-to-have */
+    const panel = document.getElementById('weather-forecast-panel');
+    if (panel) panel.style.display = 'none';
+  }
+}
+
 /* ══ BOOT ══ */
 async function boot() {
   document.getElementById('greeting-time').textContent = greetingTime();
   await loadState();   /* loadState() now also populates allTxs and renders recent txs */
+  loadWeatherForecast();
   document.getElementById('app').style.display = 'block';
   document.getElementById('loading-overlay').classList.add('hidden');
 

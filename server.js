@@ -39,8 +39,8 @@ const helmet      = require('helmet');
 const rateLimit   = require('express-rate-limit');
 const compression = require('compression');
 const { body, validationResult } = require('express-validator');
-const { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, resendConfigured } = require('./mailer');
-const { sendLowBalanceSms, sendPowerCutSms, sendSms, smsConfigured } = require('./sms');
+const { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, sendDailyWeatherEmail, resendConfigured } = require('./mailer');
+const { sendLowBalanceSms, sendPowerCutSms, sendSms, sendDailyWeatherSms, smsConfigured } = require('./sms');
 const jwt = require('jsonwebtoken');
 
 const {
@@ -84,6 +84,8 @@ const {
   getAlerts,
   getPaymentsByUserId,
   getAlertsByUserId,
+  getDailyWeatherRecipients,
+  setDailyWeatherAlerts,
   getLatestEnergy,
   savePrediction,
   pruneOldRows,
@@ -767,6 +769,131 @@ app.get('/api/weather', async (req, res) => {
   res.json({ weather });
 });
 
+/* ── OpenWeatherMap 5-day forecast (optional — needs OPENWEATHER_API_KEY) ──
+   Kept separate from /api/weather (current conditions) so the two feeds stay
+   decoupled: a multi-day outlook shows up on the dashboards whenever a key
+   is configured, and the current-conditions pipeline is untouched. The free
+   tier allows 1,000 calls/day; a 1-hour server-side cache keeps us at ~24. */
+function openweatherConfigured() {
+  return !!process.env.OPENWEATHER_API_KEY;
+}
+
+let _owmCache = null; // { at, data }
+const OWM_CACHE_TTL = 60 * 60 * 1000;
+
+/* OWM icon code → emoji, so the frontends don't need their own mapping. */
+function owmIconEmoji(icon) {
+  const map = {
+    '01d': '☀️', '01n': '🌙',
+    '02d': '🌤️', '02n': '🌙',
+    '03d': '☁️', '03n': '☁️',
+    '04d': '☁️', '04n': '☁️',
+    '09d': '🌧️', '09n': '🌧️',
+    '10d': '🌧️', '10n': '🌧️',
+    '11d': '⛈️', '11n': '⛈️',
+    '13d': '❄️', '13n': '❄️',
+    '50d': '🌫️', '50n': '🌫️'
+  };
+  return map[icon] || '🌡️';
+}
+
+/* Group the 40 three-hourly entries into local days: per day we keep the
+   min/max temperature, the highest precipitation probability, and the
+   condition/icon of the entry nearest local noon (most representative of
+   the day). OWM timestamps are UTC; the city's `timezone` offset seconds
+   shift them into local time. */
+function groupOwmByDay(list, timezoneOffsetSec) {
+  const days = [];
+  const byKey = new Map();
+  const localDay = (dt) => {
+    const d = new Date((dt + (timezoneOffsetSec || 0)) * 1000);
+    const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    return {
+      key,
+      hours: d.getUTCHours(),
+      label: d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })
+    };
+  };
+  for (const item of list) {
+    const { key, hours, label } = localDay(item.dt);
+    let day = byKey.get(key);
+    if (!day) {
+      day = { date: key, label, minTemp: Infinity, maxTemp: -Infinity, pop: 0, icon: '01d', condition: 'Clear', noonDist: Infinity };
+      byKey.set(key, day);
+      days.push(day);
+    }
+    day.minTemp = Math.min(day.minTemp, item.main?.temp ?? day.minTemp);
+    day.maxTemp = Math.max(day.maxTemp, item.main?.temp ?? day.maxTemp);
+    day.pop = Math.max(day.pop, Number(item.pop || 0));
+    const dist = Math.abs(hours - 12);
+    if (dist < day.noonDist) {
+      day.noonDist = dist;
+      day.icon = item.weather?.[0]?.icon || day.icon;
+      day.condition = item.weather?.[0]?.main || day.condition;
+    }
+  }
+  return days.slice(0, 5).map(({ noonDist: _noonDist, ...d }) => ({
+    ...d,
+    minTemp: Math.round(d.minTemp),
+    maxTemp: Math.round(d.maxTemp),
+    pop: Math.round(d.pop * 100),
+    emoji: owmIconEmoji(d.icon)
+  }));
+}
+
+/* Fetch the grouped 5-day forecast payload, reusing the 1-hour cache. Used
+   by both the /api/weather/forecast route and the daily alert cron — a
+   single fetch serves a day's worth of dashboard refreshes AND the evening
+   digest, keeping us far under OWM's 1,000 calls/day free tier. Never
+   throws: returns { ok: true, payload } or { ok: false, reason }. */
+async function fetchOwmForecast() {
+  if (!openweatherConfigured()) {
+    return { ok: false, reason: 'OpenWeatherMap not configured (OPENWEATHER_API_KEY)' };
+  }
+  if (_owmCache && Date.now() - _owmCache.at < OWM_CACHE_TTL) {
+    return { ok: true, payload: _owmCache.data };
+  }
+  try {
+    const { data } = await axios.get('https://api.openweathermap.org/data/2.5/forecast', {
+      params: {
+        lat: WEATHER_LAT,
+        lon: WEATHER_LON,
+        appid: process.env.OPENWEATHER_API_KEY,
+        units: 'metric'
+      },
+      timeout: 8000
+    });
+    const payload = {
+      forecast: {
+        days: groupOwmByDay(data.list || [], data.city?.timezone),
+        source: 'openweathermap',
+        generatedAt: new Date().toISOString(),
+        city: data.city?.name || null
+      }
+    };
+    _owmCache = { at: Date.now(), data: payload };
+    return { ok: true, payload };
+  } catch (err) {
+    console.warn('[Weather] OpenWeatherMap forecast failed:', err.response?.status || err.code || err.message);
+    return {
+      ok: false,
+      reason: err.response?.status ? `upstream HTTP ${err.response.status}` : (err.code || err.message)
+    };
+  }
+}
+
+app.get('/api/weather/forecast', async (req, res) => {
+  const result = await fetchOwmForecast();
+  if (!result.ok) {
+    return res.status(503).json({
+      error:   'OpenWeatherMap forecast unavailable',
+      message: result.reason,
+      forecast: null
+    });
+  }
+  res.json(result.payload);
+});
+
 app.get('/api/forecast', async (req, res) => {
   const deviceId = req.query.deviceId || 'DEMO-001';
   try {
@@ -1079,12 +1206,33 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
       role:           req.user.role || (user.device_id === 'ADMIN' ? 'admin' : 'customer'),
       organizationId: user.organization_id ?? null,
       organization,
-      walletBalance:  user.wallet_balance
+      walletBalance:  user.wallet_balance,
+      dailyWeatherAlerts: user.daily_weather_alerts !== false
     });
   } catch (err) {
     console.error('Auth /me error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load user', message: err.message });
+  }
+});
+
+/* ── Daily weather alert opt-in/out — authenticated, per-user ──────────────
+   The customer portal's Account tab toggle calls this. Any signed-in user
+   may change their own preference; there's no cross-user surface here. */
+app.post('/api/user/daily-weather-alerts', authMiddleware, async (req, res) => {
+  const enabled = req.body?.enabled;
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'enabled must be a boolean' });
+  }
+  try {
+    const user = await getUserById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    await setDailyWeatherAlerts(user.id, enabled);
+    res.json({ dailyWeatherAlerts: enabled });
+  } catch (err) {
+    console.error('Daily weather alert toggle error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to update preference', message: err.message });
   }
 });
 
@@ -1140,7 +1288,8 @@ app.get('/api/customer/summary', authMiddleware, async (req, res) => {
         name:          user.name   || null,
         email:         user.email  || null,
         phone:         user.phone  || null,
-        walletBalance: user.wallet_balance
+        walletBalance: user.wallet_balance,
+        dailyWeatherAlerts: user.daily_weather_alerts !== false
       },
       device: device
         ? { deviceId: device.device_id, name: device.name, location: device.location, relayState: device.relay_state, isActive: device.is_active }
@@ -2308,6 +2457,74 @@ cron.schedule('*/5 * * * *', async () => {
   await processRetryQueue().catch(err => console.error('Retry queue error:', err.message));
 });
 
+/* Daily weather + energy-tip digest — every day at 15:00 UTC = 18:00 EAT,
+   so Nairobi customers get the next-day outlook in the evening. Reads the
+   same 1-hour-cached OpenWeatherMap feed as /api/weather/forecast (no extra
+   upstream calls), then sends each opted-in customer with a reachable
+   phone/email a single-segment SMS and/or email. Entirely optional: with no
+   OPENWEATHER_API_KEY, or zero recipients, it logs and moves on. Fire-and-
+   forget sends — a dead SMTP/API gateway can never break the cron loop. */
+async function runDailyWeatherAlerts() {
+  const result = await fetchOwmForecast();
+  if (!result.ok) {
+    console.log(`[CRON] Daily weather alerts skipped — ${result.reason}`);
+    return;
+  }
+  const forecast = result.payload.forecast;
+  const days     = forecast.days || [];
+  /* The digest previews TOMORROW (index 1); if the feed only has today,
+     fall back to today rather than sending nothing. The messages say
+     "Today" in that degraded case instead of lying about the date. */
+  const isTomorrow = days.length > 1;
+  const day = isTomorrow ? days[1] : days[0];
+  if (!day) {
+    console.log('[CRON] Daily weather alerts skipped — forecast feed empty');
+    return;
+  }
+
+  const recipients = await getDailyWeatherRecipients();
+  if (recipients.length === 0) {
+    console.log('[CRON] Daily weather alerts — no opted-in recipients with contact info');
+    return;
+  }
+
+  /* Send in small batches (awaiting each), so the counters below are real
+     and a large customer base can't hammer Africa's Talking / Resend with
+     a single-minute burst. A failed send never throws (sms.js/mailer.js
+     are fire-and-forget and swallow their own errors), so one bad number
+     can't take down the batch. */
+  const tasks = [];
+  for (const u of recipients) {
+    if (u.phone) {
+      tasks.push(sendDailyWeatherSms(u.phone, { name: u.name, day, city: forecast.city })
+        .then(r => ({ kind: 'sms', ok: !!r?.ok }))
+        .catch(() => ({ kind: 'sms', ok: false })));
+    }
+    if (u.email) {
+      tasks.push(sendDailyWeatherEmail(u.email, { name: u.name, day, city: forecast.city, days })
+        .then(ok => ({ kind: 'email', ok: !!ok }))
+        .catch(() => ({ kind: 'email', ok: false })));
+    }
+  }
+  let smsOk = 0, emailOk = 0;
+  for (let i = 0; i < tasks.length; i += 20) {
+    const results = await Promise.allSettled(tasks.slice(i, i + 20).map(t => t));
+    for (const r of results) {
+      if (r.status !== 'fulfilled') continue;
+      if (r.value.kind === 'sms' && r.value.ok) smsOk++;
+      if (r.value.kind === 'email' && r.value.ok) emailOk++;
+    }
+  }
+  const dayWord = isTomorrow ? 'tomorrow' : 'today';
+  console.log(`[CRON] Daily weather alerts: ${recipients.length} recipients · ${smsOk} SMS · ${emailOk} emails sent (${forecast.city}, ${day.label} ${dayWord})`);
+}
+
+/* 18:00 EAT (15:00 UTC) — East Africa does not observe DST, so the offset
+   is fixed year-round. */
+cron.schedule('0 15 * * *', () => {
+  runDailyWeatherAlerts().catch(err => console.error('Daily weather alert cron error:', err.message));
+});
+
 /* Live telemetry simulation (every 30 s) — keeps the demo fleet alive.
    Each profiled device has its own battery/generation character so the
    fleet panel shows a realistic mix without hardware: healthy units,
@@ -2435,6 +2652,7 @@ async function startup() {
     console.log(`  Device telemetry:  ${process.env.DEVICE_API_KEY ? 'key required' : 'OPEN — DEVICE_API_KEY not set, any deviceId accepted unauthenticated'}`);
     console.log(`  Email (Resend):    ${resendConfigured() ? 'configured' : 'disabled — RESEND_API_KEY not set, login alerts/signup emails skipped'}`);
     console.log(`  SMS alerts:        ${smsConfigured() ? `Africa's Talking (${process.env.AT_USERNAME === 'sandbox' ? 'sandbox — simulator only, no real phones' : process.env.AT_USERNAME})` : 'disabled — AT_USERNAME/AT_API_KEY not set, low-balance & power-cut SMS skipped'}`);
+    console.log(`  Daily weather tips:${openweatherConfigured() ? 'active — 18:00 EAT SMS/email digest to opted-in customers' : 'disabled — OPENWEATHER_API_KEY not set, no daily weather digest'}`);
     console.log(`  Error monitoring:  ${sentryConfigured() ? 'Sentry active' : 'disabled — SENTRY_DSN not set'}`);
     console.log(`  Admin email:       ${process.env.ADMIN_EMAIL || 'admin@solarpayg.com (default)'}`);
     console.log(`  Customer email:    ${process.env.CUSTOMER_EMAIL || 'customer@example.com (default)'}`);
@@ -2537,4 +2755,4 @@ app.use((err, req, res, _next) => {
 /* Nothing requires this module today (production runs `node server.js`
    directly, and the test suites spawn it as a child process), but export the
    app plus the per-device rate limiter for any future in-process consumer. */
-module.exports = { app, checkDeviceRateLimit, _deviceRateLimits };
+module.exports = { app, checkDeviceRateLimit, _deviceRateLimits, runDailyWeatherAlerts };

@@ -13,6 +13,9 @@
  */
 
 const axios = require('axios');
+/* Pure message builders — no dependency on sms.js, so a top-level require
+   is safe (no circular import) and matches the file's style. */
+const { buildWeatherSms } = require('./weather-alerts');
 
 const SEND_TIMEOUT = 10_000;
 
@@ -104,4 +107,12 @@ async function sendPowerCutSms(phone, { name }) {
     + 'Top up via M-Pesa to restore it right away.');
 }
 
-module.exports = { smsConfigured, normalizePhone, sendSms, sendLowBalanceSms, sendPowerCutSms };
+/* Daily weather + energy-tip alert — content is built in weather-alerts.js
+   (buildWeatherSms), which already keeps the whole message under 160 chars
+   (ASCII-only, so one GSM-7 segment) for a single-segment cost. Fire-and-
+   forget like the rest. */
+async function sendDailyWeatherSms(phone, { name, day, city }) {
+  return sendSms(phone, buildWeatherSms({ name, day, city }));
+}
+
+module.exports = { smsConfigured, normalizePhone, sendSms, sendLowBalanceSms, sendPowerCutSms, sendDailyWeatherSms };

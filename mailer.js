@@ -17,6 +17,9 @@
  */
 
 const { Resend } = require('resend');
+/* Pure message builders — no dependency on mailer.js (safe top-level
+   require, matching the file's style). */
+const { buildWeatherEmail } = require('./weather-alerts');
 
 function resendConfigured() {
   return !!process.env.RESEND_API_KEY;
@@ -149,4 +152,30 @@ If you didn't request this, you can safely ignore this email — your password i
   }
 }
 
-module.exports = { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, resendConfigured };
+/* Daily weather + energy-tip alert — content is built in weather-alerts.js
+   (buildWeatherEmail). Fire-and-forget; a failed daily digest must never
+   affect anything else. */
+async function sendDailyWeatherEmail(toEmail, { name, day, city, days }) {
+  try {
+    const client = getResendClient();
+    if (!client || !canDeliverEmail(toEmail)) return false;
+
+    const { error } = await client.emails.send({
+      from:    process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
+      to:      toEmail,
+      subject: `SolGrid daily outlook — ${city || 'your area'} (${day?.label || ''})`,
+      text:    buildWeatherEmail({ name, day, city, days })
+    });
+
+    if (error) {
+      console.warn('[Mailer] Resend rejected daily weather email:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Mailer] Failed to send daily weather email:', err.message);
+    return false;
+  }
+}
+
+module.exports = { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, sendDailyWeatherEmail, resendConfigured };

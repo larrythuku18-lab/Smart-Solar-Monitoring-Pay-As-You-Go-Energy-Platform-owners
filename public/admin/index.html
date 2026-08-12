@@ -349,6 +349,12 @@
           <div class="weather-cell-value" style="color:var(--green)" id="weather-wind">5 km/h</div>
         </div>
       </div>
+      <!-- 5-day forecast (OpenWeatherMap) — hidden until OPENWEATHER_API_KEY
+           is configured; index.js fills and reveals it. -->
+      <div id="weather-forecast" style="display:none;border-top:1px solid var(--border);padding:12px 18px">
+        <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">5-Day Forecast · OpenWeatherMap</div>
+        <div id="weather-forecast-days" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:8px"></div>
+      </div>
       <div style="padding:10px 18px;border-top:1px solid var(--border);color:var(--teal);font-size:10px" id="weather-message">Loading weather data…</div>
     </div>
 

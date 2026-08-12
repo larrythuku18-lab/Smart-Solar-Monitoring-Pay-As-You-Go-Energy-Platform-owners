@@ -96,6 +96,9 @@ async function runMigrations() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ;
     -- Widen pin column to accommodate bcrypt hashes (was VARCHAR(20), too small for 60-char hashes)
     ALTER TABLE users ALTER COLUMN pin TYPE VARCHAR(255);
+    -- Daily weather + energy-tip alert opt-in (default ON — customers can
+    -- turn it off from the Account tab of their portal).
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_weather_alerts BOOLEAN DEFAULT TRUE;
 
     -- ── Devices ────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS devices (
@@ -762,6 +765,25 @@ async function setPasswordResetToken(userId, tokenHash, expiresAt) {
     'UPDATE users SET reset_token_hash = $1, reset_token_expires = $2 WHERE id = $3',
     [tokenHash, expiresAt, userId]
   );
+}
+
+/* ── Daily weather alert recipients ───────────────────────────────────────
+   Everyone who opted in AND has at least one reachable channel (phone or
+   email). The daily cron builds one message per customer and sends it to
+   whichever channels exist — sms.js/mailer.js no-op for the missing ones. */
+async function getDailyWeatherRecipients() {
+  const { rows } = await q(`
+    SELECT id, name, device_id, phone, email
+    FROM users
+    WHERE role = 'customer'
+      AND daily_weather_alerts = TRUE
+      AND (phone IS NOT NULL AND phone <> '' OR email IS NOT NULL AND email <> '')
+  `);
+  return rows;
+}
+
+async function setDailyWeatherAlerts(userId, enabled) {
+  await q('UPDATE users SET daily_weather_alerts = $2 WHERE id = $1', [userId, !!enabled]);
 }
 
 async function getUserByValidResetToken(tokenHash) {
@@ -1844,6 +1866,9 @@ module.exports = {
   getAlerts,
   getAlertSeverityCounts,
   getAlertsByUserId,
+  /* daily weather alerts */
+  getDailyWeatherRecipients,
+  setDailyWeatherAlerts,
   /* ai */
   savePrediction,
   pruneOldRows,
