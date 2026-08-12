@@ -27,10 +27,27 @@ process.env.RESEND_API_KEY = '';
 process.env.AT_USERNAME = '';
 process.env.AT_API_KEY = '';
 
+/* Hard timeout on every request in this suite. Three servers boot at once
+   against a shared DB, and a child that stalls (cold start, pool
+   exhaustion) used to leave fetch() promises unresolved forever, hanging
+   the whole file. Failing fast beats hanging — the abort error names the
+   request that hit the stalled child. */
+const _fetch = globalThis.fetch;
+globalThis.fetch = (url, opts = {}) =>
+  _fetch(url, { ...opts, signal: opts.signal || AbortSignal.timeout(10_000) });
+
 /* Must not collide with the other suites' ports (api.test.js=3911,
    telemetry-security.test.js=3922). */
 const PORT = Number(process.env.TEST_OTA_PORT || 3931);
 const OFF_PORT = PORT + 1;
+
+/* Production pool defaults (min 2 eager connections) are fine for one
+   server, but this suite boots THREE at once (3931, 3932, 4031). With the
+   default each child holds 2 idle connections against the shared DB — on a
+   tight connection budget that was enough to stall the 3rd child's boot
+   ("Connection terminated due to connection timeout") or starve the whole
+   run. Children get lazy, capped pools instead. */
+const CHILD_DB_POOL = { DB_POOL_MIN: '0', DB_POOL_MAX: '5' };
 
 /* Versions this run publishes — deleted from the shared local DB in after()
    so repeated runs don't accumulate firmware_versions rows. */
@@ -60,7 +77,7 @@ let server;
 let offServer;
 
 async function spawnAndWait(port, envOverrides, label) {
-  const env = { ...process.env, PORT: String(port), FIRMWARE_DIR: TMP_DIR, ...envOverrides };
+  const env = { ...process.env, PORT: String(port), FIRMWARE_DIR: TMP_DIR, ...CHILD_DB_POOL, ...envOverrides };
   if (!('OTA_ENABLED' in envOverrides)) delete env.OTA_ENABLED;
 
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {

@@ -230,17 +230,25 @@ describe('M-Pesa callback security', () => {
     assert.equal(r1.status, 200);
 
     /* The handler processes async after the 200 — poll the DB row instead
-       of sleeping a fixed duration (which flakes on slow machines). */
+       of sleeping a fixed duration (which flakes on slow machines).
+       completePayment() commits `status = 'completed'` in one statement and
+       credits the wallet in the very next one, so the completed flag can
+       land a few ms before the balance does — poll for BOTH before
+       asserting, or a fast machine catches the gap and the wallet read
+       races the credit. */
     const stored = await (async () => {
       const deadline = Date.now() + 5000;
       while (Date.now() < deadline) {
         const row = await db.getPaymentByCheckoutId(checkoutRequestId);
-        if (row?.status === 'completed') return row;
+        if (row?.status === 'completed') {
+          const u = await db.getUserById(user.id);
+          if (Number(u.wallet_balance) === 75) return row;
+        }
         await new Promise(r => setTimeout(r, 100));
       }
       return null;
     })();
-    assert.ok(stored, 'valid callback must complete the payment (timed out waiting)');
+    assert.ok(stored, 'valid callback must complete the payment and credit the wallet (timed out waiting)');
     assert.equal(stored.status, 'completed', 'valid callback must complete the payment');
     const wallet = await db.getUserById(user.id);
     assert.equal(Number(wallet.wallet_balance), 75, 'wallet credited once');
