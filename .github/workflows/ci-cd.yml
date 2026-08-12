@@ -40,6 +40,15 @@ jobs:
     - name: Run linting
       run: npm run lint 2>/dev/null || echo "No lint script defined"
 
+    - name: Clear orphaned test servers
+      # npm's `pretest` hook runs this same script automatically before
+      # `npm test` (that's the local-dev protection); this explicit step
+      # keeps the cleanup even if the test command is ever changed to bypass
+      # npm scripts, and makes it visible in the CI log. A fresh runner has
+      # nothing to clear, so this normally prints "no orphaned test servers"
+      # and exits in well under a second.
+      run: node scripts/cleanup-test-servers.js
+
     - name: Run tests
       run: npm test
       env:

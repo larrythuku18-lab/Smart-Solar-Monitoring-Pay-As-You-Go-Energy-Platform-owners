@@ -47,6 +47,9 @@ for (const line of ssOutput.split('\n')) {
      server.js. Never touch an unrelated listener that happens to occupy a
      test port. */
   let cmdline = '';
+  /* The PID comes from the OS's own socket table (ss output) and is only
+     read from, never written — the lint warning here is a false positive. */
+  // eslint-disable-next-line security/detect-non-literal-fs-filename
   try { cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8'); } catch { continue; }
   if (!cmdline.includes('server.js')) continue;
   try {
