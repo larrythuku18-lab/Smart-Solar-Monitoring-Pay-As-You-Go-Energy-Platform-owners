@@ -19,6 +19,14 @@ const obs = require('./observability');
 
 const REQUEST_TIMEOUT = 5_000;
 
+function isPermanentRelayFailure(message) {
+  return message.startsWith('Device not found:');
+}
+
+function shouldQueueRelayRetry(err) {
+  return !isPermanentRelayFailure(err.message);
+}
+
 /**
  * Send an HTTP relay command to the physical ESP32 device,
  * then persist the new state in PostgreSQL.
@@ -52,8 +60,10 @@ async function unlockRelay(deviceId) {
     obs.recordRelay('unlock', 'queued');
     obs.log.error('[RELAY] Failed to unlock', { deviceId, error: err.message });
     await setRelayState(deviceId, true);
-    queuePendingCommand(deviceId, 'unlock', err.message).catch(console.error);
-    return { success: false, error: err.message, queued: true, stateUpdated: true };
+    if (shouldQueueRelayRetry(err)) {
+      queuePendingCommand(deviceId, 'unlock', err.message).catch(console.error);
+    }
+    return { success: false, error: err.message, queued: shouldQueueRelayRetry(err), stateUpdated: true };
   }
 }
 
@@ -69,8 +79,10 @@ async function lockRelay(deviceId) {
     obs.recordRelay('lock', 'queued');
     obs.log.error('[RELAY] Failed to lock', { deviceId, error: err.message });
     await setRelayState(deviceId, false);
-    queuePendingCommand(deviceId, 'lock', err.message).catch(console.error);
-    return { success: false, error: err.message, queued: true, stateUpdated: true };
+    if (shouldQueueRelayRetry(err)) {
+      queuePendingCommand(deviceId, 'lock', err.message).catch(console.error);
+    }
+    return { success: false, error: err.message, queued: shouldQueueRelayRetry(err), stateUpdated: true };
   }
 }
 
@@ -82,8 +94,14 @@ async function processRetryQueue() {
       await removePendingCommand(cmd.id);
       console.log(`[RELAY] Retry succeeded for ${cmd.device_id} (${cmd.command})`);
     } catch (err) {
-      await updatePendingCommand(cmd.id, cmd.attempts + 1, err.message);
-      console.warn(`Retry failed for ${cmd.device_id}: ${err.message}`);
+      const nextAttempts = cmd.attempts + 1;
+      if (isPermanentRelayFailure(err.message) || nextAttempts >= cmd.max_attempts) {
+        await removePendingCommand(cmd.id);
+        console.warn(`[RELAY] Dropped retry for ${cmd.device_id}: ${err.message}`);
+      } else {
+        await updatePendingCommand(cmd.id, nextAttempts, err.message);
+        console.warn(`[RELAY] Retry failed for ${cmd.device_id}: ${err.message}`);
+      }
     }
   }
 }

@@ -258,6 +258,7 @@ describe('M-Pesa callback security', () => {
     assert.equal(Number(wallet2.wallet_balance), 75, 'replayed callback must not double-credit');
 
     await db.pool.query('DELETE FROM payments WHERE checkout_request_id = $1', [checkoutRequestId]);
+    await db.pool.query('DELETE FROM pending_commands WHERE device_id = $1', [user.device_id]);
     await db.pool.query('DELETE FROM users WHERE id = $1', [user.id]);
   });
 });

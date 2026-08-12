@@ -22,6 +22,24 @@ function resendConfigured() {
   return !!process.env.RESEND_API_KEY;
 }
 
+/** Resend's onboarding@resend.dev sender only delivers to the account owner. */
+function resendSandboxMode() {
+  const from = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+  return from.includes('@resend.dev');
+}
+
+function resendSandboxAllowedRecipient() {
+  return process.env.RESEND_SANDBOX_RECIPIENT || process.env.ADMIN_EMAIL || null;
+}
+
+function canDeliverEmail(toEmail) {
+  if (!toEmail) return false;
+  if (!resendSandboxMode()) return true;
+  const allowed = resendSandboxAllowedRecipient();
+  if (!allowed) return false;
+  return toEmail.toLowerCase() === allowed.toLowerCase();
+}
+
 let resendClient = null;
 function getResendClient() {
   if (!resendConfigured()) return null;
@@ -36,7 +54,7 @@ function getResendClient() {
 async function sendLoginAlert(toEmail, { name, deviceId, role, time }) {
   try {
     const client = getResendClient();
-    if (!client || !toEmail) return;
+    if (!client || !canDeliverEmail(toEmail)) return;
 
     const { error } = await client.emails.send({
       from:    process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
@@ -70,7 +88,7 @@ If this was you, no action is needed. If you don't recognize this activity, plea
 async function sendSignupConfirmation(toEmail, { name }) {
   try {
     const client = getResendClient();
-    if (!client || !toEmail) return false;
+    if (!client || !canDeliverEmail(toEmail)) return false;
 
     const { error } = await client.emails.send({
       from:    process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
@@ -101,7 +119,7 @@ Your SolGrid account has been created successfully. You can now log in and top u
 async function sendPasswordReset(toEmail, { name, resetUrl }) {
   try {
     const client = getResendClient();
-    if (!client || !toEmail) return false;
+    if (!client || !canDeliverEmail(toEmail)) return false;
 
     const { error } = await client.emails.send({
       from:    process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
