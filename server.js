@@ -42,6 +42,7 @@ const { body, validationResult } = require('express-validator');
 const { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, sendDailyWeatherEmail, resendConfigured } = require('./mailer');
 const { sendLowBalanceSms, sendPowerCutSms, sendSms, sendDailyWeatherSms, smsConfigured } = require('./sms');
 const { resolveWeatherCoords } = require('./geocode');
+const realtime = require('./realtime');
 const jwt = require('jsonwebtoken');
 
 const {
@@ -1920,6 +1921,44 @@ app.get('/api/engineer/devices/:deviceId', authMiddleware, async (req, res) => {
     if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load device diagnostics', message: err.message });
   }
+});
+
+/* ── Realtime live feed (SSE) ─────────────────────────────────────────────
+   Server-sent events push telemetry to the Analysis Board and Engineer
+   panel the instant it lands — replacing the boards' polling + simulated
+   KPI jitter with genuinely live data (see realtime.js).
+
+   Auth: the browser connects over fetch (NOT EventSource, which can't send
+   the JWT header), so a Bearer token is expected; ?token= is also accepted
+   for curl/tooling, mirroring the ?debug=1 inline-JWT pattern above. Staff
+   roles only: super-admins and engineers see the whole fleet, org admins
+   only their own org's events (db.js broadcasts are org-scoped). The
+   connect snapshot includes the currently-online device ids so boards can
+   seed their fleet stats with a real count instead of 0. */
+app.get('/api/live', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = (authHeader && authHeader.startsWith('Bearer ') && authHeader.slice(7)) || req.query.token;
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+  let decoded;
+  try { decoded = jwt.verify(token, process.env.JWT_SECRET); } catch {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  if (!['admin', 'org_admin', 'engineer'].includes(decoded.role)) {
+    return res.status(403).json({ error: 'Live feed requires staff access' });
+  }
+
+  const orgId = decoded.role === 'org_admin' ? (decoded.organizationId ?? null) : null;
+  /* Seed the snapshot's online-device list within the caller's scope so a
+     freshly opened board shows a real online count, not just devices that
+     report after connect. */
+  let onlineDevices = [];
+  try {
+    const devices = await getAllDevices(orgId);
+    onlineDevices = devices.filter(d => d.online).map(d => d.device_id);
+  } catch (err) {
+    console.warn('[Live] online-device snapshot failed:', err.message);
+  }
+  realtime.subscribe(req, res, { role: decoded.role, orgId, snapshot: { onlineCount: onlineDevices.length, onlineDevices } });
 });
 
 /* Link a device to a customer account, or unlink it — admin-only.

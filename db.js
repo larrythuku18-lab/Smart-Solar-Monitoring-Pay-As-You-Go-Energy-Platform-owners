@@ -890,6 +890,30 @@ async function hasRecentAlert(userId, type, hours) {
    DEVICE QUERIES
 ══════════════════════════════════════════════════════════════════════════ */
 
+const realtime = require('./realtime');
+
+/* Cached device→org resolution for live broadcasts. Every broadcast needs
+   the device's org to scope delivery to the right tenant, but re-querying
+   on the hot telemetry path would double every insert. Org assignment
+   rarely changes, so a 10-minute TTL is plenty — worst case a re-assigned
+   unit's events are scoped to the old org for up to 10 minutes. */
+const _orgCache = new Map(); // deviceId -> { orgId, at }
+const ORG_CACHE_TTL_MS = 10 * 60 * 1000;
+
+async function deviceOrgCached(deviceId) {
+  const hit = _orgCache.get(deviceId);
+  if (hit && Date.now() - hit.at < ORG_CACHE_TTL_MS) return hit.orgId;
+  try {
+    const { rows } = await q('SELECT organization_id FROM devices WHERE device_id = $1', [deviceId]);
+    const orgId = rows[0]?.organization_id ?? null;
+    _orgCache.set(deviceId, { orgId, at: Date.now() });
+    return orgId;
+  } catch (err) {
+    console.warn('[Live] org lookup failed for', deviceId, ':', err.message);
+    return null;
+  }
+}
+
 async function getDevice(deviceId) {
   const { rows } = await q('SELECT * FROM devices WHERE device_id = $1', [deviceId]);
   return rows[0] ?? null;
@@ -925,6 +949,15 @@ async function upsertDeviceHeartbeat({ deviceId, ip, name, firmwareVersion, pane
            panel_type       = COALESCE(NULLIF($6::VARCHAR, ''), devices.panel_type)`,
     [deviceId, ip || null, name || deviceId, organizationId ?? null, firmwareVersion || null, panelType || null]
   );
+  /* Live: a device just reported in — flip it online on every connected
+     board the moment the heartbeat lands. */
+  const orgId = await deviceOrgCached(deviceId);
+  realtime.broadcast('heartbeat', {
+    deviceId, orgId, ip: ip || null,
+    firmware_version: firmwareVersion || null,
+    panel_type: panelType || null,
+    online: true
+  });
 }
 
 /* How long (ms) a device can go without reporting telemetry before the
@@ -954,6 +987,10 @@ async function setRelayState(deviceId, state) {
   const device = await getDevice(deviceId);
   if (device?.user_id) {
     await q('UPDATE users SET relay_unlocked = $1 WHERE id = $2', [state, device.user_id]);
+  }
+  /* Live: relay toggles are operator-relevant — surface them on the boards. */
+  if (device) {
+    realtime.broadcast('event', { kind: 'relay', deviceId, orgId: device.organization_id ?? null, state: relayStr });
   }
 }
 
@@ -1113,6 +1150,17 @@ async function insertEnergyReading(data) {
      VALUES ($1,$2,$3,$4,$5,$6,$7)`,
     [data.deviceId, data.generation, data.consumption, data.batteryLevel, data.voltage, data.current, powerOutput]
   );
+  /* Live: every stored reading is pushed to connected boards. The org is
+     resolved once per device per 10 min (cached), keeping the hot path cheap. */
+  const orgId = await deviceOrgCached(data.deviceId);
+  realtime.broadcast('reading', {
+    deviceId: data.deviceId, orgId,
+    generation_watts:  data.generation,
+    consumption_watts: data.consumption,
+    battery_level:     data.batteryLevel,
+    voltage:           data.voltage,
+    current_amps:      data.current
+  });
 }
 
 async function getLatestEnergy(deviceId) {
@@ -1445,6 +1493,9 @@ async function createAlert({ userId, deviceId, type, severity, message }) {
      VALUES ($1,$2,$3,$3,$4,$5)`,
     [userId, deviceId, type, severity, message]
   );
+  /* Live: alerts drive the boards' attention — push them out as they fire. */
+  const orgId = deviceId ? await deviceOrgCached(deviceId) : null;
+  realtime.broadcast('event', { kind: 'alert', deviceId: deviceId ?? null, orgId, severity, message });
 }
 
 /* Alerts are scoped through their owning user (and, for device-level
@@ -1811,6 +1862,10 @@ async function recordBootReport({ deviceId, version, status, organizationId = nu
                                     (SELECT id FROM organizations WHERE slug = 'default')))`,
     [deviceId, version, status, organizationId]
   );
+  /* Live: OTA outcomes are exactly what a fleet engineer watches for. */
+  realtime.broadcast('event', {
+    kind: 'ota', deviceId, version, status, orgId: organizationId ?? null
+  });
 }
 
 /* How many DISTINCT devices within an org reported a boot-failure for this

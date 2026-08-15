@@ -102,32 +102,10 @@ function batteryCell(d) {
   return `<span style="color:${color};font-weight:700">${pct}%</span>`;
 }
 
-function renderFleet() {
-  const q = (document.getElementById('fleet-search')?.value || '').toLowerCase();
-  const f = document.getElementById('fleet-filter')?.value || 'all';
-
-  let list = fleet;
-  if (q) {
-    list = list.filter(d =>
-      (d.device_id || '').toLowerCase().includes(q) ||
-      (d.name || '').toLowerCase().includes(q) ||
-      (d.location || '').toLowerCase().includes(q) ||
-      (d.org_name || '').toLowerCase().includes(q) ||
-      (d.firmware_version || '').toLowerCase().includes(q) ||
-      (d.ota_target || '').toLowerCase().includes(q)
-    );
-  }
-  if (f === 'online') list = list.filter(d => d.online);
-  else if (f === 'offline') list = list.filter(d => !d.online);
-  else if (f === 'stale-cadence') list = list.filter(d => (d.avg_interval_s || 0) > 30 || (d.gap_count || 0) > 0);
-  else if (f === 'firmware-stale') list = list.filter(d => d.firmware_version && d.ota_target && d.firmware_version !== d.ota_target);
-
-  const tbody = document.getElementById('fleet-body');
-  if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No devices match</td></tr>';
-    return;
-  }
-  tbody.innerHTML = list.map(d => `
+/* Single fleet row — shared by the initial render and the realtime SSE
+   updates so a live reading/heartbeat re-renders just that row. */
+function rowHtml(d) {
+  return `
     <tr class="clickable" data-device="${escapeHtml(d.device_id)}">
       <td>
         <div style="font-weight:700;color:var(--text)">${escapeHtml(d.name || d.device_id)}</div>
@@ -153,7 +131,84 @@ function renderFleet() {
       <td class="sub">${d.ota_target
         ? `${escapeHtml(d.ota_target)}<br><span style="font-size:9px;color:${d.ota_rollout_paused ? 'var(--red)' : 'var(--muted)'}">${d.ota_rollout_paused ? 'paused' : `${d.ota_rollout_pct ?? 100}% rollout`}</span>`
         : '<span class="muted">no rollout</span>'}</td>
-    </tr>`).join('');
+    </tr>`;
+}
+
+/* ── Realtime SSE updates (see /live-client.js) ── */
+function rowEl(deviceId) {
+  const esc = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(deviceId) : deviceId.replace(/["']/g, '');
+  return document.querySelector(`#fleet-body tr[data-device="${esc}"]`);
+}
+
+/* Re-render a single fleet row in place (fast — the fleet can be huge). */
+function updateRow(deviceId) {
+  const d = fleet.find(x => x.device_id === deviceId);
+  const tr = rowEl(deviceId);
+  if (!d || !tr) return;
+  const holder = document.createElement('tbody');
+  holder.innerHTML = rowHtml(d);
+  const fresh = holder.firstElementChild;
+  tr.replaceWith(fresh);
+  fresh.addEventListener('click', () => openDetail(fresh.dataset.device));
+}
+
+/* A device reported a heartbeat — flip it online and refresh its row. */
+function applyHeartbeat(d) {
+  let row = fleet.find(x => x.device_id === d.deviceId);
+  if (!row) {
+    /* Brand-new device auto-registered mid-session — show it at the top. */
+    fleet.unshift({ device_id: d.deviceId, name: d.deviceId, online: true, is_active: true, relay_state: 'on' });
+    row = fleet[0];
+  }
+  row.online = true;
+  row.last_seen = d.ts || new Date().toISOString();
+  if (d.ip) row.device_ip = d.ip;
+  if (d.firmware_version) row.firmware_version = d.firmware_version;
+  if (d.panel_type) row.panel_type = d.panel_type;
+  updateRow(d.deviceId);
+  renderKpis();
+}
+
+/* A live energy reading — refresh panel health + battery on the row. */
+function applyReading(d) {
+  const row = fleet.find(x => x.device_id === d.deviceId);
+  if (!row) return;
+  row.online = true;
+  row.last_seen = d.ts || new Date().toISOString();
+  if (d.voltage != null) row.voltage = d.voltage;
+  if (d.current_amps != null) row.current_amps = d.current_amps;
+  if (d.generation_watts != null) row.generation_watts = d.generation_watts;
+  if (d.battery_level != null) row.battery_level = d.battery_level;
+  updateRow(d.deviceId);
+  renderKpis();
+}
+
+function renderFleet() {
+  const q = (document.getElementById('fleet-search')?.value || '').toLowerCase();
+  const f = document.getElementById('fleet-filter')?.value || 'all';
+
+  let list = fleet;
+  if (q) {
+    list = list.filter(d =>
+      (d.device_id || '').toLowerCase().includes(q) ||
+      (d.name || '').toLowerCase().includes(q) ||
+      (d.location || '').toLowerCase().includes(q) ||
+      (d.org_name || '').toLowerCase().includes(q) ||
+      (d.firmware_version || '').toLowerCase().includes(q) ||
+      (d.ota_target || '').toLowerCase().includes(q)
+    );
+  }
+  if (f === 'online') list = list.filter(d => d.online);
+  else if (f === 'offline') list = list.filter(d => !d.online);
+  else if (f === 'stale-cadence') list = list.filter(d => (d.avg_interval_s || 0) > 30 || (d.gap_count || 0) > 0);
+  else if (f === 'firmware-stale') list = list.filter(d => d.firmware_version && d.ota_target && d.firmware_version !== d.ota_target);
+
+  const tbody = document.getElementById('fleet-body');
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No devices match</td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map(rowHtml).join('');
 
   tbody.querySelectorAll('tr.clickable').forEach(tr => {
     tr.addEventListener('click', () => openDetail(tr.dataset.device));
@@ -311,4 +366,15 @@ function init() {
   setInterval(() => fetchFleet(true), 30000);
   /* Refresh an open drawer every 30s so cadence/boot reports stay live */
   setInterval(() => { if (openDeviceId) openDetail(openDeviceId); }, 30000);
+
+  /* Realtime: push heartbeats/readings straight into the table instead of
+     waiting for the next 30s poll. OTA outcomes refresh an open drawer. */
+  window.SolGridLive?.connect({
+    token: localStorage.getItem('authToken'),
+    onEvent: ({ event, data }) => {
+      if (event === 'heartbeat') applyHeartbeat(data);
+      else if (event === 'reading') applyReading(data);
+      else if (event === 'event' && data.kind === 'ota' && openDeviceId === data.deviceId) openDetail(data.deviceId);
+    }
+  });
 }

@@ -150,6 +150,7 @@ Deep-dive technical charts for engineers and data scientists.
 - Voltage & current dual-axis chart, daily revenue bars, monthly MRR trend
 - Payment status doughnut, PAR-30 portfolio-at-risk trend, credit distribution histogram
 - 6-hour forecast with confidence bands, anomaly score bars, fraud risk scatter plot
+- **Realtime SSE feed** (`/api/live`) — telemetry pushes straight into the energy charts as it lands (no 60 s polling), fleet KPIs are live counts instead of simulated jitter, and a Live Events ticker surfaces relay toggles, OTA outcomes and alerts in real time. Org admins only see their own tenant's events.
 - Device health by region (stacked bar), panel efficiency vs age (scatter), agent leaderboard
 
 ### 🔐 Login — `/login.html`

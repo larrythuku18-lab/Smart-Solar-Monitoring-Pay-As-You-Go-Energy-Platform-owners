@@ -658,11 +658,21 @@ const SolarDashboard = () => {
   const [selectedDeviceId, setSelectedDeviceId] = useState('DEMO-001');
   const [devicesList, setDevicesList] = useState([]);
   const chartRefs = useRef({});
+  /* Fleet stats are driven by the realtime SSE feed below — no simulated
+     jitter. Devices Online / Active Customers count devices that have
+     reported within the last 3 minutes; Today's Revenue is derived from the
+     real revenue chart data at render time. */
   const [globalStats, setGlobalStats] = useState({
-    devicesOnline: 1247,
-    todayRevenue: 45680,
-    activeCustomers: 892
+    devicesOnline: 0,
+    todayRevenue: 0,
+    activeCustomers: 0
   });
+  const [liveEvents, setLiveEvents] = useState([]);
+  const liveDeviceIds = useRef(new Map()); // deviceId -> last-seen ts (pruned every 60s)
+  const selectedDeviceRef = useRef(selectedDeviceId);
+  useEffect(() => {
+    selectedDeviceRef.current = selectedDeviceId;
+  }, [selectedDeviceId]);
   /* OTA feature flag — surfaced by the server on /api/state; when false the
      Firmware tab is never rendered and the tab bar matches the old layout. */
   const [otaEnabled, setOtaEnabled] = useState(false);
@@ -775,6 +785,40 @@ const SolarDashboard = () => {
     updater(chart.data);
     chart.update('none');
   };
+
+  /* Append one live telemetry point to the selected device's energy charts
+     (solar generation + voltage/current), capping the series so a long
+     session doesn't grow the charts without bound. */
+  function appendLivePoint(d) {
+    const label = new Date(d.ts || Date.now()).toLocaleTimeString('en-KE', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+    const append = (key, ref, values) => {
+      const chart = chartRefs.current[key];
+      const series = ref.current;
+      if (!chart || !series?.labels || !series?.datasets) return;
+      series.labels.push(label);
+      series.datasets.forEach((ds, i) => {
+        if (Array.isArray(ds.data) && values[i] != null) ds.data.push(values[i]);
+      });
+      const MAX = 120;
+      while (series.labels.length > MAX) {
+        series.labels.shift();
+        series.datasets.forEach(ds => {
+          if (Array.isArray(ds.data)) ds.data.shift();
+        });
+      }
+      chart.update('none');
+    };
+    if (d.generation_watts != null) {
+      append('solarGeneration', solarGenerationData, [Number((Number(d.generation_watts) / 1000).toFixed(2))]);
+    }
+    if (d.voltage != null || d.current_amps != null) {
+      append('voltageCurrent', voltageCurrentData, [d.voltage != null ? Math.round(Number(d.voltage) * 10) / 10 : null, d.current_amps != null ? Math.round(Number(d.current_amps) * 10) / 10 : null]);
+    }
+  }
   const makeNumbers = values => values.map(value => Number(value.toFixed(2)));
   const refreshAllCharts = useCallback(async () => {
     const {
@@ -1052,23 +1096,74 @@ const SolarDashboard = () => {
     });
     setRefresh(r => r + 1);
   }, [selectedDeviceId]);
+
+  /* Realtime SSE feed: appends live points to the selected device's energy
+     charts, keeps the fleet stats honest (devices seen in the last 3
+     minutes), and feeds the live event ticker. The client reconnects
+     itself with a fresh snapshot on blips — see /live-client.js. */
   useEffect(() => {
-    const stats = setInterval(() => {
-      if (document.hidden || noDevices) return;
+    const token = localStorage.getItem('authToken');
+    const prune = setInterval(() => {
+      const cutoff = Date.now() - 3 * 60_000;
+      for (const [id, at] of liveDeviceIds.current) {
+        if (at < cutoff) liveDeviceIds.current.delete(id);
+      }
       setGlobalStats(prev => ({
-        devicesOnline: Math.max(832, prev.devicesOnline + Math.round(Math.random() * 16 - 8)),
-        todayRevenue: Math.max(12000, prev.todayRevenue + Math.round(Math.random() * 1400 - 650)),
-        activeCustomers: Math.max(650, prev.activeCustomers + Math.round(Math.random() * 8 - 4))
+        ...prev,
+        devicesOnline: liveDeviceIds.current.size,
+        activeCustomers: liveDeviceIds.current.size
       }));
-    }, 30000);
+    }, 60_000);
+    const live = (window.SolGridLive?.connect || (() => ({
+      close() {}
+    })))({
+      token,
+      onEvent: ({
+        event,
+        data
+      }) => {
+        if (event === 'snapshot') {
+          const online = Number(data.onlineCount) || 0;
+          liveDeviceIds.current = new Map((data.onlineDevices || []).map(id => [id, Date.now()]));
+          setGlobalStats(prev => ({
+            ...prev,
+            devicesOnline: online,
+            activeCustomers: online
+          }));
+        } else if (event === 'heartbeat') {
+          liveDeviceIds.current.set(data.deviceId, Date.now());
+          setGlobalStats(prev => ({
+            ...prev,
+            devicesOnline: liveDeviceIds.current.size,
+            activeCustomers: liveDeviceIds.current.size
+          }));
+        } else if (event === 'reading') {
+          liveDeviceIds.current.set(data.deviceId, Date.now());
+          setGlobalStats(prev => ({
+            ...prev,
+            devicesOnline: liveDeviceIds.current.size,
+            activeCustomers: liveDeviceIds.current.size
+          }));
+          if (data.deviceId === selectedDeviceRef.current) appendLivePoint(data);
+        } else if (event === 'event') {
+          setLiveEvents(prev => [data, ...prev].slice(0, 8));
+        }
+      }
+    });
+    return () => {
+      clearInterval(prune);
+      live.close();
+    };
+  }, []);
+
+  /* Keep the full history charts re-synced periodically — the SSE feed only
+     appends live points, it doesn't rebuild the hourly/daily curves. */
+  useEffect(() => {
     const live = setInterval(() => {
       if (document.hidden || noDevices) return;
       refreshAllCharts();
     }, 60000);
-    return () => {
-      clearInterval(stats);
-      clearInterval(live);
-    };
+    return () => clearInterval(live);
   }, [refreshAllCharts, noDevices]);
 
   /* Don't fire the DEMO-001 chart fetch on a brand-new tenant — the
@@ -1430,7 +1525,7 @@ const SolarDashboard = () => {
     accent: 'text-emerald-600 dark:text-emerald-400'
   }, {
     title: "Today's Revenue",
-    value: formatKES(globalStats.todayRevenue),
+    value: formatKES(todayRevenue),
     accent: 'text-blue-600 dark:text-blue-400'
   }, {
     title: 'Active Customers',
@@ -1443,7 +1538,20 @@ const SolarDashboard = () => {
     className: "text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide"
   }, m.title), /*#__PURE__*/React.createElement("p", {
     className: `mt-2 text-2xl font-bold ${m.accent}`
-  }, m.value))))), /*#__PURE__*/React.createElement("div", {
+  }, m.value))))), liveEvents.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "mt-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-sm"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2 mb-2"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "h-2 w-2 rounded-full bg-emerald-500 animate-pulse"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+  }, "Live Events")), /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-wrap gap-2"
+  }, liveEvents.map((ev, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    className: "text-xs rounded-lg px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+  }, ev.kind === 'relay' ? `${ev.deviceId} relay → ${ev.state}` : ev.kind === 'ota' ? `${ev.deviceId} OTA ${ev.status} · ${ev.version}` : ev.kind === 'alert' ? `${ev.deviceId || ''} ${ev.severity}: ${ev.message}` : ev.type)))), /*#__PURE__*/React.createElement("div", {
     className: "mt-8 flex gap-2 flex-wrap"
   }, tabs.map(tab => /*#__PURE__*/React.createElement("button", {
     key: tab.id,

@@ -53,6 +53,9 @@ Four statistical models, warm-seeded from PostgreSQL on startup:
 - **Analytics Dashboard** — Chart.js energy/solar/battery/payments/insights tabs
 - **Analysis Board** — deep-dive charts (PAR-30, fraud scatter, device health
   by region, agent leaderboard)
+- **Realtime SSE dashboards** — `/api/live` pushes telemetry to the Analysis
+  Board and Engineer panel as it lands (no polling, no simulated KPI
+  jitter); org-scoped so a tenant never sees another org's events
 - **Customer portal** — wallet, top-up, usage, shop
 - Split by audience (`public/admin`, `public/customer`, `public/shared`) with
   a role-aware nav and device selector that respects admin vs customer roles.
@@ -127,8 +130,6 @@ technologies already in the repo or one deliberate new dependency:
 ### IoT & Devices
 - **MQTT transport** — the repo already references an MQTT broker in
   `docker-compose.yml`; the telemetry pipeline is transport-agnostic today
-- **Real-time WebSocket / SSE dashboards** — push telemetry to the browser
-  instead of 30 s polling (data model unchanged)
 - **More device sensors** — temperature, humidity, panel current, grid import;
   extend the `energy_readings` schema
 - **Geolocation mapping** — devices already carry `location`; a map view
@@ -171,8 +172,9 @@ technologies already in the repo or one deliberate new dependency:
   no offline queue can solve a dead radio link.
 
 ### Architectural decisions that would need a rewrite
-- **Not real-time** — 30 s polling is a deliberate, documented choice. Live
-  millisecond data or high-frequency control loops would require a
+- **Push is SSE, not WebSocket** — live dashboards stream telemetry over
+  server-sent events (one-way, HTTP-native, no new dependency). True
+  bidirectional streaming or millisecond-scale data would require a
   message-broker re-architecture, not a tweak.
 - **Not a hardware simulator** — there is no built-in device emulator beyond
   the demo seed data; simulating a real fleet is a separate tool.
