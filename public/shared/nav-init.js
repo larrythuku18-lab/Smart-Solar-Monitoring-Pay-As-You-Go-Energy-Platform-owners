@@ -65,13 +65,15 @@
     /* org admins share the admin nav (Dashboard / Analytics / Analysis
        Board) — every one of those pages is org-scoped on the backend, so
        they see only their own tenant's data. */
-    const isAdmin = role === 'admin' || role === 'org_admin';
-    const isCust  = role === 'customer';
+    const isAdmin    = role === 'admin' || role === 'org_admin';
+    const isEngineer = role === 'engineer';
+    const isCust     = role === 'customer';
 
     nav.querySelectorAll('[data-nav-role]').forEach(el => {
       const r = el.dataset.navRole;
       const show =
         r === 'admin'    ? isAdmin :
+        r === 'engineer' ? isEngineer :
         r === 'customer' ? isCust  :
         r === 'guest'    ? !isAuth :
         r === 'auth'     ? isAuth  :

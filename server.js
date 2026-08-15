@@ -41,6 +41,7 @@ const compression = require('compression');
 const { body, validationResult } = require('express-validator');
 const { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, sendDailyWeatherEmail, resendConfigured } = require('./mailer');
 const { sendLowBalanceSms, sendPowerCutSms, sendSms, sendDailyWeatherSms, smsConfigured } = require('./sms');
+const { resolveWeatherCoords } = require('./geocode');
 const jwt = require('jsonwebtoken');
 
 const {
@@ -58,9 +59,12 @@ const {
   getDevice,
   getDeviceByUserId,
   getAllDevices,
+  getEngineerFleet,
+  getDeviceBootReports,
   upsertDeviceHeartbeat,
   provisionDevice,
   setDeviceLocation,
+  setDeviceCoordinates,
   createPayment,
   completePayment,
   getPaymentByCheckoutId,
@@ -123,6 +127,14 @@ function isSuperAdmin(user) {
    data. Their JWT always carries the organizationId claim. */
 function isOrgAdmin(user) {
   return user?.role === 'org_admin';
+}
+
+/* Engineers are field/technical staff: they get the Engineer panel's
+   read-only device diagnostics (connectivity, panel health, firmware/OTA)
+   but deliberately NO admin surface — no billing, customers, payments,
+   organizations, or firmware uploads/activations. */
+function isEngineer(user) {
+  return user?.role === 'engineer';
 }
 
 /* Anything the admin dashboards / analytics call: super-admin or org admin. */
@@ -483,6 +495,7 @@ app.use('/nav-init.js', (req, res) => res.setHeader('Cache-Control', 'public, ma
 const staticOpts = { maxAge: '1h', etag: true, lastModified: true, index: false };
 app.use(express.static(publicDir, staticOpts));
 app.use(express.static(path.join(publicDir, 'admin'), staticOpts));
+app.use(express.static(path.join(publicDir, 'engineer'), staticOpts));
 app.use(express.static(path.join(publicDir, 'customer'), staticOpts));
 app.use(express.static(path.join(publicDir, 'shared'), staticOpts));
 
@@ -517,8 +530,10 @@ app.get('/api/demo-credentials', (req, res) => {
   res.json({
     adminEmail:    process.env.ADMIN_EMAIL    || 'admin@solarpayg.com',
     customerEmail: process.env.CUSTOMER_EMAIL || 'customer@example.com',
+    engineerEmail: process.env.ENGINEER_EMAIL || 'engineer@solarpayg.com',
     adminPasswordIsDefault:    !process.env.ADMIN_PASSWORD,
-    customerPasswordIsDefault: !process.env.CUSTOMER_PASSWORD
+    customerPasswordIsDefault: !process.env.CUSTOMER_PASSWORD,
+    engineerPasswordIsDefault: !process.env.ENGINEER_PASSWORD
   });
 });
 
@@ -587,9 +602,28 @@ function coordOr(envValue, fallback) {
 }
 const WEATHER_LAT = coordOr(process.env.WEATHER_LAT, '-1.2864');
 const WEATHER_LON = coordOr(process.env.WEATHER_LON, '36.8172');
-let _weatherCache    = null;
-let _weatherCacheAt  = 0;
-let _weatherCacheTtl = 0;
+
+/* Per-location caches, keyed by rounded lat/lon. Before per-site weather,
+   one global cache made sense; now the admin dashboard may ask for one
+   device while the digest asks for another, and each location should get
+   its own 10-minute current-conditions / 1-hour forecast entry. Rounded to
+   3 decimals (~110 m) so near-identical coordinates share a cache slot. */
+function coordsKey(lat, lon) {
+  return `${Number(lat).toFixed(3)},${Number(lon).toFixed(3)}`;
+}
+const _weatherCaches = new Map(); // key -> { at, ttl, data }
+const _owmCaches     = new Map(); // key -> { at, data }
+/* The per-location Maps grow one entry per distinct site. Cap them so a
+   large fleet (thousands of sites) can't grow memory without bound — evict
+   the oldest entry when over the cap. */
+const WEATHER_CACHE_CAP = 500;
+function cappedCacheSet(map, key, entry) {
+  map.set(key, entry);
+  if (map.size > WEATHER_CACHE_CAP) {
+    const oldest = map.keys().next().value;
+    map.delete(oldest);
+  }
+}
 
 /* WMO weather codes → the condition/background vocabulary index.js already
    renders (sunny/night/cloudy/rainy/thunderstorm; the rain animation
@@ -625,11 +659,11 @@ function describeMetNoSymbol(sym, isDay) {
 
 /* Both fetchers return the same normalized shape:
    { condition, backgroundClass, isDay, temperature °C, humidity %, cloud %, windKmh } */
-async function fetchOpenMeteo() {
+async function fetchOpenMeteo(lat, lon) {
   const { data } = await axios.get('https://api.open-meteo.com/v1/forecast', {
     params: {
-      latitude:  WEATHER_LAT,
-      longitude: WEATHER_LON,
+      latitude:  lat,
+      longitude: lon,
       current:   'temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,weather_code,is_day'
     },
     timeout: 8000
@@ -650,9 +684,9 @@ async function fetchOpenMeteo() {
    egress IP is shared with other Render customers, so the free allowance
    can be exhausted (429) through no fault of ours. MET Norway is also
    free/keyless but requires an identifying User-Agent. */
-async function fetchMetNo() {
+async function fetchMetNo(lat, lon) {
   const { data } = await axios.get('https://api.met.no/weatherapi/locationforecast/2.0/compact', {
-    params:  { lat: WEATHER_LAT, lon: WEATHER_LON },
+    params:  { lat, lon },
     headers: { 'User-Agent': 'SolGrid-solar-paygo-demo/1.0 larrythuku18@gmail.com' },
     timeout: 8000
   });
@@ -674,16 +708,57 @@ async function fetchMetNo() {
   };
 }
 
+/* Resolve which coordinates to fetch current conditions / forecast for.
+   Accepts an optional ?deviceId= (admin dashboard device selector, customer
+   portal). Precedence: exact device coords > geocoded device.location >
+   WEATHER_LAT/LON default. A missing/unknown device falls back to default.
+
+   AUTH GATE: the deviceId param is only honored for authenticated callers.
+   The weather endpoints themselves stay public (the dashboard's widget is
+   a nice-to-have), but resolving ?deviceId=X would otherwise let anyone
+   enumerate deviceIds and read each unit's exact/geocoded site coordinates
+   unauthenticated — device locations were only ever visible to admins and
+   the owning customer. Mirrors the ?debug=1 inline-JWT pattern below. */
+function authenticatedWeatherUser(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  try { return jwt.verify(authHeader.slice(7), process.env.JWT_SECRET); }
+  catch { return null; }
+}
+
+async function resolveRequestWeatherCoords(req) {
+  const deviceId = req.query.deviceId;
+  if (deviceId && typeof deviceId === 'string' && authenticatedWeatherUser(req)) {
+    try {
+      const device = await getDevice(deviceId);
+      if (device) {
+        return resolveWeatherCoords({
+          lat: device.lat, lon: device.lon, location: device.location,
+          defaultLat: WEATHER_LAT, defaultLon: WEATHER_LON
+        });
+      }
+    } catch (err) {
+      console.warn('[Weather] device lookup for', deviceId, 'failed:', err.message);
+    }
+  }
+  return { lat: Number(WEATHER_LAT), lon: Number(WEATHER_LON), source: 'default' };
+}
+
 app.get('/api/weather', async (req, res) => {
+  const coords = await resolveRequestWeatherCoords(req);
+  const key    = coordsKey(coords.lat, coords.lon);
+  const cached = _weatherCaches.get(key);
   /* ?debug=1 always attempts a live upstream fetch, so the ops probe can't
-     be masked by a cached fallback. */
-  if (!req.query.debug && _weatherCache && Date.now() - _weatherCacheAt < _weatherCacheTtl) {
-    return res.json(_weatherCache);
+     be masked by a cached fallback. Cached payloads carry no location
+     metadata (it's per-request), so attach it here just like the fresh
+     path does — a cache hit must be indistinguishable from a fresh fetch. */
+  if (!req.query.debug && cached && Date.now() - cached.at < cached.ttl) {
+    return res.json(withWeatherLocation(cached.data, coords));
   }
   const upstreamErrors = [];
   for (const [name, fetcher] of [['open-meteo', fetchOpenMeteo], ['met.no', fetchMetNo]]) {
     try {
-      const w     = await fetcher();
+      const w     = await fetcher(coords.lat, coords.lon);
       const cloud = Math.round(w.cloud);
       let { condition, backgroundClass } = w;
       /* Condition and cloud-cover % can disagree at the margins ("mainly
@@ -698,7 +773,10 @@ app.get('/api/weather', async (req, res) => {
         ? Math.max(0.15, Math.round((1 - (cloud / 100) * 0.75) * 100) / 100)
         : 0.05;
 
-      _weatherCache = {
+      /* location metadata is attached at RESPONSE time, not baked into the
+         cache — a cached entry serves several devices, and the resolved
+         source (exact/geocode/default) is per-request. */
+      const payload = {
         weather: {
           condition,
           temperature: Math.round(w.temperature),
@@ -711,9 +789,8 @@ app.get('/api/weather', async (req, res) => {
           upstream:    name
         }
       };
-      _weatherCacheAt  = Date.now();
-      _weatherCacheTtl = 10 * 60_000;
-      return res.json(_weatherCache);
+      cappedCacheSet(_weatherCaches, key, { at: Date.now(), ttl: 10 * 60_000, data: payload });
+      return res.json(withWeatherLocation(payload, coords));
     } catch (err) {
       const detail = name + ':' + ([err.code, err.response?.status].filter(Boolean).join('/') || err.message);
       /* Logged even when a later upstream succeeds — a quietly dead primary
@@ -739,9 +816,7 @@ app.get('/api/weather', async (req, res) => {
   /* Negative-cache the fallback briefly: the dashboard polls every 30s,
      and re-hitting failing upstreams twice a minute keeps a rate-limit
      (429) from ever clearing. */
-  _weatherCache    = { weather };
-  _weatherCacheAt  = Date.now();
-  _weatherCacheTtl = 60_000;
+  cappedCacheSet(_weatherCaches, key, { at: Date.now(), ttl: 60_000, data: { weather } });
   /* Ops aid: ?debug=1 exposes only the upstream error codes AND HTTP
      statuses (e.g. "open-meteo:ERR_BAD_REQUEST/429 met.no:ETIMEDOUT") so a
      failing weather feed can be diagnosed from a browser without shell
@@ -778,7 +853,6 @@ function openweatherConfigured() {
   return !!process.env.OPENWEATHER_API_KEY;
 }
 
-let _owmCache = null; // { at, data }
 const OWM_CACHE_TTL = 60 * 60 * 1000;
 
 /* OWM icon code → emoji, so the frontends don't need their own mapping. */
@@ -841,23 +915,24 @@ function groupOwmByDay(list, timezoneOffsetSec) {
   }));
 }
 
-/* Fetch the grouped 5-day forecast payload, reusing the 1-hour cache. Used
-   by both the /api/weather/forecast route and the daily alert cron — a
-   single fetch serves a day's worth of dashboard refreshes AND the evening
-   digest, keeping us far under OWM's 1,000 calls/day free tier. Never
-   throws: returns { ok: true, payload } or { ok: false, reason }. */
-async function fetchOwmForecast() {
+/* Fetch the grouped 5-day forecast payload for a specific location, reusing
+   the per-location 1-hour cache. Used by /api/weather/forecast (with the
+   device's coords) and the daily alert cron (per-site digests). Caching per
+   rounded-coordinate keeps us far under OWM's 1,000 calls/day free tier even
+   with several distinct sites. Never throws: returns { ok, payload|reason }. */
+async function fetchOwmForecast(lat, lon) {
   if (!openweatherConfigured()) {
     return { ok: false, reason: 'OpenWeatherMap not configured (OPENWEATHER_API_KEY)' };
   }
-  if (_owmCache && Date.now() - _owmCache.at < OWM_CACHE_TTL) {
-    return { ok: true, payload: _owmCache.data };
+  const key = coordsKey(lat, lon);
+  const hit = _owmCaches.get(key);
+  if (hit && Date.now() - hit.at < OWM_CACHE_TTL) {
+    return { ok: true, payload: hit.data };
   }
   try {
     const { data } = await axios.get('https://api.openweathermap.org/data/2.5/forecast', {
       params: {
-        lat: WEATHER_LAT,
-        lon: WEATHER_LON,
+        lat, lon,
         appid: process.env.OPENWEATHER_API_KEY,
         units: 'metric'
       },
@@ -868,10 +943,11 @@ async function fetchOwmForecast() {
         days: groupOwmByDay(data.list || [], data.city?.timezone),
         source: 'openweathermap',
         generatedAt: new Date().toISOString(),
-        city: data.city?.name || null
+        city: data.city?.name || null,
+        location: { lat, lon }
       }
     };
-    _owmCache = { at: Date.now(), data: payload };
+    cappedCacheSet(_owmCaches, key, { at: Date.now(), data: payload });
     return { ok: true, payload };
   } catch (err) {
     console.warn('[Weather] OpenWeatherMap forecast failed:', err.response?.status || err.code || err.message);
@@ -882,8 +958,21 @@ async function fetchOwmForecast() {
   }
 }
 
+/* Attach the per-request resolved location to a weather payload (null for
+   the global default, so callers can tell "site weather" from "Nairobi
+   default"). Returns a shallow clone — the cached copy stays metadata-free
+   (mutating the cached object would bake the first caller's resolution into
+   every later response for the same coords). */
+function withWeatherLocation(payload, coords) {
+  const out = { ...payload, weather: { ...payload.weather } };
+  out.weather.location = coords.source === 'default' ? null
+    : { lat: coords.lat, lon: coords.lon, source: coords.source, city: coords.city || null };
+  return out;
+}
+
 app.get('/api/weather/forecast', async (req, res) => {
-  const result = await fetchOwmForecast();
+  const coords = await resolveRequestWeatherCoords(req);
+  const result = await fetchOwmForecast(coords.lat, coords.lon);
   if (!result.ok) {
     return res.status(503).json({
       error:   'OpenWeatherMap forecast unavailable',
@@ -891,7 +980,17 @@ app.get('/api/weather/forecast', async (req, res) => {
       forecast: null
     });
   }
-  res.json(result.payload);
+  /* Attach the per-request location to a shallow clone — the cached payload
+     is shared across devices with the same rounded coords, and mutating it
+     would bake the first caller's resolution (source/city) into every later
+     response. Cloning keeps the cache entry pristine. */
+  const payload = {
+    ...result.payload,
+    forecast: { ...result.payload.forecast }
+  };
+  payload.forecast.location = coords.source === 'default' ? null
+    : { lat: coords.lat, lon: coords.lon, source: coords.source, city: coords.city || null };
+  res.json(payload);
 });
 
 app.get('/api/forecast', async (req, res) => {
@@ -1728,6 +1827,101 @@ app.post('/api/admin/devices/:deviceId/location', authMiddleware, async (req, re
   }
 });
 
+/* Set (or clear, with nulls) a device's exact site coordinates — admin-only.
+   These take precedence over geocoding devices.location for per-site
+   weather. Body: { lat, lon } — both null clears back to geocoding. */
+app.post('/api/admin/devices/:deviceId/coordinates', authMiddleware, async (req, res) => {
+  if (!canAccessAdmin(req.user)) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  const { lat, lon } = req.body || {};
+  const toNum = v => (v === null || v === undefined || v === '') ? null : Number(v);
+  const nLat = toNum(lat), nLon = toNum(lon);
+  if (nLat !== null && (!Number.isFinite(nLat) || nLat < -90 || nLat > 90)) {
+    return res.status(400).json({ error: 'lat must be a number between -90 and 90 (or null to clear)' });
+  }
+  if (nLon !== null && (!Number.isFinite(nLon) || nLon < -180 || nLon > 180)) {
+    return res.status(400).json({ error: 'lon must be a number between -180 and 180 (or null to clear)' });
+  }
+  try {
+    const existing = await getDevice(req.params.deviceId);
+    if (!existing) return res.status(404).json({ error: 'Device not found' });
+    if (!(await assertDeviceInScope(req, existing))) {
+      return res.status(403).json({ error: 'Device belongs to another organization' });
+    }
+    const device = await setDeviceCoordinates(req.params.deviceId, nLat, nLon);
+    res.json({ device });
+  } catch (err) {
+    console.error('Device coordinates error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to set device coordinates', message: err.message });
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ENGINEER PANEL (read-only technical diagnostics)
+   Engineers are field/technical staff. They get the fleet's connectivity,
+   panel health, and firmware/OTA state — but NOT billing, customers,
+   payments, organizations, or any write surface. Every route below guards
+   with isEngineer() and only reads.
+══════════════════════════════════════════════════════════════════════════ */
+
+/* Fleet view — one row per device with online state, IP, last-seen, the
+   latest panel reading, measured telemetry cadence (avg seconds between
+   recent reports + count of gaps > 15 s), reported firmware vs. the org's
+   active OTA target. Everything a field engineer needs to triage a unit
+   without opening the admin console. */
+app.get('/api/engineer/fleet', authMiddleware, async (req, res) => {
+  if (!isEngineer(req.user)) {
+    return res.status(403).json({ error: 'Engineer access required' });
+  }
+  try {
+    const fleet = await getEngineerFleet();
+    res.json({ fleet });
+  } catch (err) {
+    console.error('Engineer fleet error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load engineer fleet', message: err.message });
+  }
+});
+
+/* Per-device drill-down: the same diagnostics as the fleet row, plus the
+   last N energy readings (for the panel health strip) and the device's
+   recent firmware boot reports (OTA ok/fail history). Engineers may read
+   any device — they're platform-wide technical staff. */
+app.get('/api/engineer/devices/:deviceId', authMiddleware, async (req, res) => {
+  if (!isEngineer(req.user)) {
+    return res.status(403).json({ error: 'Engineer access required' });
+  }
+  try {
+    const deviceId = req.params.deviceId;
+    const device   = await getDevice(deviceId);
+    if (!device) return res.status(404).json({ error: 'Device not found' });
+    const [readings, bootReports, fleetRow] = await Promise.all([
+      getEnergyHistoryAsc(deviceId, 60),
+      getDeviceBootReports(deviceId, 10),
+      getEngineerFleet()
+    ]);
+    const row = fleetRow.find(d => d.device_id === deviceId) || null;
+    res.json({
+      device: row || device,
+      readings: readings.map(r => ({
+        recorded_at: r.recorded_at,
+        voltage:     Number(r.voltage),
+        current:     Number(r.current_amps),
+        generation:  Number(r.generation_watts),
+        battery:     Number(r.battery_level),
+        consumption: Number(r.consumption_watts)
+      })),
+      bootReports
+    });
+  } catch (err) {
+    console.error('Engineer device detail error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load device diagnostics', message: err.message });
+  }
+});
+
 /* Link a device to a customer account, or unlink it — admin-only.
    Body: { email } to assign to that user, { email: null } (or omitted) to
    unassign. Closes the gap where devices.user_id could only be set by hand
@@ -1880,10 +2074,14 @@ app.post('/api/admin/admins', authMiddleware, [
 
   try {
     const { name, email, password, phone } = req.body;
-    /* Optional multi-tenant knobs: role 'admin' (super-admin, default) or
-       'org_admin' scoped to organizationId. Only super-admins reach this
-       handler, so both roles are valid targets here. */
-    const targetRole = req.body.role === 'org_admin' ? 'org_admin' : 'admin';
+    /* Optional multi-tenant knobs: role 'admin' (super-admin, default),
+       'org_admin' scoped to organizationId, or 'engineer' (platform-wide
+       technical diagnostics — the Engineer panel is read-only and has no
+       admin surface). Only super-admins reach this handler, so all three
+       roles are valid targets here. */
+    const targetRole = req.body.role === 'org_admin' ? 'org_admin'
+      : req.body.role === 'engineer' ? 'engineer'
+      : 'admin';
     let organizationId = null;
     if (targetRole === 'org_admin') {
       organizationId = Number.parseInt(req.body.organizationId, 10);
@@ -2133,7 +2331,10 @@ app.post('/api/telemetry', [
   /* Firmware version string reported by the device itself (e.g. "1.0.0").
      Optional and length-capped — a device stuck on a malicious/oversized
      value must not poison the fleet panel's firmware column. */
-  body('firmwareVersion').optional().isString().trim().isLength({ max: 32 }).withMessage('firmwareVersion must be a short string')
+  body('firmwareVersion').optional().isString().trim().isLength({ max: 32 }).withMessage('firmwareVersion must be a short string'),
+  /* Solar panel model string (e.g. "MONO-330W") — surfaces on the Engineer
+     panel's panel-health readout. Same length cap rationale as firmware. */
+  body('panelType').optional().isString().trim().isLength({ max: 64 }).withMessage('panelType must be a short string')
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -2142,7 +2343,7 @@ app.post('/api/telemetry', [
   }
 
   try {
-    const { deviceId, voltage, current, generation, battery, consumption, firmwareVersion } = req.body;
+    const { deviceId, voltage, current, generation, battery, consumption, firmwareVersion, panelType } = req.body;
 
     const existingDevice = await getDevice(deviceId);
     /* When ENFORCE_PER_DEVICE_KEYS=true the shared DEVICE_API_KEY fallback
@@ -2168,7 +2369,7 @@ app.post('/api/telemetry', [
       return res.status(429).json({ error: 'Too many telemetry requests for this device — slow down' });
     }
 
-    await upsertDeviceHeartbeat({ deviceId, ip: req.ip, firmwareVersion });
+    await upsertDeviceHeartbeat({ deviceId, ip: req.ip, firmwareVersion, panelType });
     obs.recordTelemetry('ok');
 
     const reading = {
@@ -2458,52 +2659,68 @@ cron.schedule('*/5 * * * *', async () => {
 });
 
 /* Daily weather + energy-tip digest — every day at 15:00 UTC = 18:00 EAT,
-   so Nairobi customers get the next-day outlook in the evening. Reads the
-   same 1-hour-cached OpenWeatherMap feed as /api/weather/forecast (no extra
-   upstream calls), then sends each opted-in customer with a reachable
-   phone/email a single-segment SMS and/or email. Entirely optional: with no
-   OPENWEATHER_API_KEY, or zero recipients, it logs and moves on. Fire-and-
-   forget sends — a dead SMTP/API gateway can never break the cron loop. */
+   so customers get the next-day outlook in the evening. PER-SITE: each
+   recipient's message is built from their own device's weather — exact site
+   coords if set, otherwise geocoded from devices.location, otherwise the
+   global default. Recipients are grouped by resolved coordinate so the
+   whole fleet costs at most one OWM call per distinct site (each cached
+   1 hour). Entirely optional: no OPENWEATHER_API_KEY, or zero recipients,
+   and it logs and moves on. Fire-and-forget sends — a dead gateway can
+   never break the cron loop. */
 async function runDailyWeatherAlerts() {
-  const result = await fetchOwmForecast();
-  if (!result.ok) {
-    console.log(`[CRON] Daily weather alerts skipped — ${result.reason}`);
-    return;
-  }
-  const forecast = result.payload.forecast;
-  const days     = forecast.days || [];
-  /* The digest previews TOMORROW (index 1); if the feed only has today,
-     fall back to today rather than sending nothing. The messages say
-     "Today" in that degraded case instead of lying about the date. */
-  const isTomorrow = days.length > 1;
-  const day = isTomorrow ? days[1] : days[0];
-  if (!day) {
-    console.log('[CRON] Daily weather alerts skipped — forecast feed empty');
-    return;
-  }
-
   const recipients = await getDailyWeatherRecipients();
   if (recipients.length === 0) {
     console.log('[CRON] Daily weather alerts — no opted-in recipients with contact info');
     return;
   }
 
-  /* Send in small batches (awaiting each), so the counters below are real
-     and a large customer base can't hammer Africa's Talking / Resend with
-     a single-minute burst. A failed send never throws (sms.js/mailer.js
-     are fire-and-forget and swallow their own errors), so one bad number
-     can't take down the batch. */
-  const tasks = [];
+  /* Group recipients by resolved coordinates (exact > geocoded > default).
+     Geocoding is 7-day cached, so this only hits the geocoder once per
+     distinct location string. */
+  const groups = new Map(); // key -> { coords, users: [] }
   for (const u of recipients) {
-    if (u.phone) {
-      tasks.push(sendDailyWeatherSms(u.phone, { name: u.name, day, city: forecast.city })
-        .then(r => ({ kind: 'sms', ok: !!r?.ok }))
-        .catch(() => ({ kind: 'sms', ok: false })));
+    const coords = await resolveWeatherCoords({
+      lat: u.lat, lon: u.lon, location: u.location,
+      defaultLat: WEATHER_LAT, defaultLon: WEATHER_LON
+    }).catch(() => ({ lat: Number(WEATHER_LAT), lon: Number(WEATHER_LON), source: 'default' }));
+    const key = coordsKey(coords.lat, coords.lon);
+    if (!groups.has(key)) groups.set(key, { coords, users: [] });
+    groups.get(key).users.push(u);
+  }
+
+  /* Fetch one forecast per distinct site (per-location cached). A site that
+     fails to fetch skips its whole group — nobody gets a wrong-city tip. */
+  const siteForecasts = new Map(); // key -> { forecast, day, isTomorrow, city }
+  for (const [key, group] of groups) {
+    const result = await fetchOwmForecast(group.coords.lat, group.coords.lon);
+    if (!result.ok) {
+      console.warn(`[CRON] Daily weather alerts — ${group.users.length} recipient(s) skipped at ${key}: ${result.reason}`);
+      continue;
     }
-    if (u.email) {
-      tasks.push(sendDailyWeatherEmail(u.email, { name: u.name, day, city: forecast.city, days })
-        .then(ok => ({ kind: 'email', ok: !!ok }))
-        .catch(() => ({ kind: 'email', ok: false })));
+    const forecast = result.payload.forecast;
+    const days     = forecast.days || [];
+    const isTomorrow = days.length > 1;
+    const day = isTomorrow ? days[1] : days[0];
+    if (!day) continue;
+    siteForecasts.set(key, { forecast, day, isTomorrow, city: forecast.city });
+  }
+
+  /* Build + send per recipient, from their site's forecast. Batched so a
+     large customer base can't hammer AT/Resend with a single-minute burst;
+     a failed send never throws (sms.js/mailer.js swallow their own errors). */
+  const tasks = [];
+  for (const [key, site] of siteForecasts) {
+    for (const u of groups.get(key).users) {
+      if (u.phone) {
+        tasks.push(sendDailyWeatherSms(u.phone, { name: u.name, day: site.day, city: site.city })
+          .then(r => ({ kind: 'sms', ok: !!r?.ok }))
+          .catch(() => ({ kind: 'sms', ok: false })));
+      }
+      if (u.email) {
+        tasks.push(sendDailyWeatherEmail(u.email, { name: u.name, day: site.day, city: site.city, days: site.forecast.days })
+          .then(ok => ({ kind: 'email', ok: !!ok }))
+          .catch(() => ({ kind: 'email', ok: false })));
+      }
     }
   }
   let smsOk = 0, emailOk = 0;
@@ -2515,8 +2732,8 @@ async function runDailyWeatherAlerts() {
       if (r.value.kind === 'email' && r.value.ok) emailOk++;
     }
   }
-  const dayWord = isTomorrow ? 'tomorrow' : 'today';
-  console.log(`[CRON] Daily weather alerts: ${recipients.length} recipients · ${smsOk} SMS · ${emailOk} emails sent (${forecast.city}, ${day.label} ${dayWord})`);
+  const sites = [...siteForecasts.values()].map(s => `${s.city || 'default'}(${s.day.label} ${s.isTomorrow ? 'tmrw' : 'today'})`).join(', ');
+  console.log(`[CRON] Daily weather alerts: ${recipients.length} recipients · ${siteForecasts.size} site(s) · ${smsOk} SMS · ${emailOk} emails sent (${sites})`);
 }
 
 /* 18:00 EAT (15:00 UTC) — East Africa does not observe DST, so the offset

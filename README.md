@@ -153,7 +153,7 @@ Deep-dive technical charts for engineers and data scientists.
 - Device health by region (stacked bar), panel efficiency vs age (scatter), agent leaderboard
 
 ### 🔐 Login — `/login.html`
-Supports device ID + PIN (for field agents / ESP32 devices) and email + password (for admin, org admin, and customer web login).
+Supports device ID + PIN (for field agents / ESP32 devices) and email + password (for admin, org admin, engineer, and customer web login). Demo credentials for all roles (admin / customer / engineer) are shown on the login page and seeded on every boot.
 
 ### 🏢 Org Settings — `/org-settings.html`
 Tenant profile + membership management for org admins (name, description, contact email, phone, and the member roster with role badges and wallet balances). Super-admins can drill into any org with `?orgId=`.
@@ -168,8 +168,9 @@ SolGrid is multi-tenant: every `user`, `device`, `payment`, and firmware version
 
 | Role | Scope | Can create privileged accounts? |
 |---|---|---|
-| `admin` | Platform super-admin — sees all orgs, can drill into one with `?orgId=` | ✅ Yes (orgs + org admins) |
+| `admin` | Platform super-admin — sees all orgs, can drill into one with `?orgId=` | ✅ Yes (orgs + org admins + engineers) |
 | `org_admin` | Exactly one org (`organization_id` claim in the JWT) | ❌ No — never |
+| `engineer` | Read-only fleet diagnostics (connectivity, panel health, OTA history) on `/engineer.html` | ❌ No — and no admin surface either |
 | `customer` | Own data only (unchanged per-user scoping) | ❌ No |
 
 ### How the scoping works

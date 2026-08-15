@@ -522,6 +522,10 @@
           style="flex:1;min-width:160px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
         <input id="device-add-location" type="text" placeholder="Region (e.g. Kisumu, Kenya)" aria-label="Device region"
           style="flex:1;min-width:160px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
+        <input id="device-add-lat" type="number" step="any" placeholder="Lat (optional)" aria-label="Device latitude"
+          style="flex:1;min-width:110px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
+        <input id="device-add-lon" type="number" step="any" placeholder="Lon (optional)" aria-label="Device longitude"
+          style="flex:1;min-width:110px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
         <button type="submit" id="device-add-btn"
           style="background:var(--teal);color:#04231f;border:none;border-radius:8px;padding:7px 16px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">
           + Provision Device
@@ -1131,6 +1135,8 @@
     const idInput = document.getElementById('device-add-id');
     const nameInput = document.getElementById('device-add-name');
     const locationInput = document.getElementById('device-add-location');
+    const latInput = document.getElementById('device-add-lat');
+    const lonInput = document.getElementById('device-add-lon');
     const btn = document.getElementById('device-add-btn');
     const deviceId = idInput.value.trim();
     if (!deviceId) return;
@@ -1139,6 +1145,26 @@
     btn.textContent = 'Provisioning…';
     try {
       const device = await provisionDevice(deviceId, nameInput.value.trim(), locationInput.value.trim());
+      /* Optional exact site coordinates for per-site weather — set right
+         after provisioning when the installer knows the precise position. */
+      const latRaw = latInput.value.trim();
+      const lonRaw = lonInput.value.trim();
+      if (latRaw || lonRaw) {
+        const lat = latRaw === '' ? null : Number(latRaw);
+        const lon = lonRaw === '' ? null : Number(lonRaw);
+        if ((latRaw && !Number.isFinite(lat)) || (lonRaw && !Number.isFinite(lon))) {
+          throw new Error('Latitude/Longitude must be numbers (or left blank)');
+        }
+        const coordRes = await fetch(`${API}/admin/devices/${encodeURIComponent(device.device_id)}/coordinates`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ lat, lon })
+        });
+        if (!coordRes.ok) {
+          const cd = await coordRes.json().catch(() => ({}));
+          throw new Error(cd?.message || cd?.error || `Coordinates save failed (${coordRes.status})`);
+        }
+      }
       showDeviceAddResult(
         `Provisioned <strong>${escapeHtml(device.device_id)}</strong>. API key (copy now — shown only once, flash it into the device firmware):<br>` +
         `<code style="display:inline-block;margin-top:4px;background:rgba(255,255,255,.06);padding:4px 8px;border-radius:6px;font-size:11px">${escapeHtml(device.api_key)}</code>`,

@@ -72,7 +72,7 @@
     /* ── Role toggle ── */
     .role-toggle {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 12px;
@@ -108,7 +108,13 @@
       border: 1px solid rgba(16,185,129,0.3);
       box-shadow: 0 2px 12px rgba(16,185,129,0.15);
     }
-    .role-btn:not(.active-admin):not(.active-customer):hover { color: var(--sub); background: rgba(255,255,255,.04); }
+    .role-btn.active-engineer {
+      background: linear-gradient(135deg, rgba(20,184,166,0.18), rgba(14,165,233,0.12));
+      color: #5eead4;
+      border: 1px solid rgba(20,184,166,0.3);
+      box-shadow: 0 2px 12px rgba(20,184,166,0.15);
+    }
+    .role-btn:not(.active-admin):not(.active-customer):not(.active-engineer):hover { color: var(--sub); background: rgba(255,255,255,.04); }
 
     /* ── Role description pill ── */
     .role-desc {
@@ -123,6 +129,7 @@
     }
     .role-desc.admin-desc    { background: rgba(139,92,246,0.07); color: #ddd6fe; border: 1px solid rgba(139,92,246,0.2); }
     .role-desc.customer-desc { background: rgba(16,185,129,0.07);  color: #a7f3d0; border: 1px solid rgba(16,185,129,0.2); }
+    .role-desc.engineer-desc { background: rgba(20,184,166,0.07);  color: #99f6e4; border: 1px solid rgba(20,184,166,0.2); }
 
     /* ── Form ── */
     .form-group { margin-bottom: 16px; }
@@ -184,6 +191,12 @@
       box-shadow: 0 4px 20px rgba(16,185,129,0.3);
     }
     .submit-btn.customer-btn:hover:not(:disabled) { box-shadow: 0 6px 28px rgba(16,185,129,0.45); transform: translateY(-1px); }
+    .submit-btn.engineer-btn {
+      background: linear-gradient(135deg, #0d9488, #0891b2);
+      color: #f0fdfa;
+      box-shadow: 0 4px 20px rgba(20,184,166,0.3);
+    }
+    .submit-btn.engineer-btn:hover:not(:disabled) { box-shadow: 0 6px 28px rgba(20,184,166,0.45); transform: translateY(-1px); }
     .submit-btn:active:not(:disabled) { transform: translateY(0); }
     .submit-btn:disabled { opacity: .55; cursor: not-allowed; transform: none !important; }
 
@@ -259,6 +272,7 @@
     .demo-val.amber { color: var(--amber); }
     .demo-val.green { color: var(--green); }
     .demo-val.blue  { color: #93c5fd; }
+    .demo-val.teal  { color: var(--teal); }
     .demo-section-label {
       padding: 6px 14px 3px;
       font-size: 9px;
@@ -333,6 +347,8 @@
       .card-body { padding: 28px 20px 20px; }
       .card-footer { padding: 12px 20px 18px; }
       .logo { font-size: 26px; }
+      /* Three tabs + long labels get tight on small phones — let them wrap. */
+      .role-btn { font-size: 12px; padding: 9px 4px; }
     }
   </style>
 </head>
@@ -352,6 +368,7 @@
       <!-- Role toggle -->
       <div class="role-toggle">
         <button class="role-btn active-admin" id="btn-admin">Admin / Operator</button>
+        <button class="role-btn" id="btn-engineer">Engineer</button>
         <button class="role-btn" id="btn-customer">Customer</button>
       </div>
 
@@ -440,6 +457,10 @@
       { key: 'Password', val: 'Customer@12345',        cls: 'green' },
       { key: 'Device ID (alt)', val: 'DEMO-001', cls: 'blue' },
       { key: 'PIN (alt)',       val: '1234',     cls: 'blue' }
+    ],
+    engineer: [
+      { key: 'Email',    val: 'engineer@solarpayg.com', cls: 'teal' },
+      { key: 'Password', val: 'Engineer@12345',          cls: 'teal' }
     ]
   };
 
@@ -458,6 +479,16 @@
         <div class="demo-row clickable" data-fill="admin" title="Click to fill">
           <span class="demo-key">Password</span>
           <span class="demo-val amber">${CREDS.admin[1].val}</span>
+        </div>`;
+    } else if (role === 'engineer') {
+      rows = `
+        <div class="demo-row clickable" data-fill="engineer" title="Click to fill">
+          <span class="demo-key">Email</span>
+          <span class="demo-val teal">${CREDS.engineer[0].val}</span>
+        </div>
+        <div class="demo-row clickable" data-fill="engineer" title="Click to fill">
+          <span class="demo-key">Password</span>
+          <span class="demo-val teal">${CREDS.engineer[1].val}</span>
         </div>`;
     } else {
       rows = `
@@ -494,6 +525,9 @@
     if (set === 'admin') {
       id.value = CREDS.admin[0].val;
       fillPw(CREDS.admin[1].val); // NOSONAR
+    } else if (set === 'engineer') {
+      id.value = CREDS.engineer[0].val;
+      fillPw(CREDS.engineer[1].val); // NOSONAR
     } else if (set === 'customer-email') {
       id.value = CREDS.customer[0].val;
       fillPw(CREDS.customer[1].val); // NOSONAR
@@ -517,8 +551,11 @@
     const submitBtn   = document.getElementById('submit-btn');
     const btnText     = document.getElementById('btn-text');
 
+    const btnEngineer = document.getElementById('btn-engineer');
+
     if (role === 'admin') {
       btnAdmin.className    = 'role-btn active-admin';
+      btnEngineer.className = 'role-btn';
       btnCustomer.className = 'role-btn';
       desc.className        = 'role-desc admin-desc';
       descTxt.textContent   = 'Full system access — dashboards, analytics, transaction management, and AI insights.';
@@ -528,8 +565,21 @@
       submitBtn.className   = 'submit-btn admin-btn';
       btnText.textContent   = 'Sign in as Admin';
       document.getElementById('auth-toggle').style.display = 'none';
+    } else if (role === 'engineer') {
+      btnAdmin.className    = 'role-btn';
+      btnEngineer.className = 'role-btn active-engineer';
+      btnCustomer.className = 'role-btn';
+      desc.className        = 'role-desc engineer-desc';
+      descTxt.textContent   = 'Field diagnostics — fleet connectivity, panel health, and firmware/OTA status (read-only).';
+      idLabel.textContent   = 'Email Address';
+      idInput.placeholder   = 'engineer@solarpayg.com';
+      pwLabel.textContent   = 'Password';
+      submitBtn.className   = 'submit-btn engineer-btn';
+      btnText.textContent   = 'Sign in as Engineer';
+      document.getElementById('auth-toggle').style.display = 'none';
     } else {
       btnAdmin.className    = 'role-btn';
+      btnEngineer.className = 'role-btn';
       btnCustomer.className = 'role-btn active-customer';
       desc.className        = 'role-desc customer-desc';
       descTxt.textContent   = 'View your device, wallet balance, energy usage, and make M-Pesa payments.';
@@ -551,7 +601,8 @@
   /* ── Default submit-button label for the current role/mode ── */
   function defaultBtnText() {
     if (authMode === 'forgot') return 'Send Reset Link';
-    if (activeRole === 'admin') return 'Sign in as Admin';
+    if (activeRole === 'admin')    return 'Sign in as Admin';
+    if (activeRole === 'engineer') return 'Sign in as Engineer';
     return authMode === 'signup' ? 'Create Account' : 'Sign in as Customer';
   }
 
@@ -602,6 +653,10 @@
       if (activeRole === 'admin') {
         idLabel.textContent  = 'Email Address';
         idInput.placeholder  = 'admin@solarpayg.com';
+        pwLabel.textContent  = 'Password';
+      } else if (activeRole === 'engineer') {
+        idLabel.textContent  = 'Email Address';
+        idInput.placeholder  = 'engineer@solarpayg.com';
         pwLabel.textContent  = 'Password';
       } else {
         idLabel.textContent  = 'Device ID or Email';
@@ -821,9 +876,12 @@
       if (!res.ok) { localStorage.removeItem('authToken'); return; }
       const user = await res.json();
       /* super-admins AND org admins land on the admin dashboard — org admins
-         see only their own tenant's data (backend-enforced). */
+         see only their own tenant's data (backend-enforced). Engineers land
+         on the Engineer panel. */
       globalThis.location.href = (user.role === 'admin' || user.role === 'org_admin')
-        ? '/index.html' : '/customer.html';
+        ? '/index.html'
+        : user.role === 'engineer' ? '/engineer.html'
+        : '/customer.html';
     } catch (e) {
       console.warn('Auto-redirect check failed — showing login form.', e);
     }
@@ -831,6 +889,7 @@
 
   /* ── Init ── */
   document.getElementById('btn-admin').addEventListener('click', () => setRole('admin'));
+  document.getElementById('btn-engineer').addEventListener('click', () => setRole('engineer'));
   document.getElementById('btn-customer').addEventListener('click', () => setRole('customer'));
   document.getElementById('login-form').addEventListener('submit', handleLogin);
   document.getElementById('demo-box').addEventListener('click', e => {
@@ -873,11 +932,13 @@
       const data = await res.json();
       if (data.adminEmail)    CREDS.admin[0].val    = data.adminEmail;
       if (data.customerEmail) CREDS.customer[0].val = data.customerEmail;
+      if (data.engineerEmail) CREDS.engineer[0].val = data.engineerEmail;
       /* If the operator overrode a demo password via env, the hardcoded
          default shown here would be wrong — display a hint instead. The
          real value is never exposed. */
       if (data.adminPasswordIsDefault === false)    CREDS.admin[1].val    = '(set by operator)';
       if (data.customerPasswordIsDefault === false) CREDS.customer[1].val = '(set by operator)';
+      if (data.engineerPasswordIsDefault === false) CREDS.engineer[1].val = '(set by operator)';
     } catch (e) { /* keep hardcoded defaults if this fails */ }
     renderDemoBox(activeRole);
   }

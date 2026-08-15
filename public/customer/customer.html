@@ -1279,7 +1279,13 @@ async function loadWeatherForecast() {
     const panel = document.getElementById('weather-forecast-panel');
     const grid  = document.getElementById('weather-forecast-days');
     if (!panel || !grid) return;
-    const r = await fetch(`${API}/weather/forecast`);
+    /* Per-site weather: ask the server for THIS customer's device forecast
+       (exact site coords if set, else geocoded from the device's region).
+       authFetch carries the JWT — the server only honors deviceId for
+       authenticated callers, so the widget silently falls back to the
+       default location when the token is missing. */
+    const devId = encodeURIComponent(userInfo.deviceId || 'DEMO-001');
+    const r = await authFetch(`${API}/weather/forecast?deviceId=${devId}`);
     if (!r.ok) { panel.style.display = 'none'; return; }
     const data = await r.json();
     const days = data?.forecast?.days;

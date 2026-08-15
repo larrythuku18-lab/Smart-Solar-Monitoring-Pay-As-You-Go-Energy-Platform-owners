@@ -125,6 +125,16 @@ async function runMigrations() {
     -- Lets the admin fleet panel show what each unit actually runs, not just
     -- the OTA target the backend offered. NULL until the device reports in.
     ALTER TABLE devices ADD COLUMN IF NOT EXISTS firmware_version VARCHAR(32);
+    -- Optional exact site coordinates for per-site weather. NULL = fall back
+    -- to geocoding devices.location, then to WEATHER_LAT/WEATHER_LON. Kept
+    -- separate from the free-text location column so a display label
+    -- ("Nairobi, Kenya") and a precise position can coexist.
+    ALTER TABLE devices ADD COLUMN IF NOT EXISTS lat NUMERIC(9,6);
+    ALTER TABLE devices ADD COLUMN IF NOT EXISTS lon NUMERIC(9,6);
+    -- Solar panel model reported by the device's own telemetry (e.g.
+    -- "MONO-330W"). Drives the Engineer panel's panel-health readout.
+    -- NULL until the device reports in with a panelType.
+    ALTER TABLE devices ADD COLUMN IF NOT EXISTS panel_type VARCHAR(64);
 
     -- ── Energy readings (IoT telemetry from ESP32) ─────────────────────────
     CREATE TABLE IF NOT EXISTS energy_readings (
@@ -568,6 +578,7 @@ async function seedDemoData() {
   /* ── Always ensure named demo accounts exist (safe to re-run) ── */
   const adminHash    = await bcrypt.hash(process.env.ADMIN_PASSWORD    || 'Admin@12345',    10);
   const customerHash = await bcrypt.hash(process.env.CUSTOMER_PASSWORD || 'Customer@12345', 10);
+  const engineerHash = await bcrypt.hash(process.env.ENGINEER_PASSWORD || 'Engineer@12345', 10);
   const adminPinHash   = await bcrypt.hash('0000', 10);
   const customerPinHash = await bcrypt.hash('1234', 10);
 
@@ -576,6 +587,17 @@ async function seedDemoData() {
     email: process.env.ADMIN_EMAIL || 'admin@solarpayg.com',
     passwordHash: adminHash, role: 'admin', name: 'System Admin',
     phone: '+254700000000', walletBalance: 0, relayUnlocked: false
+  });
+
+  // Field/technical staff — read-only diagnostics (Engineer panel). Same
+  // email+password login as the admin; the role drives the /engineer.html
+  // redirect after login and the /api/engineer/* role gates. The PIN is
+  // seeded only because the column is NOT NULL — engineers sign in by email.
+  await upsertDemoUser({
+    deviceId: 'ENGINEER-001', pin: adminPinHash,
+    email: process.env.ENGINEER_EMAIL || 'engineer@solarpayg.com',
+    passwordHash: engineerHash, role: 'engineer', name: 'Field Engineer',
+    phone: '+254733333333', walletBalance: 0, relayUnlocked: false
   });
 
   // DEMO-001 is the demo customer's device, so the email/password login
@@ -770,14 +792,26 @@ async function setPasswordResetToken(userId, tokenHash, expiresAt) {
 /* ── Daily weather alert recipients ───────────────────────────────────────
    Everyone who opted in AND has at least one reachable channel (phone or
    email). The daily cron builds one message per customer and sends it to
-   whichever channels exist — sms.js/mailer.js no-op for the missing ones. */
+   whichever channels exist — sms.js/mailer.js no-op for the missing ones.
+   Also carries the user's linked device position (exact coords + free-text
+   location) so the digest can resolve per-site weather instead of sending
+   everyone the Nairobi forecast. A LATERAL join keeps it to one device per
+   user even if a user somehow owns several units. */
 async function getDailyWeatherRecipients() {
   const { rows } = await q(`
-    SELECT id, name, device_id, phone, email
-    FROM users
-    WHERE role = 'customer'
-      AND daily_weather_alerts = TRUE
-      AND (phone IS NOT NULL AND phone <> '' OR email IS NOT NULL AND email <> '')
+    SELECT u.id, u.name, u.device_id, u.phone, u.email,
+           d.location, d.lat, d.lon
+    FROM   users u
+    LEFT JOIN LATERAL (
+      SELECT location, lat, lon
+      FROM   devices
+      WHERE  user_id = u.id
+      ORDER  BY created_at ASC, id ASC
+      LIMIT  1
+    ) d ON TRUE
+    WHERE  u.role = 'customer'
+      AND  u.daily_weather_alerts = TRUE
+      AND  (u.phone IS NOT NULL AND u.phone <> '' OR u.email IS NOT NULL AND u.email <> '')
   `);
   return rows;
 }
@@ -869,9 +903,9 @@ async function getDevice(deviceId) {
  * firmwareVersion is the version string the device reported in its own
  * telemetry (see buildTelemetryJSON in the firmware). It's stored only when
  * non-empty — a device that stops sending it (or an older build without the
- * field) must not wipe out the last known version.
+ * field) must not wipe out the last known version. Same rule for panelType.
  */
-async function upsertDeviceHeartbeat({ deviceId, ip, name, firmwareVersion, organizationId = null }) {
+async function upsertDeviceHeartbeat({ deviceId, ip, name, firmwareVersion, panelType, organizationId = null }) {
   /* Auto-registered devices (first-ever telemetry) land in the caller's org
      when one is supplied, otherwise the default org — the org column is
      deliberately NOT updated on conflict, so an org cannot be silently
@@ -884,11 +918,12 @@ async function upsertDeviceHeartbeat({ deviceId, ip, name, firmwareVersion, orga
            status    = 'active',
            is_active = TRUE,
            last_seen = NOW(),
-           /* NULLIF('', …) -> NULL, so an empty/missing version never
-              overwrites the last known good value. Explicit ::VARCHAR cast
+           /* NULLIF('', …) -> NULL, so an empty/missing value never
+              overwrites the last known good one. Explicit ::VARCHAR cast
               so Postgres can pin the parameter type. */
-           firmware_version = COALESCE(NULLIF($5::VARCHAR, ''), devices.firmware_version)`,
-    [deviceId, ip || null, name || deviceId, organizationId ?? null, firmwareVersion || null]
+           firmware_version = COALESCE(NULLIF($5::VARCHAR, ''), devices.firmware_version),
+           panel_type       = COALESCE(NULLIF($6::VARCHAR, ''), devices.panel_type)`,
+    [deviceId, ip || null, name || deviceId, organizationId ?? null, firmwareVersion || null, panelType || null]
   );
 }
 
@@ -945,6 +980,73 @@ async function getAllDevices(orgId = null) {
   return rows.map(d => ({ ...d, online: isDeviceOnline(d.last_seen) }));
 }
 
+/* Engineer panel — fleet view. Richer than the admin fleet: alongside the
+   device row it carries the org name, the LATEST energy reading (panel
+   health), a measured telemetry cadence (average seconds between the most
+   recent ~50 energy readings + how many gaps exceeded 15 s — a unit that
+   should report every 5 s but only pings every 60 s is visible at a
+   glance), and the org's active OTA target so an engineer can spot units
+   stuck on an old build. `online` is derived from last_seen like the
+   admin fleet. */
+async function getEngineerFleet() {
+  const { rows } = await q(`
+    SELECT d.*, o.name AS org_name,
+           e.voltage, e.current_amps, e.generation_watts, e.battery_level,
+           e.consumption_watts, e.recorded_at AS last_reading_at,
+           cad.avg_interval_s, cad.gap_count,
+           fw.version       AS ota_target,
+           fw.rollout_pct   AS ota_rollout_pct,
+           fw.rollout_paused AS ota_rollout_paused
+    FROM   devices d
+    LEFT JOIN organizations o ON o.id = d.organization_id
+    LEFT JOIN LATERAL (
+      SELECT voltage, current_amps, generation_watts, battery_level, consumption_watts, recorded_at
+      FROM   energy_readings er
+      WHERE  er.device_id = d.device_id
+      ORDER  BY er.recorded_at DESC
+      LIMIT  1
+    ) e ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT ROUND(AVG(sec)::numeric, 1) AS avg_interval_s,
+             COUNT(*) FILTER (WHERE sec > 15)::int AS gap_count
+      FROM (
+        SELECT EXTRACT(EPOCH FROM (recorded_at - LAG(recorded_at) OVER (ORDER BY recorded_at))) AS sec
+        FROM (
+          SELECT recorded_at FROM energy_readings er2
+          WHERE  er2.device_id = d.device_id
+          ORDER  BY er2.recorded_at DESC
+          LIMIT  50
+        ) recent
+      ) t
+    ) cad ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT version, rollout_pct, rollout_paused
+      FROM   firmware_versions fv
+      WHERE  fv.organization_id = d.organization_id
+        AND  fv.is_active = TRUE
+      ORDER  BY fv.created_at DESC
+      LIMIT  1
+    ) fw ON TRUE
+    ORDER  BY d.created_at DESC`
+  );
+  return rows.map(d => ({ ...d, online: isDeviceOnline(d.last_seen) }));
+}
+
+/* Recent firmware boot reports for one device (newest first) — the engineer
+   panel's per-device OTA history: which version each report declared ok/fail
+   and when. */
+async function getDeviceBootReports(deviceId, limit = 10) {
+  const { rows } = await q(
+    `SELECT device_id, firmware_version, status, created_at
+     FROM   firmware_boot_reports
+     WHERE  device_id = $1
+     ORDER  BY created_at DESC
+     LIMIT  $2`,
+    [deviceId, limit]
+  );
+  return rows;
+}
+
 /** Link a device to a customer account (or unlink with userId = null). */
 async function assignDeviceToUser(deviceId, userId) {
   const { rows } = await q(
@@ -983,6 +1085,18 @@ async function setDeviceLocation(deviceId, location) {
   const { rows } = await q(
     'UPDATE devices SET location = $1 WHERE device_id = $2 RETURNING *',
     [location || null, deviceId]
+  );
+  return rows[0] ?? null;
+}
+
+/* Set (or clear, with null) the device's exact site coordinates. These take
+   precedence over geocoding devices.location when resolving per-site
+   weather. Returns the updated device row, or null when the device doesn't
+   exist. */
+async function setDeviceCoordinates(deviceId, lat, lon) {
+  const { rows } = await q(
+    `UPDATE devices SET lat = $2, lon = $3 WHERE device_id = $1 RETURNING *`,
+    [deviceId, lat ?? null, lon ?? null]
   );
   return rows[0] ?? null;
 }
@@ -1835,11 +1949,14 @@ module.exports = {
   getDevice,
   getDeviceByUserId,
   getAllDevices,
+  getEngineerFleet,
+  getDeviceBootReports,
   setRelayState,
   upsertDeviceHeartbeat,
   provisionDevice,
   assignDeviceToUser,
   setDeviceLocation,
+  setDeviceCoordinates,
   /* energy */
   insertEnergyReading,
   getLatestEnergy,

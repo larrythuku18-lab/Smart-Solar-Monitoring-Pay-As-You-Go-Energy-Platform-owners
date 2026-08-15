@@ -529,7 +529,10 @@
      the organization_id scoping in every admin aggregate). */
   const role = localStorage.getItem('userRole') || 'customer';
   const isAdminRole = role === 'admin' || role === 'org_admin';
-  const DEST = isAdminRole ? '/index.html' : '/customer.html';
+  const isEngineerRole = role === 'engineer';
+  const DEST = isAdminRole ? '/index.html'
+    : isEngineerRole ? '/engineer.html'
+    : '/customer.html';
 
   /* ════════════════════════════════════════════════════
      ORCHESTRAL SYNTH — A-major string swell, hall reverb
@@ -667,6 +670,7 @@
     const rvRole = document.getElementById('rvRole');
     rvRole.textContent = role === 'admin' ? 'Admin Dashboard'
       : role === 'org_admin' ? 'Organization Dashboard'
+      : role === 'engineer' ? 'Engineer Panel'
       : 'Customer Portal';
     veil.classList.add('show');
     setTimeout(() => { globalThis.location.href = DEST; }, 700);

@@ -639,8 +639,10 @@ async function fetchState() {
     
     loadingTracker.updateProgress(40, 'Loading predictions...');
     
-    // Fetch weather with quick timeout
-    const weatherData = await fetchWithTimeout(`${API_BASE}/weather`, 5000).catch(() => null);
+    // Fetch weather with quick timeout — per-site: pass the org-resolved
+    // device so an org admin sees THEIR region's weather, not Nairobi's.
+    const weatherDevice = encodeURIComponent(window.__solgridDeviceId || 'DEMO-001');
+    const weatherData = await fetchWithTimeout(`${API_BASE}/weather?deviceId=${weatherDevice}`, 5000).catch(() => null);
     if (weatherData?.weather) {
       state.weather = weatherData.weather;
       cache.set('weather', weatherData.weather);
@@ -650,8 +652,9 @@ async function fetchState() {
     }
 
     // 5-day forecast — non-critical; the strip stays hidden when no
-    // OPENWEATHER_API_KEY is configured (the server 503s).
-    fetchWithTimeout(`${API_BASE}/weather/forecast`, 8000)
+    // OPENWEATHER_API_KEY is configured (the server 503s). Same per-site
+    // device scoping as the current-conditions feed above.
+    fetchWithTimeout(`${API_BASE}/weather/forecast?deviceId=${weatherDevice}`, 8000)
       .then(data => {
         if (data?.forecast?.days) {
           state.weatherForecast = data.forecast;

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SolGrid — Engineer Panel</title>
+  <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
+  <link rel="manifest" href="/manifest.json" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #060b16; --surface: #0d1520; --card: #111d2e; --border: #1a2840;
+      --amber: #f59e0b; --green: #10b981; --blue: #3b82f6; --red: #ef4444;
+      --teal: #14b8a6; --purple: #8b5cf6; --text: #f1f5f9; --muted: #64748b; --sub: #94a3b8;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: radial-gradient(ellipse at top, rgba(20,184,166,0.08) 0%, transparent 55%),
+                  linear-gradient(180deg, #060b16 0%, #0a1120 60%, #040810 100%);
+      color: var(--text); min-height: 100vh;
+    }
+    .content { flex: 1; display: grid; grid-template-rows: auto; gap: 16px; padding: 20px 20px 56px; max-width: 1400px; margin: 0 auto; width: 100%; }
+
+    /* ── Topbar (engineer = teal accent) ── */
+    .topbar {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 36px; padding: 0 20px; gap: 10px;
+      background: rgba(5,9,18,0.98); backdrop-filter: blur(20px);
+      border-top: 1px solid rgba(255,255,255,.07);
+      box-shadow: 0 -4px 32px rgba(0,0,0,.5);
+    }
+    .topbar::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg,
+        rgba(20,184,166,.9) 0%, rgba(59,130,246,.9) 45%, rgba(16,185,129,.9) 100%);
+    }
+    .topbar-title { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 500; color: var(--muted); letter-spacing: .025em; }
+    .topbar-title::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--teal); animation: statusPulse 2.4s ease-in-out infinite; }
+    @keyframes statusPulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+    .topbar-right { display: flex; align-items: center; gap: 5px; }
+    .badge { font-size: 9px; padding: 2px 9px; border-radius: 20px; font-weight: 700; white-space: nowrap; }
+    .badge-teal  { background: rgba(20,184,166,.12);  color: var(--teal);  border: 1px solid rgba(20,184,166,.24); }
+    .badge-green { background: rgba(16,185,129,.12); color: var(--green); border: 1px solid rgba(16,185,129,.24); }
+    .badge-red   { background: rgba(239,68,68,.12);   color: var(--red);   border: 1px solid rgba(239,68,68,.24);  }
+    .badge-amber { background: rgba(245,158,11,.14); color: var(--amber); border: 1px solid rgba(245,158,11,.28); }
+    .badge-blue  { background: rgba(59,130,246,.12);  color: var(--blue);  border: 1px solid rgba(59,130,246,.24); }
+
+    /* ── KPI cards ── */
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; position: relative; overflow: hidden; }
+    .kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; border-radius:14px 14px 0 0; }
+    .kpi.teal::before { background: var(--teal); }
+    .kpi.green::before { background: var(--green); }
+    .kpi.red::before  { background: var(--red); }
+    .kpi.amber::before { background: var(--amber); }
+    .kpi-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 10px; }
+    .kpi-value { font-weight: 800; font-size: 17px; line-height: 1; }
+    .kpi-delta { font-size: 10px; margin-top: 8px; color: var(--muted); }
+
+    /* ── Panels ── */
+    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); gap: 10px; flex-wrap: wrap; }
+    .panel-title { font-size: 12px; font-weight: 600; color: var(--sub); }
+    .panel-sub { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+
+    /* ── Fleet table ── */
+    .tx-table-wrap { overflow-x: auto; }
+    .tx-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .tx-table th { padding: 10px 14px; text-align: left; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); border-bottom: 1px solid var(--border); background: rgba(255,255,255,.02); white-space: nowrap; }
+    .tx-table td { padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,.04); vertical-align: middle; font-size: 11px; }
+    .tx-table tr:last-child td { border-bottom: none; }
+    .tx-table tbody tr.clickable { cursor: pointer; }
+    .tx-table tbody tr.clickable:hover td { background: rgba(20,184,166,.04); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; color: var(--teal); }
+    .muted { color: var(--muted); }
+    .sub { color: var(--sub); }
+
+    /* ── Cadence bar ── */
+    .cadence-wrap { display: flex; align-items: center; gap: 6px; }
+    .cadence-track { width: 46px; height: 3px; background: rgba(255,255,255,.07); border-radius: 2px; overflow: hidden; }
+    .cadence-fill { height: 100%; border-radius: 2px; }
+
+    /* ── Device detail drawer ── */
+    #device-detail { display: none; }
+    .detail-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 14px 18px; }
+    .dv-item { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06); border-radius: 10px; padding: 12px 14px; }
+    .dv-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing:.5px; margin-bottom: 6px; }
+    .dv-value { font-size: 13px; font-weight: 700; }
+    .dv-detail { font-size: 9px; color: var(--muted); margin-top: 5px; }
+
+    /* ── Reading strip (mini bars) ── */
+    .read-strip { display: flex; align-items: flex-end; gap: 2px; height: 60px; padding: 14px 18px; }
+    .read-bar { flex: 1; min-width: 2px; border-radius: 2px 2px 0 0; background: linear-gradient(180deg, var(--teal), rgba(20,184,166,.15)); position: relative; }
+    .read-bar.gen { background: linear-gradient(180deg, var(--amber), rgba(245,158,11,.15)); }
+    .read-bar.bat { background: linear-gradient(180deg, var(--green), rgba(16,185,129,.15)); }
+
+    /* ── Boot reports ── */
+    .boot-row { display: flex; align-items: center; gap: 10px; padding: 8px 18px; border-bottom: 1px solid rgba(255,255,255,.03); font-size: 11px; }
+    .boot-row:last-child { border-bottom: none; }
+    .boot-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── Filter / search ── */
+    .fleet-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .fleet-tools input, .fleet-tools select {
+      background: rgba(255,255,255,.04); border: 1px solid var(--border); border-radius: 8px;
+      padding: 6px 10px; font-size: 11px; color: var(--text); font-family: inherit; outline: none;
+    }
+    .fleet-tools select option { background: var(--card); }
+
+    .empty-state { padding: 28px 18px; text-align: center; color: var(--muted); font-size: 11px; }
+
+    @media (max-width: 1100px) {
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .detail-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 640px) {
+      .content { padding: 12px 12px 56px; }
+      .kpi-grid, .detail-grid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+  <link rel="stylesheet" href="/nav.css">
+</head>
+<body class="with-nav">
+
+<!-- Loading overlay -->
+<div id="loading-overlay" style="position:fixed;inset:0;background:rgba(6,11,22,0.97);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999">
+  <div style="width:40px;height:40px;border:3px solid rgba(20,184,166,0.2);border-top-color:var(--teal);border-radius:50%;animation:spin 0.9s linear infinite"></div>
+  <div style="margin-top:18px;color:var(--muted);font-size:13px">Loading Engineer Panel…</div>
+  <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+</div>
+
+<!-- Main app -->
+<div class="shell" id="app" style="display:none;min-height:100vh;display:flex;flex-direction:column">
+
+  <!-- Status bar -->
+  <div class="topbar">
+    <div class="topbar-title" id="topbar-date">SolGrid — Engineer Diagnostics</div>
+    <div class="topbar-right">
+      <span class="badge badge-teal" id="fleet-badge">— devices</span>
+      <span class="badge badge-green" id="online-badge">— online</span>
+      <span class="badge badge-red" id="offline-badge">— offline</span>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- KPIs -->
+    <div class="kpi-grid">
+      <div class="kpi teal">
+        <div class="kpi-label">Fleet Size</div>
+        <div class="kpi-value" style="color:var(--teal)" id="kpi-fleet">—</div>
+        <div class="kpi-delta">Total provisioned units</div>
+      </div>
+      <div class="kpi green">
+        <div class="kpi-label">Online</div>
+        <div class="kpi-value" style="color:var(--green)" id="kpi-online">—</div>
+        <div class="kpi-delta" id="kpi-online-delta">Reporting telemetry</div>
+      </div>
+      <div class="kpi red">
+        <div class="kpi-label">Offline</div>
+        <div class="kpi-value" style="color:var(--red)" id="kpi-offline">—</div>
+        <div class="kpi-delta">Needs attention</div>
+      </div>
+      <div class="kpi amber">
+        <div class="kpi-label">Avg Report Interval</div>
+        <div class="kpi-value" style="color:var(--amber)" id="kpi-cadence">—</div>
+        <div class="kpi-delta">Measured telemetry cadence</div>
+      </div>
+    </div>
+
+    <!-- Fleet table -->
+    <div class="panel">
+      <div class="panel-head">
+        <span class="panel-title">Device Fleet — Connectivity · Panel Health · Firmware</span>
+        <div class="fleet-tools">
+          <input id="fleet-search" type="text" placeholder="Search device / region / firmware…"
+            style="min-width:200px">
+          <select id="fleet-filter">
+            <option value="all">All states</option>
+            <option value="online">Online</option>
+            <option value="offline">Offline</option>
+            <option value="stale-cadence">Slow reporting (&gt;30s avg)</option>
+            <option value="firmware-stale">Firmware behind target</option>
+          </select>
+        </div>
+      </div>
+      <div class="tx-table-wrap">
+        <table class="tx-table">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Org</th>
+              <th>Status</th>
+              <th>Last Seen</th>
+              <th>Report Cadence</th>
+              <th>Panel</th>
+              <th>V / I / Gen</th>
+              <th>Battery</th>
+              <th>Firmware (reported)</th>
+              <th>OTA Target</th>
+            </tr>
+          </thead>
+          <tbody id="fleet-body">
+            <tr><td colspan="10" style="text-align:center;padding:24px;color:var(--muted)">Loading fleet…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Device detail drawer -->
+    <div class="panel" id="device-detail">
+      <div class="panel-head">
+        <span class="panel-title" id="detail-title">Device</span>
+        <span class="badge badge-teal" style="cursor:pointer" id="detail-close">✕ Close</span>
+      </div>
+      <div class="detail-grid" id="detail-grid"></div>
+      <div class="panel-head" style="border-top:1px solid var(--border)">
+        <span class="panel-title">Recent Generation (60 readings)</span>
+        <span class="panel-sub">Voltage · Current · Battery</span>
+      </div>
+      <div class="read-strip" id="read-strip"></div>
+      <div class="panel-head" style="border-top:1px solid var(--border)">
+        <span class="panel-title">Firmware Boot Reports</span>
+        <span class="panel-sub">Last 10 OTA outcomes</span>
+      </div>
+      <div id="boot-list">
+        <div class="empty-state">No boot reports yet — devices only report after flashing via OTA.</div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div>
+
+<script type="module" src="engineer.js"></script>
+<script src="/nav-init.js"></script>
+</body>
+</html>

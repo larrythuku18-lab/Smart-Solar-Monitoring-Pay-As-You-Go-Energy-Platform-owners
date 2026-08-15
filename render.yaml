@@ -44,7 +44,7 @@ services:
       #   builds (generate via `node scripts/generate-ota-keys.js`; NEVER
       #   commit this; an HSM/key-vault holds it in the full design)
       # ALLOWED_ORIGINS
-      # ADMIN_EMAIL, ADMIN_PASSWORD, CUSTOMER_EMAIL  (demo account overrides)
+      # ADMIN_EMAIL, ADMIN_PASSWORD, CUSTOMER_EMAIL, ENGINEER_EMAIL, ENGINEER_PASSWORD  (demo account overrides)
       # RESEND_API_KEY, RESEND_FROM_EMAIL  (login alerts + signup confirmation)
       # AT_USERNAME, AT_API_KEY, AT_SENDER_ID, LOW_BALANCE_THRESHOLD_KES
       #   (low-balance + power-cut SMS via Africa's Talking; blank = disabled)
