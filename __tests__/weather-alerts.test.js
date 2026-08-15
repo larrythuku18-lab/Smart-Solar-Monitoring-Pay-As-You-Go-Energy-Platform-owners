@@ -85,6 +85,7 @@ describe('buildWeatherSms', () => {
       const sms = buildWeatherSms({ name: 'Demo Customer', day, city: 'Nairobi' });
       /* Emoji would force UCS-2 encoding, halving+ segment capacity and
          tripling cost; the weather summary must stay pure GSM-7. */
+      // eslint-disable-next-line security/detect-unsafe-regex
       assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(sms),
         `SMS contains an emoji — breaks single-segment cost: ${sms}`);
     }
