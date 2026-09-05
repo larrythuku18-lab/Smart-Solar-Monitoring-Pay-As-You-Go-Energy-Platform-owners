@@ -39,7 +39,7 @@ const helmet      = require('helmet');
 const rateLimit   = require('express-rate-limit');
 const compression = require('compression');
 const { body, validationResult } = require('express-validator');
-const { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, sendDailyWeatherEmail, resendConfigured } = require('./mailer');
+const { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, sendDailyWeatherEmail, resendConfigured, emailDeliveryPossible } = require('./mailer');
 const { sendLowBalanceSms, sendPowerCutSms, sendSms, sendDailyWeatherSms, smsConfigured } = require('./sms');
 const { resolveWeatherCoords } = require('./geocode');
 const realtime = require('./realtime');
@@ -100,6 +100,10 @@ const {
   setPasswordResetToken,
   getUserByValidResetToken,
   completePasswordReset,
+  updatePassword,
+  setEmailVerificationToken,
+  getUserByValidVerificationToken,
+  markEmailVerified,
   assignDeviceToUser,
   getUserByEmail,
   createUser,
@@ -1117,6 +1121,20 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       const match = await bcrypt.compare(password, user.password_hash);
       if (!match) return res.status(401).json({ error: 'Invalid email or password' });
 
+      /* Email-verification gate. Only enforced when a verification email
+         can actually be delivered to this address (see POST /api/auth/register)
+         — accounts created while mail was off, and all seeded demo accounts,
+         are created verified, so this can never lock out someone who has no
+         way to click a link. The response carries a distinct error code so
+         the login page can offer a resend instead of a generic failure. */
+      if (user.email_verified === false && emailDeliveryPossible(user.email)) {
+        return res.status(403).json({
+          error:   'EMAIL_NOT_VERIFIED',
+          message: `Please verify your email (${user.email}) before signing in — check your inbox for the confirmation link, or request a new one.`,
+          email:   user.email
+        });
+      }
+
       const token = signToken({
         id:             user.id,
         deviceId:       user.device_id,
@@ -1192,6 +1210,15 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 /* POST /api/auth/register
    Creates a new user account with a hashed password.
    Assign a device later via the admin panel or device provisioning.
+
+   Email verification: when a confirmation email can actually be delivered
+   to the address (mail configured + this address reachable), the account is
+   created UNVERIFIED, a 24-hour token is emailed, and no session token is
+   issued — the user must click the link before their password works. When
+   delivery isn't possible (local dev, tests, sandbox sender that can't
+   reach the address), the account is created VERIFIED and the old
+   register-and-sign-in behavior is preserved — never lock someone out of
+   an account they have no way to verify.
 */
 app.post('/api/auth/register', authLimiter, async (req, res) => {
   const { name, email, password, phone, deviceId } = req.body;
@@ -1208,22 +1235,40 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const newDeviceId  = deviceId || `USER-${Date.now()}`;
     /* Public self-signup always lands in the default org — an org admin
        provisions customers for their own tenant via the admin surface. */
-    const user = await createUser({ deviceId: newDeviceId, name, email, passwordHash, phone, role: 'customer' });
+    const verifyRequired = emailDeliveryPossible(email);
+    const user = await createUser({ deviceId: newDeviceId, name, email, passwordHash, phone, role: 'customer', emailVerified: !verifyRequired });
 
-    const token = signToken({
-      id:             user.id,
-      deviceId:       user.device_id,
-      role:           user.role,
-      organizationId: user.organization_id ?? null
-    });
-
-    /* Fire-and-forget signup confirmation — never blocks or fails the response */
-    sendSignupConfirmation(user.email, { name: user.name })
-      .catch(err => console.error('sendSignupConfirmation error:', err.message));
+    let token = null;
+    if (verifyRequired) {
+      /* The raw token only ever leaves this process inside the emailed link;
+         the DB stores its SHA-256 hash (same pattern as password reset). */
+      const raw       = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(raw).digest('hex');
+      await setEmailVerificationToken(user.id, tokenHash, new Date(Date.now() + 24 * 60 * 60 * 1000));
+      const verifyUrl = `${req.protocol}://${req.get('host')}/verify-email.html?token=${raw}`;
+      /* Fire-and-forget — never blocks or fails the response. The welcome
+         email carries the confirmation link. */
+      sendSignupConfirmation(user.email, { name: user.name, verifyUrl })
+        .catch(err => console.error('sendSignupConfirmation error:', err.message));
+    } else {
+      token = signToken({
+        id:             user.id,
+        deviceId:       user.device_id,
+        role:           user.role,
+        organizationId: user.organization_id ?? null
+      });
+      /* Fire-and-forget signup confirmation — never blocks or fails the response */
+      sendSignupConfirmation(user.email, { name: user.name })
+        .catch(err => console.error('sendSignupConfirmation error:', err.message));
+    }
 
     res.status(201).json({
       token,
-      user: { id: user.id, deviceId: user.device_id, role: user.role, organizationId: user.organization_id ?? null, walletBalance: user.wallet_balance }
+      emailVerified: !verifyRequired,
+      message: verifyRequired
+        ? 'Account created — confirm your email to activate it.'
+        : undefined,
+      user: { id: user.id, deviceId: user.device_id, role: user.role, organizationId: user.organization_id ?? null, walletBalance: user.wallet_balance, emailVerified: !verifyRequired }
     });
   } catch (err) {
     console.error('Registration error:', err.message);
@@ -1288,6 +1333,99 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
   }
 });
 
+/* GET /api/auth/verify-email?token=... — completes email verification.
+   The token itself is the credential (it was sent to the address on file),
+   so this deliberately has NO authMiddleware: the emailed link must work in
+   a fresh browser with no session. The response is a simple success/failure
+   JSON the verify-email.html page renders. */
+app.get('/api/auth/verify-email', async (req, res) => {
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+  if (!token) return res.status(400).json({ error: 'Verification link is missing its token' });
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const user = await getUserByValidVerificationToken(tokenHash);
+    if (!user) {
+      return res.status(400).json({ error: 'Verification link is invalid or has expired — request a new one' });
+    }
+    await markEmailVerified(user.id);
+    res.json({ success: true, message: 'Email verified — you can now sign in.' });
+  } catch (err) {
+    console.error('Verify email error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Could not verify email', message: err.message });
+  }
+});
+
+/* POST /api/auth/resend-verification — sends a fresh confirmation link.
+   Mirrors forgot-password's anti-probing behavior: answers identically
+   whether or not the address exists, and only mints a token when the
+   account is genuinely unverified AND a mail delivery path exists (an
+   attacker spamming this endpoint can only cause a link to be emailed to
+   the account owner themselves — harmless). */
+app.post('/api/auth/resend-verification', authLimiter, async (req, res) => {
+  const genericReply = { message: 'If that account is unverified, a new verification link has been sent.' };
+  const { email } = req.body;
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.json(genericReply);
+  }
+
+  try {
+    const user = await getUserByEmail(email);
+    if (user?.email && user.email_verified === false && emailDeliveryPossible(user.email)) {
+      const raw       = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(raw).digest('hex');
+      await setEmailVerificationToken(user.id, tokenHash, new Date(Date.now() + 24 * 60 * 60 * 1000));
+      const verifyUrl = `${req.protocol}://${req.get('host')}/verify-email.html?token=${raw}`;
+      sendSignupConfirmation(user.email, { name: user.name, verifyUrl })
+        .catch(err => console.error('sendVerificationEmail error:', err.message));
+    }
+    res.json(genericReply);
+  } catch (err) {
+    console.error('Resend verification error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Could not resend verification link', message: err.message });
+  }
+});
+
+/* POST /api/auth/change-password — a signed-in user rotates their own
+   password. Requires the CURRENT password so a stolen-but-idle session
+   token alone isn't enough to hijack the account, and clears any
+   outstanding reset token so a leaked reset link can't race the change.
+   Deliberately not on authLimiter: it is bearer-authenticated, and sharing
+   the login limiter's tight 20/15-min budget would let a handful of legit
+   password changes trip the login flow for the same IP. */
+app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'currentPassword and newPassword are required' });
+  }
+  const pwError = validatePasswordStrength(newPassword);
+  if (pwError) return res.status(400).json({ error: pwError });
+
+  try {
+    const user = await getUserById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user.password_hash) {
+      return res.status(400).json({ error: 'This account has no password — it is PIN-based' });
+    }
+
+    const currentOk = await bcrypt.compare(String(currentPassword), user.password_hash);
+    if (!currentOk) return res.status(401).json({ error: 'Current password is incorrect' });
+    if (await bcrypt.compare(String(newPassword), user.password_hash)) {
+      return res.status(400).json({ error: 'New password must be different from the current one' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await updatePassword(user.id, passwordHash);
+    res.json({ message: 'Password updated — use it next time you sign in' });
+  } catch (err) {
+    console.error('Change password error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Could not change password', message: err.message });
+  }
+});
+
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     const user = await getUserById(req.user.id);
@@ -1303,10 +1441,12 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
       id:             user.id,
       deviceId:       user.device_id,
       name:           user.name || null,
+      email:          user.email || null,
       role:           req.user.role || (user.device_id === 'ADMIN' ? 'admin' : 'customer'),
       organizationId: user.organization_id ?? null,
       organization,
       walletBalance:  user.wallet_balance,
+      emailVerified:  user.email_verified !== false,
       dailyWeatherAlerts: user.daily_weather_alerts !== false
     });
   } catch (err) {
@@ -1389,6 +1529,7 @@ app.get('/api/customer/summary', authMiddleware, async (req, res) => {
         email:         user.email  || null,
         phone:         user.phone  || null,
         walletBalance: user.wallet_balance,
+        emailVerified: user.email_verified !== false,
         dailyWeatherAlerts: user.daily_weather_alerts !== false
       },
       device: device

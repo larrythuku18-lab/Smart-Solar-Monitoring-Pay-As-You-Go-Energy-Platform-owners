@@ -87,8 +87,11 @@ If this was you, no action is needed. If you don't recognize this activity, plea
 }
 
 /* Fire-and-forget — never let a mail failure affect the registration response.
-   Returns true/false so callers can log success without awaiting delivery. */
-async function sendSignupConfirmation(toEmail, { name }) {
+   Returns true/false so callers can log success without awaiting delivery.
+   When verifyUrl is provided (email verification is enforced for this
+   account), the welcome email doubles as the confirmation email — one
+   message, no separate "verify your email" blast. */
+async function sendSignupConfirmation(toEmail, { name, verifyUrl }) {
   try {
     const client = getResendClient();
     if (!client || !canDeliverEmail(toEmail)) return false;
@@ -96,9 +99,18 @@ async function sendSignupConfirmation(toEmail, { name }) {
     const { error } = await client.emails.send({
       from:    process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
       to:      toEmail,
-      subject: 'Welcome to SolGrid — your account is ready',
-      text:
-`Hi ${name || 'there'},
+      subject: verifyUrl ? 'Confirm your SolGrid email address' : 'Welcome to SolGrid — your account is ready',
+      text: verifyUrl
+        ? `Hi ${name || 'there'},
+
+Your SolGrid account has been created. To finish signing up, confirm your email address (link valid for 24 hours):
+
+${verifyUrl}
+
+Once confirmed you can log in and top up your wallet to keep your power on. If you didn't create this account, you can safely ignore this email.
+
+— SolGrid`
+        : `Hi ${name || 'there'},
 
 Your SolGrid account has been created successfully. You can now log in and top up your wallet to keep your power on.
 
@@ -114,6 +126,16 @@ Your SolGrid account has been created successfully. You can now log in and top u
     console.warn('[Mailer] Failed to send signup confirmation:', err.message);
     return false;
   }
+}
+
+/* Can a verification email actually reach this address right now? Email
+   verification must NEVER lock someone out of an account they cannot
+   verify: it is only enforced (on login and at signup) when mail is
+   configured AND this specific address is deliverable (Resend's sandbox
+   sender only reaches the account owner's own address). When this is
+   false, accounts are created pre-verified instead. */
+function emailDeliveryPossible(toEmail) {
+  return resendConfigured() && canDeliverEmail(toEmail);
 }
 
 /* Fire-and-forget — the forgot-password endpoint answers identically whether
@@ -178,4 +200,4 @@ async function sendDailyWeatherEmail(toEmail, { name, day, city, days }) {
   }
 }
 
-module.exports = { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, sendDailyWeatherEmail, resendConfigured };
+module.exports = { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, sendDailyWeatherEmail, resendConfigured, emailDeliveryPossible };

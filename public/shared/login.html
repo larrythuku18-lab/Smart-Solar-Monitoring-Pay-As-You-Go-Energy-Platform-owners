@@ -225,6 +225,23 @@
     }
     .alert-error   { background: rgba(239,68,68,0.07);   border-color: rgba(239,68,68,0.25);   color: #fda4af; }
     .alert-success { background: rgba(16,185,129,0.07);  border-color: rgba(16,185,129,0.25);  color: #a7f3d0; }
+    .alert-info    { background: rgba(59,130,246,0.07);  border-color: rgba(59,130,246,0.25);  color: #bfdbfe; }
+    .verify-resend {
+      display: block;
+      margin-top: 8px;
+      background: transparent;
+      border: 1px solid currentColor;
+      color: inherit;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: opacity .2s;
+    }
+    .verify-resend:hover { opacity: .8; }
+    .verify-resend:disabled { opacity: .5; cursor: default; }
 
     /* ── Demo credentials ── */
     .demo-box {
@@ -690,6 +707,57 @@
     box.innerHTML      = '';
   }
 
+  /* ── Email-verification prompt ── */
+  let pendingVerifyEmail = null;
+
+  /* Escape user-controlled text (an email address) before it lands in
+     innerHTML — showAlert interpolates raw HTML. */
+  function esc(value) {
+    return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  /* A block-level notice rendered into #alert-box when an account needs its
+     email confirmed — shown both when a signup created an unverified account
+     (kind 'info') and when a login attempt was blocked (kind 'error'). The
+     resend button lets the user request a fresh link without leaving the
+     page. */
+  function showVerifyCard(kind, html, email) {
+    pendingVerifyEmail = email;
+    const box = document.getElementById('alert-box');
+    box.style.display = 'block';
+    box.className = `alert alert-${kind === 'error' ? 'error' : 'info'}`;
+    box.innerHTML = `<span style="flex:1">${html}
+        <button type="button" class="verify-resend" id="resend-btn">Resend verification link</button>
+      </span>`;
+    document.getElementById('resend-btn').addEventListener('click', resendVerification);
+  }
+
+  /* POST /api/auth/resend-verification — the server answers identically for
+     known and unknown addresses, so a success here only means "if that
+     account is unverified, mail went out". */
+  async function resendVerification() {
+    if (!pendingVerifyEmail) return;
+    const btn = document.getElementById('resend-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    try {
+      const res  = await fetch(`${API}/auth/resend-verification`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email: pendingVerifyEmail })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        clearAlert();
+        showAlert(data.message || 'If that account is unverified, a new confirmation link has been sent.', 'success');
+      } else {
+        showAlert(data.error || 'Could not resend the link — please try again in a few minutes.', 'error');
+      }
+    } catch (err) {
+      console.error('Resend verification error:', err);
+      showAlert('Network error. Please check your connection.', 'error');
+    }
+  }
+
   /* ── Login / Sign up ── */
   async function handleLogin(e) {
     e.preventDefault();
@@ -735,6 +803,18 @@
       const tok  = data.token || data.accessToken;
 
       if (!res.ok || !tok) {
+        /* Unverified self-signup account — the password is right but the
+           email confirmation link hasn't been clicked yet. Offer a resend
+           instead of a misleading generic "invalid credentials" error. */
+        if (res.status === 403 && data.error === 'EMAIL_NOT_VERIFIED') {
+          const addr = String(data.email || identifier);
+          showVerifyCard('error',
+            `Please verify <b>${esc(addr)}</b> before signing in — check your inbox for the confirmation link we sent when you created the account.`,
+            addr);
+          btn.disabled  = false;
+          btnText.textContent = defaultBtnText();
+          return;
+        }
         showAlert(data.error || data.message || 'Invalid credentials. Please try again.', 'error');
         btn.disabled  = false;
         btnText.textContent = defaultBtnText();
@@ -841,7 +921,30 @@
       const data = await res.json().catch(() => ({}));
       const tok  = data.token || data.accessToken;
 
-      if (!res.ok || !tok) {
+      if (!res.ok) {
+        showAlert(data.error || data.message || 'Could not create account. Please try again.', 'error');
+        btn.disabled  = false;
+        btnText.textContent = defaultBtnText();
+        return;
+      }
+
+      /* Email verification is on: the server deliberately issued NO session
+         token — the account only activates once the emailed link is clicked.
+         Switch the form back to sign-in mode (so the next submit doesn't try
+         to register the same email again) and show the confirmation prompt. */
+      if (!tok && data.emailVerified === false) {
+        const addr = String(data.user?.email || email);
+        pendingVerifyEmail = addr;
+        setAuthMode('login');
+        showVerifyCard('info',
+          `Account created! We sent a confirmation link to <b>${esc(addr)}</b>.<br>Confirm your email, then sign in with your new password.`,
+          addr);
+        btn.disabled  = false;
+        btnText.textContent = defaultBtnText();
+        return;
+      }
+
+      if (!tok) {
         showAlert(data.error || data.message || 'Could not create account. Please try again.', 'error');
         btn.disabled  = false;
         btnText.textContent = defaultBtnText();

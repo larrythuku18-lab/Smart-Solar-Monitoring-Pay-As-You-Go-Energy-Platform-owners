@@ -84,6 +84,7 @@ async function runMigrations() {
       role           VARCHAR(20)   NOT NULL DEFAULT 'customer',
       wallet_balance NUMERIC(12,2) DEFAULT 0,
       relay_unlocked BOOLEAN       DEFAULT FALSE,
+      email_verified BOOLEAN       DEFAULT FALSE,
       created_at     TIMESTAMPTZ   DEFAULT NOW()
     );
     -- Add columns to existing tables without destroying data
@@ -94,6 +95,19 @@ async function runMigrations() {
     -- so a database leak doesn't hand out working reset links.
     ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_hash    VARCHAR(64);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ;
+    -- Email verification: new self-signed-up accounts confirm their address
+    -- before their password works. email_verified is added with DEFAULT TRUE
+    -- so every PRE-EXISTING row is backfilled as verified (nobody gets locked
+    -- out of an account they already use), then the default is flipped to
+    -- FALSE so accounts created from here on start unverified. On a fresh
+    -- database CREATE TABLE already made the column DEFAULT FALSE, so the ADD
+    -- COLUMN IF NOT EXISTS is a no-op and only the SET DEFAULT runs.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT TRUE;
+    ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT FALSE;
+    -- Verification tokens follow the reset-token pattern: only the SHA-256
+    -- hash of the emailed token is stored.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_hash    VARCHAR(64);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires TIMESTAMPTZ;
     -- Widen pin column to accommodate bcrypt hashes (was VARCHAR(20), too small for 60-char hashes)
     ALTER TABLE users ALTER COLUMN pin TYPE VARCHAR(255);
     -- Daily weather + energy-tip alert opt-in (default ON — customers can
@@ -545,14 +559,19 @@ async function upsertDemoUser({ deviceId, pin, email, passwordHash, role, name, 
      organizations table + default row were just created by runMigrations(),
      so the subselect always resolves. On an existing database the org
      columns were backfilled, so the ON CONFLICT branch leaves org alone. */
+  /* Demo accounts are seeded with email_verified = TRUE: they carry
+     well-known public credentials (shown right on the login page), so
+     gating them behind an inbox check would lock everyone out of the demo.
+     Re-verifying on every boot also self-heals any local flip. */
   await q(
-    `INSERT INTO users (device_id, pin, email, password_hash, role, name, phone, wallet_balance, relay_unlocked, organization_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, (SELECT id FROM organizations WHERE slug = 'default'))
+    `INSERT INTO users (device_id, pin, email, password_hash, role, name, phone, wallet_balance, relay_unlocked, organization_id, email_verified)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, (SELECT id FROM organizations WHERE slug = 'default'), TRUE)
      ON CONFLICT (device_id) DO UPDATE
        SET email         = EXCLUDED.email,
            pin           = EXCLUDED.pin,
            password_hash = EXCLUDED.password_hash,
-           role          = EXCLUDED.role`,
+           role          = EXCLUDED.role,
+           email_verified = TRUE`,
     [deviceId, pin, email, passwordHash, role, name, phone, walletBalance, relayUnlocked]
   );
 }
@@ -741,7 +760,7 @@ async function getUserByEmail(email) {
   return rows[0] ?? null;
 }
 
-async function createUser({ deviceId, name, email, passwordHash, phone, pin, role = 'customer', organizationId = null }) {
+async function createUser({ deviceId, name, email, passwordHash, phone, pin, role = 'customer', organizationId = null, emailVerified = false }) {
   /* Always bcrypt-hash the PIN — callers pass plaintext only. There is
      deliberately no pass-through for values that already "look like a hash"
      ($2...): if a caller-controlled string reached storage verbatim, the
@@ -755,10 +774,10 @@ async function createUser({ deviceId, name, email, passwordHash, phone, pin, rol
   const orgId = organizationId ?? (await getDefaultOrganizationId());
 
   const { rows } = await q(
-    `INSERT INTO users (device_id, name, email, password_hash, phone, pin, role, organization_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO users (device_id, name, email, password_hash, phone, pin, role, organization_id, email_verified)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING *`,
-    [deviceId, name || null, email?.toLowerCase() || null, passwordHash || null, phone || null, finalPin, role, orgId]
+    [deviceId, name || null, email?.toLowerCase() || null, passwordHash || null, phone || null, finalPin, role, orgId, !!emailVerified]
   );
   return rows[0];
 }
@@ -834,6 +853,49 @@ async function completePasswordReset(userId, passwordHash) {
      SET password_hash = $1, reset_token_hash = NULL, reset_token_expires = NULL
      WHERE id = $2`,
     [passwordHash, userId]
+  );
+}
+
+/* ── Password change (signed-in user rotating their own password) ────────
+   Same UPDATE as completePasswordReset — clearing the reset token means a
+   stolen reset link can't race a deliberate password change. */
+async function updatePassword(userId, passwordHash) {
+  await q(
+    `UPDATE users
+     SET password_hash = $1, reset_token_hash = NULL, reset_token_expires = NULL
+     WHERE id = $2`,
+    [passwordHash, userId]
+  );
+}
+
+/* ── Email verification ──────────────────────────────────────────────────
+   Mirrors the password-reset token pattern: the raw token goes to the user
+   by email, only its SHA-256 hash is stored, and a new request overwrites
+   the previous token. Storing the token also flips the account back to
+   unverified, so a re-issued link always requires (re)verification. */
+async function setEmailVerificationToken(userId, tokenHash, expiresAt) {
+  await q(
+    `UPDATE users
+     SET verification_token_hash = $1, verification_token_expires = $2, email_verified = FALSE
+     WHERE id = $3`,
+    [tokenHash, expiresAt, userId]
+  );
+}
+
+async function getUserByValidVerificationToken(tokenHash) {
+  const { rows } = await q(
+    'SELECT * FROM users WHERE verification_token_hash = $1 AND verification_token_expires > NOW()',
+    [tokenHash]
+  );
+  return rows[0] ?? null;
+}
+
+async function markEmailVerified(userId) {
+  await q(
+    `UPDATE users
+     SET email_verified = TRUE, verification_token_hash = NULL, verification_token_expires = NULL
+     WHERE id = $1`,
+    [userId]
   );
 }
 
@@ -2000,6 +2062,10 @@ module.exports = {
   setPasswordResetToken,
   getUserByValidResetToken,
   completePasswordReset,
+  updatePassword,
+  setEmailVerificationToken,
+  getUserByValidVerificationToken,
+  markEmailVerified,
   /* devices */
   getDevice,
   getDeviceByUserId,

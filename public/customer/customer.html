@@ -676,6 +676,25 @@
         </div>
       </div>
       <div class="account-section">
+        <div class="account-section-title">Security</div>
+        <div class="info-row"><span class="info-key">Email</span><span class="info-val" id="acc-email">—</span></div>
+        <div class="info-row"><span class="info-key">Email Verified</span><span class="info-val" id="acc-email-verified">—</span></div>
+        <div class="form-group" style="margin-top:14px">
+          <label class="form-label" for="cp-current">Current Password</label>
+          <input id="cp-current" class="form-input" type="password" autocomplete="current-password" placeholder="Your current password" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="cp-new">New Password</label>
+          <input id="cp-new" class="form-input" type="password" autocomplete="new-password" placeholder="8+ chars with upper, lower, number &amp; symbol" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="cp-confirm">Confirm New Password</label>
+          <input id="cp-confirm" class="form-input" type="password" autocomplete="new-password" placeholder="Re-enter new password" />
+        </div>
+        <button id="cp-btn" class="action-btn primary" style="width:100%;justify-content:center">Change Password</button>
+        <div class="pay-status" id="cp-status"></div>
+      </div>
+      <div class="account-section">
         <div class="account-section-title">Support</div>
         <div class="support-row">
           <div class="support-icon" style="background:rgba(16,185,129,.1)">Tel</div>
@@ -795,6 +814,7 @@ async function loadState() {
       phone:         data.user.phone,
       walletBalance: data.user.walletBalance,
       role:          'customer',
+      emailVerified: data.user.emailVerified !== false,
       dailyWeatherAlerts: data.user.dailyWeatherAlerts !== false
     };
     /* Sync the Account tab's notification toggle to the server's opt-in
@@ -938,6 +958,12 @@ function renderAll() {
   document.getElementById('acc-gen').textContent     = fmtPower(gen);
   document.getElementById('acc-cons').textContent    = fmtPower(cons);
   document.getElementById('acc-voltage').textContent = volt ? `${volt.toFixed(1)} V` : '—';
+  document.getElementById('acc-email').textContent   = userInfo.email || '—';
+  const verifiedEl = document.getElementById('acc-email-verified');
+  if (verifiedEl) {
+    verifiedEl.textContent = userInfo.emailVerified ? 'Verified' : 'Unverified';
+    verifiedEl.style.color = userInfo.emailVerified ? 'var(--green)' : 'var(--amber)';
+  }
 
   /* Status bar */
   document.getElementById('sb-time').textContent       = `${new Date().toLocaleTimeString('en-KE',{hour:'2-digit',minute:'2-digit'})} · SolGrid`;
@@ -1264,6 +1290,53 @@ function pollPayment(checkoutId, amount, productName, simulated) {
       }
     } catch (e) { /* ignore */ }
   }, 3000);
+}
+
+/* ══ CHANGE PASSWORD ══ */
+async function changePassword() {
+  const btn      = document.getElementById('cp-btn');
+  const statusEl = document.getElementById('cp-status');
+  const current  = document.getElementById('cp-current').value;
+  const next     = document.getElementById('cp-new').value;
+  const confirm  = document.getElementById('cp-confirm').value;
+
+  const setStatus = (type, msg) => {
+    statusEl.style.display = 'block';
+    statusEl.className     = `pay-status ${type}`;
+    statusEl.textContent   = msg;
+  };
+
+  if (!current || !next)      return setStatus('error', 'Enter your current and new passwords.');
+  if (next !== confirm)       return setStatus('error', 'New passwords do not match.');
+  if (next.length < 8 || !/[A-Z]/.test(next) || !/[a-z]/.test(next) || !/[0-9]/.test(next) || !/[^A-Za-z0-9]/.test(next)) {
+    return setStatus('error', 'New password needs 8+ characters with an uppercase letter, lowercase letter, number and symbol.');
+  }
+
+  btn.disabled     = true;
+  btn.textContent  = 'Saving…';
+  try {
+    const r = await authFetch(`${API}/auth/change-password`, {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword: current, newPassword: next })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok) {
+      document.getElementById('cp-current').value = '';
+      document.getElementById('cp-new').value     = '';
+      document.getElementById('cp-confirm').value = '';
+      setStatus('success', 'Password updated — use the new one from your next sign-in.');
+    } else if (r.status === 401) {
+      setStatus('error', data.error || 'Current password is incorrect.');
+    } else {
+      setStatus('error', data.error || 'Could not change the password. Please try again.');
+    }
+  } catch (e) {
+    console.warn('changePassword error:', e);
+    setStatus('error', 'Network error. Please check your connection.');
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = 'Change Password';
+  }
 }
 
 /* ══ LOGOUT ══ */
