@@ -46,6 +46,8 @@ function authFetch(url, opts = {}) {
 
 /* ── State ── */
 let fleet = [];
+const FLEET_PAGE_SIZE = 25; // fleets can run into the thousands — page instead of rendering every row
+let fleetPage = 1;
 
 const _compact = new Intl.NumberFormat('en', { notation: 'compact', maximumSignificantDigits: 3 });
 const fmtCount = n => { n = Number(n) || 0; return n >= 10000 ? _compact.format(n) : n; };
@@ -215,13 +217,47 @@ function renderFleet() {
   const tbody = document.getElementById('fleet-body');
   if (!list.length) {
     tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No devices match</td></tr>';
+    renderPager(0, 1);
     return;
   }
-  tbody.innerHTML = list.map(rowHtml).join('');
+
+  /* Paginate — a fleet can run into the thousands, and rendering every row
+     is both a huge DOM (slow) and a huge amount of scrolling to get past.
+     Clamp the current page in case a filter/search shrank the result set
+     out from under it. */
+  const totalPages = Math.max(1, Math.ceil(list.length / FLEET_PAGE_SIZE));
+  fleetPage = Math.min(Math.max(1, fleetPage), totalPages);
+  const start = (fleetPage - 1) * FLEET_PAGE_SIZE;
+  const pageList = list.slice(start, start + FLEET_PAGE_SIZE);
+
+  tbody.innerHTML = pageList.map(rowHtml).join('');
 
   tbody.querySelectorAll('tr.clickable').forEach(tr => {
     tr.addEventListener('click', () => openDetail(tr.dataset.device));
   });
+
+  renderPager(list.length, totalPages);
+}
+
+/* Prev/Next pager under the fleet table — shows the visible row range and
+   total match count so switching pages doesn't lose context. */
+function renderPager(matchCount, totalPages) {
+  const el = document.getElementById('fleet-pager');
+  if (!el) return;
+  if (!matchCount) { el.innerHTML = ''; return; }
+
+  const start = (fleetPage - 1) * FLEET_PAGE_SIZE + 1;
+  const end   = Math.min(fleetPage * FLEET_PAGE_SIZE, matchCount);
+  el.innerHTML = `
+    <span>Showing ${fmtCount(start)}–${fmtCount(end)} of ${fmtCount(matchCount)}</span>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button type="button" class="pager-btn" id="pager-prev" ${fleetPage <= 1 ? 'disabled' : ''}>Prev</button>
+      <span>Page ${fleetPage} of ${totalPages}</span>
+      <button type="button" class="pager-btn" id="pager-next" ${fleetPage >= totalPages ? 'disabled' : ''}>Next</button>
+    </div>`;
+
+  document.getElementById('pager-prev')?.addEventListener('click', () => { fleetPage--; renderFleet(); });
+  document.getElementById('pager-next')?.addEventListener('click', () => { fleetPage++; renderFleet(); });
 }
 
 function renderKpis() {
@@ -317,17 +353,25 @@ function stopFreqSim() {
 /* ── Device detail drawer ── */
 let openDeviceId = null;
 
+function closeDetail() {
+  openDeviceId = null;
+  stopFreqSim();
+  document.getElementById('device-detail')?.classList.remove('open');
+  document.getElementById('drawer-backdrop')?.classList.remove('open');
+}
+
 async function openDetail(deviceId) {
   openDeviceId = deviceId;
   const panel = document.getElementById('device-detail');
-  panel.style.display = 'block';
+  panel.classList.add('open');
+  document.getElementById('drawer-backdrop')?.classList.add('open');
+  panel.scrollTop = 0; // a slide-over, not part of page flow — no page scroll needed to reach it
   setText('detail-title', `Device ${deviceId} — diagnostics`);
   document.getElementById('detail-grid').innerHTML =
     '<div class="empty-state" style="grid-column:1/-1">Loading…</div>';
   document.getElementById('read-strip').innerHTML = '';
   document.getElementById('boot-list').innerHTML =
     '<div class="empty-state">Loading boot reports…</div>';
-  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   startFreqSim(deviceId); // simulated — independent of the fleet fetch below
 
   try {
@@ -440,13 +484,12 @@ async function fetchFleet(silent = false) {
 /* ── Init ── */
 function init() {
   setText('topbar-date', `${new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' })} — SolGrid Engineer Diagnostics`);
-  document.getElementById('fleet-search')?.addEventListener('input', renderFleet);
-  document.getElementById('fleet-filter')?.addEventListener('change', renderFleet);
-  document.getElementById('detail-close')?.addEventListener('click', () => {
-    openDeviceId = null;
-    stopFreqSim();
-    document.getElementById('device-detail').style.display = 'none';
-  });
+  const resetPageAndRender = () => { fleetPage = 1; renderFleet(); };
+  document.getElementById('fleet-search')?.addEventListener('input', resetPageAndRender);
+  document.getElementById('fleet-filter')?.addEventListener('change', resetPageAndRender);
+  document.getElementById('detail-close')?.addEventListener('click', closeDetail);
+  document.getElementById('drawer-backdrop')?.addEventListener('click', closeDetail);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && openDeviceId) closeDetail(); });
 
   fetchFleet();
   setInterval(() => fetchFleet(true), 30000);

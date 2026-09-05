@@ -83,9 +83,35 @@
     .cadence-track { width: 46px; height: 3px; background: rgba(255,255,255,.07); border-radius: 2px; overflow: hidden; }
     .cadence-fill { height: 100%; border-radius: 2px; }
 
-    /* ── Device detail drawer ── */
-    #device-detail { display: none; }
-    .detail-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 14px 18px; }
+    /* ── Device detail drawer: a slide-over panel, not part of the page's
+       normal flow. With a fleet that can run into the thousands, appending
+       the detail view (and its graphs) below the table meant scrolling
+       past the entire table to reach it. As a fixed overlay it opens
+       instantly regardless of fleet size — zero scroll either way. ── */
+    /* Both sit below the shared site-nav (position:fixed, z-index 9999 —
+       see /nav.css and body.with-nav's padding-top) and above the panel's
+       own topbar (z-index 200), and start below the nav bar's height so
+       the nav's own links/logout button stay clickable and don't overlap
+       the drawer's close button. */
+    #drawer-backdrop {
+      position: fixed; inset: 56px 0 0 0; background: rgba(2,6,14,.6);
+      z-index: 9990; opacity: 0; visibility: hidden; transition: opacity .2s ease;
+    }
+    #drawer-backdrop.open { opacity: 1; visibility: visible; }
+    #device-detail {
+      position: fixed; top: 56px; right: 0; bottom: 36px; /* clears the site-nav above and the panel topbar below */
+      width: min(720px, 100vw); max-width: 100vw;
+      border-radius: 0; border-top: none; border-bottom: none; border-right: none;
+      z-index: 9995; overflow-y: auto;
+      box-shadow: -16px 0 48px rgba(0,0,0,.55);
+      transform: translateX(100%); transition: transform .25s ease;
+    }
+    #device-detail.open { transform: translateX(0); }
+    @media (max-width: 840px) {
+      #drawer-backdrop { inset: 105px 0 0 0; }
+      #device-detail { top: 105px; }
+    }
+    .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 14px 18px; }
     .dv-item { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06); border-radius: 10px; padding: 12px 14px; }
     .dv-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing:.5px; margin-bottom: 6px; }
     .dv-value { font-size: 13px; font-weight: 700; }
@@ -119,13 +145,26 @@
 
     .empty-state { padding: 28px 18px; text-align: center; color: var(--muted); font-size: 11px; }
 
+    /* ── Fleet pagination ── */
+    .fleet-pager {
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+      padding: 10px 18px; border-top: 1px solid var(--border); gap: 10px;
+      font-size: 10px; color: var(--muted);
+    }
+    .pager-btn {
+      background: rgba(255,255,255,.04); border: 1px solid var(--border); border-radius: 8px;
+      padding: 5px 12px; font-size: 10px; color: var(--text); font-family: inherit; cursor: pointer;
+    }
+    .pager-btn:hover:not(:disabled) { background: rgba(255,255,255,.08); }
+    .pager-btn:disabled { opacity: .35; cursor: default; }
+
     @media (max-width: 1100px) {
       .kpi-grid { grid-template-columns: 1fr 1fr; }
-      .detail-grid { grid-template-columns: 1fr 1fr; }
     }
     @media (max-width: 640px) {
       .content { padding: 12px 12px 56px; }
-      .kpi-grid, .detail-grid { grid-template-columns: 1fr 1fr; }
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .detail-grid { grid-template-columns: 1fr; }
     }
   </style>
   <link rel="stylesheet" href="/nav.css">
@@ -215,10 +254,16 @@
           </tbody>
         </table>
       </div>
+      <div class="fleet-pager" id="fleet-pager"></div>
     </div>
 
-    <!-- Device detail drawer -->
-    <div class="panel" id="device-detail">
+  </div><!-- /content -->
+
+  <!-- Device detail drawer: fixed slide-over, lives outside .content's flow
+       on purpose (see #device-detail CSS) so it's reachable in one click
+       no matter how long the fleet table is. -->
+  <div id="drawer-backdrop"></div>
+  <div class="panel" id="device-detail">
       <div class="panel-head">
         <span class="panel-title" id="detail-title">Device</span>
         <span class="badge badge-teal" style="cursor:pointer" id="detail-close">✕ Close</span>
@@ -244,9 +289,7 @@
       <div id="boot-list">
         <div class="empty-state">No boot reports yet — devices only report after flashing via OTA.</div>
       </div>
-    </div>
-
-  </div><!-- /content -->
+  </div><!-- /device-detail -->
 </div>
 
 <script src="/live-client.js"></script>
