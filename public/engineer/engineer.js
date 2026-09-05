@@ -3,7 +3,16 @@
    cadence + gaps), panel health (voltage/current/generation/battery), and
    firmware/OTA state (reported version vs. org rollout target, boot reports).
    Backed by GET /api/engineer/fleet and GET /api/engineer/devices/:id —
-   both 403 for non-engineers, so this page is only useful to that role. */
+   both 403 for non-engineers, so this page is only useful to that role.
+
+   The device drawer also shows a live grid-frequency graph (Phase 1-3) —
+   a field engineer asked for this, but no inverter firmware measures AC
+   frequency today (telemetry only carries voltage/current/generation/
+   battery/consumption — see POST /api/telemetry in server.js). It's built
+   as a client-side simulation so the diagnostics view has the requested
+   readout now, clearly labeled SIMULATED, and is easy to swap for a real
+   feed (an SSE 'reading' payload with l1/l2/l3 fields) once hardware
+   actually reports it — see startFreqSim() below. */
 const API = '/api';
 
 const token = localStorage.getItem('authToken');
@@ -230,6 +239,81 @@ function renderKpis() {
   setText('kpi-online-delta', withCadence.length ? `avg cadence ${avg.toFixed(1)}s across ${withCadence.length} reporting units` : 'Reporting telemetry');
 }
 
+/* ── Grid frequency (simulated) ──────────────────────────────────────────
+   Kenya's grid is nominally 50Hz. Each phase independently random-walks
+   in a narrow band, gently pulled back toward nominal so it reads as
+   "healthy" rather than drifting off — this is a visual fixture, not a
+   fault model. Runs only while the device drawer is open, and resets
+   when it's closed (see the detail-close handler and stopFreqSim below). */
+const FREQ_NOMINAL = 50;
+const FREQ_MIN = 49.6, FREQ_MAX = 50.4;
+const FREQ_WINDOW = 60; // points kept on screen (~72s at 1.2s/tick)
+const FREQ_PHASES = [
+  { key: 'l1', label: 'Phase 1', color: '#14b8a6', value: 50.00 },
+  { key: 'l2', label: 'Phase 2', color: '#3b82f6', value: 49.98 },
+  { key: 'l3', label: 'Phase 3', color: '#8b5cf6', value: 50.02 }
+];
+let freqHistory = FREQ_PHASES.map(() => []);
+let freqTimer = null;
+let freqSimDeviceId = null;
+
+function stepFreq() {
+  FREQ_PHASES.forEach((p, i) => {
+    const pull  = (FREQ_NOMINAL - p.value) * 0.08;
+    const noise = (Math.random() - 0.5) * 0.06;
+    p.value = Math.min(FREQ_MAX, Math.max(FREQ_MIN, p.value + pull + noise));
+    freqHistory[i].push(p.value);
+    if (freqHistory[i].length > FREQ_WINDOW) freqHistory[i].shift();
+  });
+}
+
+function renderFreqChart() {
+  const svg    = document.getElementById('freq-chart');
+  const legend = document.getElementById('freq-legend');
+  if (!svg || !legend) return;
+
+  const W = 600, H = 140, PAD = 6;
+  const scaleY = v => H - PAD - ((v - FREQ_MIN) / (FREQ_MAX - FREQ_MIN)) * (H - PAD * 2);
+  const stepX  = W / Math.max(1, FREQ_WINDOW - 1);
+
+  let svgHtml =
+    `<rect x="0" y="${scaleY(50.1).toFixed(1)}" width="${W}" height="${(scaleY(49.9) - scaleY(50.1)).toFixed(1)}" fill="rgba(255,255,255,.04)" />` +
+    `<line x1="0" y1="${scaleY(FREQ_NOMINAL).toFixed(1)}" x2="${W}" y2="${scaleY(FREQ_NOMINAL).toFixed(1)}" stroke="rgba(255,255,255,.14)" stroke-dasharray="4 4" />`;
+
+  FREQ_PHASES.forEach((p, i) => {
+    const hist = freqHistory[i];
+    if (hist.length < 2) return;
+    const points = hist.map((v, idx) => `${(idx * stepX).toFixed(1)},${scaleY(v).toFixed(1)}`).join(' ');
+    svgHtml += `<polyline points="${points}" fill="none" stroke="${p.color}" stroke-width="2" stroke-linejoin="round" />`;
+  });
+  svg.innerHTML = svgHtml;
+
+  legend.innerHTML = FREQ_PHASES.map(p => `
+    <div class="freq-leg-item">
+      <span class="freq-dot" style="background:${p.color}"></span>
+      ${p.label}: <span class="mono" style="color:${p.color};font-weight:700">${p.value.toFixed(2)} Hz</span>
+    </div>`).join('');
+}
+
+/* Start (or resume) the simulation for one device. A no-op if it's already
+   running for that same device, so the 30s drawer refresh (openDetail
+   called again for the same id) doesn't reset an in-progress chart. */
+function startFreqSim(deviceId) {
+  if (freqSimDeviceId === deviceId && freqTimer) return;
+  stopFreqSim();
+  freqSimDeviceId = deviceId;
+  freqHistory = FREQ_PHASES.map(() => []);
+  for (let i = 0; i < FREQ_WINDOW; i++) stepFreq(); // seed so the chart isn't empty on open
+  renderFreqChart();
+  freqTimer = setInterval(() => { stepFreq(); renderFreqChart(); }, 1200);
+}
+
+function stopFreqSim() {
+  if (freqTimer) clearInterval(freqTimer);
+  freqTimer = null;
+  freqSimDeviceId = null;
+}
+
 /* ── Device detail drawer ── */
 let openDeviceId = null;
 
@@ -244,6 +328,7 @@ async function openDetail(deviceId) {
   document.getElementById('boot-list').innerHTML =
     '<div class="empty-state">Loading boot reports…</div>';
   panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  startFreqSim(deviceId); // simulated — independent of the fleet fetch below
 
   try {
     const r = await authFetch(`${API}/engineer/devices/${encodeURIComponent(deviceId)}`);
@@ -359,6 +444,7 @@ function init() {
   document.getElementById('fleet-filter')?.addEventListener('change', renderFleet);
   document.getElementById('detail-close')?.addEventListener('click', () => {
     openDeviceId = null;
+    stopFreqSim();
     document.getElementById('device-detail').style.display = 'none';
   });
 
