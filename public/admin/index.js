@@ -7,7 +7,7 @@ let fetchStateInProgress = false;
 let lastNonCriticalFetch = 0;
 
 // Import AI models
-import { forecaster, maintenanceMonitor, fraudDetector, optimizer } from './ai-models.js';
+import { forecaster, maintenanceMonitor, optimizer } from './ai-models.js';
 
 // Performance tracking
 const loadingTracker = {
@@ -54,8 +54,6 @@ const state = {
   generation: 0,
   consumption: 0,
   powerEnabled: false,
-  dueAmount: 0,
-  walletBalance: 0,
   signalStrength: 78,
   alerts: [],
   events: [],
@@ -63,7 +61,6 @@ const state = {
   // AI predictions
   forecast: [],
   maintenanceAlerts: [],
-  fraudFlags: [],
   optimization: [],
   // Weather state
   weather: {
@@ -91,10 +88,8 @@ const elements = {
   // New dashboard KPIs
   kpiSolar: document.getElementById('kpi-solar'),
   kpiSolarD: document.getElementById('kpi-solar-d'),
-  kpiCustomers: document.getElementById('kpi-customers'),
-  kpiRevenue: document.getElementById('kpi-revenue'),
   kpiOffline: document.getElementById('kpi-offline'),
-  
+
   // Weather widget
   weatherBackground: document.getElementById('weatherBackground'),
   weatherTemp: document.getElementById('weather-temp'),
@@ -112,12 +107,7 @@ const elements = {
   // Alerts
   alertList: document.getElementById('alert-list'),
   badgeAlerts: document.getElementById('badge-alerts'),
-  
-  // M-Pesa transactions
-  txOk: document.getElementById('tx-ok'),
-  txPend: document.getElementById('tx-pend'),
-  txBlock: document.getElementById('tx-block'),
-  
+
   // Clock
   clock: document.getElementById('clock'),
   topbarDate: document.getElementById('topbar-date'),
@@ -136,12 +126,6 @@ const _integer = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
 function fmtCount(n) {
   n = Number(n) || 0;
   return n >= 10_000 ? _compact.format(n) : _integer.format(n);
-}
-
-function fmtKES(value) {
-  const n = Number(value) || 0;
-  const num = n >= 10_000 ? _compact.format(n) : _integer.format(n);
-  return `KES ${num}`;
 }
 
 function fmtPower(watts) {
@@ -201,26 +185,23 @@ const aiModelsConfig = [
     }
   },
   {
-    id: 'fraud-detector',
-    name: 'Fraud Shield',
-    description: 'Monitors M-Pesa transactions for suspicious patterns',
+    id: 'heavy-load-detector',
+    name: 'Heavy-Load Detection',
+    description: 'Flags registered appliances drawing an outsized share of the system load',
     color: 'var(--red)',
     run: async () => {
-      // Simulate some transactions
-      const flags = [];
-      for (let i = 0; i < 3; i++) {
-        const fraud = fraudDetector.recordPayment(
-          `user${i + 1}`,
-          `device${i + 1}`,
-          Math.floor(Math.random() * 500) + 100,
-          Date.now() - Math.random() * 3600000
-        );
-        if (fraud) flags.push(fraud);
+      try {
+        const devId = encodeURIComponent(window.__solgridDeviceId || 'DEMO-001');
+        const res = await fetch(`/api/appliances?deviceId=${devId}`, { headers: authHeaders() });
+        const data = res.ok ? await res.json() : { appliances: [] };
+        const heavy = (data.appliances || []).filter(a => a.heavy);
+        return {
+          flags: heavy.map(a => `[HEAVY] ${a.name}: ${a.reason}`).join('\n'),
+          summary: `${heavy.length} heavy-load appliance(s) flagged`
+        };
+      } catch (e) {
+        return { flags: '', summary: 'No appliance data yet' };
       }
-      return {
-        flags: flags.map(f => `[${f.severity.toUpperCase()}] ${f.message}`).join('\n'),
-        summary: `${flags.length} suspicious patterns detected`
-      };
     }
   },
   {
@@ -373,17 +354,16 @@ function renderDashboardMetrics() {
     elements.kpiSolarD.style.color = trend > 0 ? 'var(--green)' : 'var(--amber)';
   }
 
-  if (elements.kpiCustomers) elements.kpiCustomers.textContent = fmtCount(247);
+  // kpi-appliances / kpi-heavy are populated by index.html's own inline
+  // script (fetchAppliances(), GET /api/appliances) — that's where the real
+  // per-appliance counts already live, so this module doesn't duplicate them.
 
-  if (elements.kpiRevenue) elements.kpiRevenue.textContent = fmtKES(12400);
-
-  // window.__deviceFleetStats is set by the admin-only inline script in
-  // index.html (GET /api/admin/devices, derived from last_seen) once it
-  // loads — real counts replace these placeholders when it's available.
+  // Device Fleet provisioning (and the window.__deviceFleetStats it used to
+  // publish) was removed — single-owner installs don't need fleet
+  // management, so these just use the same alert-derived estimate they
+  // always fell back to.
   if (elements.kpiOffline) {
-    const offlineCount = window.__deviceFleetStats
-      ? window.__deviceFleetStats.offline
-      : state.maintenanceAlerts.filter(a => a.severity === 'high').length;
+    const offlineCount = state.maintenanceAlerts.filter(a => a.severity === 'high').length;
     elements.kpiOffline.textContent = fmtCount(offlineCount);
   }
 
@@ -393,7 +373,7 @@ function renderDashboardMetrics() {
   const ovUsers    = document.getElementById('overview-connected-users');
   const ovRefresh  = document.getElementById('overview-next-refresh');
 
-  if (ovDevices) ovDevices.textContent = fmtCount(window.__deviceFleetStats ? window.__deviceFleetStats.online : 1247);
+  if (ovDevices) ovDevices.textContent = fmtCount(1247);
   if (ovEnergy)  ovEnergy.textContent  = fmtEnergy((adjustedGen * 8) / 1000);
   if (ovUsers)   ovUsers.textContent   = fmtCount(247);
   if (ovRefresh) ovRefresh.textContent = '60 s';
@@ -563,13 +543,6 @@ function renderMaintenanceAlerts() {
   }
 }
 
-function renderTransactionCounts() {
-  // Simulate transaction counts
-  if (elements.txOk) elements.txOk.textContent = '47';
-  if (elements.txPend) elements.txPend.textContent = '3';
-  if (elements.txBlock) elements.txBlock.textContent = (state.fraudFlags?.length || 0);
-}
-
 // ===== STATE FETCH =====
 
 // /api/state (and other admin endpoints) require this page's JWT —
@@ -720,7 +693,6 @@ async function fetchState() {
     updateClock();
     renderDashboardMetrics();
     renderWeatherWidget();
-    renderTransactionCounts();
     hideLoadingOverlay();
 
     return true;
@@ -745,7 +717,6 @@ async function fetchState() {
     renderWeatherForecast();
     renderForecast();
     renderMaintenanceAlerts();
-    renderTransactionCounts();
     hideLoadingOverlay();
 
     return false;

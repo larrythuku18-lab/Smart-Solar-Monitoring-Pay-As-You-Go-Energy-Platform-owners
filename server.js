@@ -42,6 +42,7 @@ const { body, validationResult } = require('express-validator');
 const { sendLoginAlert, sendSignupConfirmation, sendPasswordReset, sendDailyWeatherEmail, resendConfigured, emailDeliveryPossible } = require('./mailer');
 const { sendLowBalanceSms, sendPowerCutSms, sendSms, sendDailyWeatherSms, smsConfigured } = require('./sms');
 const { resolveWeatherCoords } = require('./geocode');
+const { APPLIANCE_CATEGORIES, classifyApplianceUsage } = require('./appliances');
 const realtime = require('./realtime');
 const jwt = require('jsonwebtoken');
 
@@ -75,6 +76,12 @@ const {
   getEnergyHourly,
   getEnergyDaily,
   getEnergyHistory48hAllDevices,
+  getAverageConsumption,
+  createAppliance,
+  getAppliancesByDevice,
+  getApplianceById,
+  updateAppliance,
+  deleteAppliance,
   getRecentPayments,
   getAuditTimeline,
   getAlertSeverityCounts,
@@ -501,7 +508,6 @@ const staticOpts = { maxAge: '1h', etag: true, lastModified: true, index: false 
 app.use(express.static(publicDir, staticOpts));
 app.use(express.static(path.join(publicDir, 'admin'), staticOpts));
 app.use(express.static(path.join(publicDir, 'engineer'), staticOpts));
-app.use(express.static(path.join(publicDir, 'customer'), staticOpts));
 app.use(express.static(path.join(publicDir, 'shared'), staticOpts));
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -2664,6 +2670,105 @@ app.get('/api/energy/daily', authMiddleware, async (req, res) => {
     console.error('Energy daily error:', err.message);
     if (sentryConfigured()) Sentry.captureException(err);
     res.status(500).json({ error: 'Failed to load daily energy data', message: err.message });
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   APPLIANCE MONITOR (owner appliance-monitoring upgrade)
+   Owner-registered appliances on a device, with a software-only heavy-usage
+   flag (see appliances.js). Every route is scoped through the same
+   assertDeviceReadable() check used by the energy endpoints above, so a
+   customer can only ever see or edit appliances on their own device.
+══════════════════════════════════════════════════════════════════════════ */
+
+app.get('/api/appliances', authMiddleware, async (req, res) => {
+  try {
+    const deviceId = req.query.deviceId || 'DEMO-001';
+    if (!(await assertDeviceReadable(req, deviceId))) {
+      return res.status(403).json({ error: 'Device belongs to another organization or user' });
+    }
+    const [appliances, avgConsumption] = await Promise.all([
+      getAppliancesByDevice(deviceId),
+      getAverageConsumption(deviceId)
+    ]);
+    res.json({
+      deviceId,
+      avgConsumption,
+      appliances: classifyApplianceUsage(appliances, avgConsumption)
+    });
+  } catch (err) {
+    console.error('Appliance list error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to load appliances', message: err.message });
+  }
+});
+
+app.post('/api/appliances', authMiddleware, [
+  body('deviceId').isString().trim().notEmpty().withMessage('deviceId is required'),
+  body('name').isString().trim().isLength({ min: 1, max: 128 }).withMessage('name must be 1-128 characters'),
+  body('category').optional().isIn(APPLIANCE_CATEGORIES).withMessage(`category must be one of: ${APPLIANCE_CATEGORIES.join(', ')}`),
+  body('ratedWattage').optional({ nullable: true }).isFloat({ gt: 0, lt: 50000 }).withMessage('ratedWattage must be a positive number under 50000')
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  try {
+    const { deviceId, name, category = 'other', ratedWattage = null } = req.body;
+    if (!(await assertDeviceReadable(req, deviceId))) {
+      return res.status(403).json({ error: 'Device belongs to another organization or user' });
+    }
+    const appliance = await createAppliance({ deviceId, name, category, ratedWattage });
+    res.json({ appliance });
+  } catch (err) {
+    console.error('Appliance create error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to create appliance', message: err.message });
+  }
+});
+
+app.put('/api/appliances/:id', authMiddleware, [
+  body('name').isString().trim().isLength({ min: 1, max: 128 }).withMessage('name must be 1-128 characters'),
+  body('category').optional().isIn(APPLIANCE_CATEGORIES).withMessage(`category must be one of: ${APPLIANCE_CATEGORIES.join(', ')}`),
+  body('ratedWattage').optional({ nullable: true }).isFloat({ gt: 0, lt: 50000 }).withMessage('ratedWattage must be a positive number under 50000')
+], async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid appliance id' });
+
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  try {
+    const existing = await getApplianceById(id);
+    if (!existing) return res.status(404).json({ error: 'Appliance not found' });
+    if (!(await assertDeviceReadable(req, existing.device_id))) {
+      return res.status(403).json({ error: 'Device belongs to another organization or user' });
+    }
+    const { name, category = existing.category, ratedWattage = null } = req.body;
+    const appliance = await updateAppliance(id, { name, category, ratedWattage });
+    res.json({ appliance });
+  } catch (err) {
+    console.error('Appliance update error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to update appliance', message: err.message });
+  }
+});
+
+app.delete('/api/appliances/:id', authMiddleware, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid appliance id' });
+
+  try {
+    const existing = await getApplianceById(id);
+    if (!existing) return res.status(404).json({ error: 'Appliance not found' });
+    if (!(await assertDeviceReadable(req, existing.device_id))) {
+      return res.status(403).json({ error: 'Device belongs to another organization or user' });
+    }
+    await deleteAppliance(id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Appliance delete error:', err.message);
+    if (sentryConfigured()) Sentry.captureException(err);
+    res.status(500).json({ error: 'Failed to delete appliance', message: err.message });
   }
 });
 

@@ -138,7 +138,6 @@
   .stk .mt{ font-size:9px; color:var(--green); font-weight:600; letter-spacing:.02em; }
   .stk .row{ font-size:10px; color:var(--sub); margin-top:6px; }
   .stk .amt{ font-family:var(--display); font-weight:800; font-size:16px; color:var(--text); margin:4px 0; }
-  .stk .pin{ font-size:15px; letter-spacing:5px; color:var(--amber); min-height:18px; margin-top:2px; }
   .stk .status{ margin-top:8px; font-size:10px; font-weight:600; color:var(--amber); }
   .stk .status.ok{ color:var(--green); }
   .ring-wrap{ position:relative; width:clamp(160px,24vw,240px); aspect-ratio:1; }
@@ -345,19 +344,19 @@
     <div class="caption"><p>Across Africa, millions live with power that's unreliable and expensive.</p></div>
   </section>
 
-  <!-- SCENE 2 — PAY -->
+  <!-- SCENE 2 — OWNERSHIP -->
   <section class="scene" data-i="1">
-    <div class="bigtext u-fade">Pay as <span class="amber">you go</span>.</div>
+    <div class="bigtext u-fade">Own it. <span class="amber">Monitor it.</span></div>
     <div class="s2-grid">
       <div class="phone u-up" style="animation-delay:.2s">
         <div class="notch"></div>
         <div class="stk">
-          <div class="brandrow"><div class="mlogo">M</div><div class="mt">M-PESA · STK Push</div></div>
-          <div class="row">Pay SolGrid Energy</div>
-          <div class="amt">KES 50.00</div>
-          <div class="row">Enter M-PESA PIN</div>
-          <div class="pin" id="pin"></div>
-          <div class="status" id="stkStatus">Processing…</div>
+          <div class="brandrow"><div class="mlogo">S</div><div class="mt">SolGrid · Live</div></div>
+          <div class="row">Battery Level</div>
+          <div class="amt">82%</div>
+          <div class="row">Solar Generation</div>
+          <div class="amt" style="color:var(--amber)">1.4 kW</div>
+          <div class="status ok"><span class="live-dot" style="margin-right:6px"></span>System healthy</div>
         </div>
       </div>
       <div class="ring-wrap u-up" style="animation-delay:.4s">
@@ -375,7 +374,7 @@
         <div class="ring-core"><div class="sun"></div><div class="pwr">Powered</div></div>
       </div>
     </div>
-    <div class="caption"><p>SolGrid changes that — customers pay only for what they use, a few shillings over M-Pesa, and their power comes on instantly.</p></div>
+    <div class="caption"><p>SolGrid changes that — owners see their battery, solar output, and consumption update live, every 30 seconds, from anywhere.</p></div>
   </section>
 
   <!-- SCENE 3 — LIVE MONITOR -->
@@ -386,8 +385,8 @@
         <div class="dash-title"><span class="pg">SolGrid</span> — Live Monitor</div>
         <div class="dash-badges">
           <span class="badge badge-green">IoT Live</span>
-          <span class="badge badge-blue">M-Pesa Active</span>
-          <span class="badge badge-red">Fraud Shield ON</span>
+          <span class="badge badge-blue">Appliance Monitor</span>
+          <span class="badge badge-red">Predictive Alerts</span>
         </div>
       </div>
       <div class="kpi-grid">
@@ -397,14 +396,14 @@
           <div class="dl" style="color:var(--amber)">↑ Live from field</div>
         </div>
         <div class="kpi green k2">
-          <div class="lbl">Active Customers</div>
-          <div class="val"><span data-count="1284" data-comma="1"></span></div>
-          <div class="dl" style="color:var(--green)">↑ 8 this week</div>
+          <div class="lbl">Appliances Tracked</div>
+          <div class="val"><span data-count="12" data-comma="1"></span></div>
+          <div class="dl" style="color:var(--green)">Across your kit</div>
         </div>
         <div class="kpi blue k3">
-          <div class="lbl">M-Pesa Revenue</div>
-          <div class="val"><span data-count="184320" data-comma="1" data-prefix="KES "></span></div>
-          <div class="dl" style="color:var(--blue)">↑ 23% MTD</div>
+          <div class="lbl">Heavy-Load Alerts</div>
+          <div class="val"><span data-count="3"></span></div>
+          <div class="dl" style="color:var(--blue)">Flagged this week</div>
         </div>
         <div class="kpi red k4">
           <div class="lbl">Devices Offline</div>
@@ -419,11 +418,48 @@
         </svg>
       </div>
     </div>
-    <div class="caption"><p>Every unit reports live. One dashboard shows solar generation, active customers, M-Pesa revenue, and any device that needs attention.</p></div>
+    <div class="caption"><p>Every unit reports live. One dashboard shows solar generation, appliance-level insights, and any device that needs attention.</p></div>
   </section>
 
-  <!-- SCENE 4 — AI ENGINE -->
+  <!-- SCENE 4 — APPLIANCE MONITOR (owner upgrade) -->
   <section class="scene" data-i="3">
+    <div class="dash">
+      <div class="dash-top">
+        <span class="live-dot"></span>
+        <div class="dash-title"><span class="pg">SolGrid</span> — Appliance Monitor</div>
+        <div class="dash-badges">
+          <span class="badge badge-green">Owner Upgrade</span>
+          <span class="badge badge-red">Heavy Load Alerts</span>
+        </div>
+      </div>
+      <div class="kpi-grid">
+        <div class="kpi red k1">
+          <div class="lbl">Water Heater</div>
+          <div class="val"><span data-count="2000"></span><span style="font-size:.5em"> W</span></div>
+          <div class="dl" style="color:var(--red)">⚠ Heavy — 61% of load</div>
+        </div>
+        <div class="kpi amber k2">
+          <div class="lbl">Water Pump</div>
+          <div class="val"><span data-count="750"></span><span style="font-size:.5em"> W</span></div>
+          <div class="dl" style="color:var(--amber)">⚠ Heavy — 23% of load</div>
+        </div>
+        <div class="kpi green k3">
+          <div class="lbl">Fridge</div>
+          <div class="val"><span data-count="150"></span><span style="font-size:.5em"> W</span></div>
+          <div class="dl" style="color:var(--green)">✓ Normal</div>
+        </div>
+        <div class="kpi blue k4">
+          <div class="lbl">Lighting</div>
+          <div class="val"><span data-count="60"></span><span style="font-size:.5em"> W</span></div>
+          <div class="dl" style="color:var(--blue)">✓ Normal</div>
+        </div>
+      </div>
+    </div>
+    <div class="caption"><p>Owners get more than a total — SolGrid breaks your load down by appliance and flags the ones driving your bill, like that water heater or pump.</p></div>
+  </section>
+
+  <!-- SCENE 5 — AI ENGINE -->
+  <section class="scene" data-i="4">
     <div class="ai-head">
       <span class="live-dot"></span>
       <div class="t">AI Engine — System Health</div>
@@ -436,7 +472,7 @@
           <svg viewBox="0 0 56 56"><circle class="bg" cx="28" cy="28" r="24"/><circle class="fg" cx="28" cy="28" r="24"/></svg>
           <div class="pc"><span data-count="92" data-suffix="%"></span></div>
         </div>
-        <div class="sub">↓ 15–20% defaults</div>
+        <div class="sub">6-hour accuracy</div>
       </div>
       <div class="ai-card green a2">
         <div class="nm">Predictive Maintenance</div>
@@ -447,12 +483,12 @@
         <div class="sub">↓ 40% downtime</div>
       </div>
       <div class="ai-card red a3">
-        <div class="nm">Fraud Shield</div>
+        <div class="nm">Heavy-Load Detection</div>
         <div class="ai-ring" style="--off:22">
           <svg viewBox="0 0 56 56"><circle class="bg" cx="28" cy="28" r="24"/><circle class="fg" cx="28" cy="28" r="24"/></svg>
           <div class="pc"><span data-count="85" data-suffix="%"></span></div>
         </div>
-        <div class="sub">M-Pesa protection</div>
+        <div class="sub">Appliance-level AI</div>
       </div>
       <div class="ai-card teal a4">
         <div class="nm">Usage Optimizer</div>
@@ -464,21 +500,21 @@
       </div>
     </div>
     <div class="ai-foot">Real-time processing · powered by <b>custom AI engines</b></div>
-    <div class="caption"><p>Four AI engines run in real time — forecasting energy, predicting maintenance, blocking M-Pesa fraud, and optimizing usage.</p></div>
+    <div class="caption"><p>Four AI engines run in real time — forecasting energy, predicting maintenance, flagging heavy-load appliances, and optimizing usage.</p></div>
   </section>
 
-  <!-- SCENE 5 — IMPACT -->
-  <section class="scene" data-i="4">
+  <!-- SCENE 6 — IMPACT -->
+  <section class="scene" data-i="5">
     <div class="impact">
       <div class="imp i1">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M3 18 L9 12 L13 15 L21 5" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 5h-5M21 5v5" stroke="#10b981" stroke-width="2.5" stroke-linecap="round"/></svg></div>
-        <div class="big" style="color:var(--green)"><span data-count="23" data-prefix="+" data-suffix="%"></span></div>
-        <div class="cap">M-Pesa revenue (MTD)</div>
+        <div class="big" style="color:var(--green)"><span data-count="18" data-prefix="+" data-suffix="%"></span></div>
+        <div class="cap">Lower peak-hour usage</div>
       </div>
       <div class="imp i2">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2l8 3v6c0 5-3.5 8-8 11-4.5-3-8-6-8-11V5l8-3z" stroke="#ef4444" stroke-width="2" stroke-linejoin="round"/><path d="M9 12l2 2 4-5" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div class="big" style="color:var(--red)"><span data-count="85" data-suffix="%"></span></div>
-        <div class="cap">of fraud blocked</div>
+        <div class="big" style="color:var(--red)"><span data-count="94" data-suffix="%"></span></div>
+        <div class="cap">of heavy loads flagged</div>
       </div>
       <div class="imp i3">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M12 21c6-2 8-7 8-12-5 0-9 3-10 7" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 21c-1-4 0-7 3-9" stroke="#14b8a6" stroke-width="2" stroke-linecap="round"/></svg></div>
@@ -486,11 +522,11 @@
         <div class="cap">Carbon / MRV data</div>
       </div>
     </div>
-    <div class="caption"><p>The result: 99% fault detection, 85% of M-Pesa fraud blocked, and far fewer payment defaults.</p></div>
+    <div class="caption"><p>The result: 99% fault detection, 94% of heavy loads flagged before they spike your bill, and full visibility into your own system.</p></div>
   </section>
 
-  <!-- SCENE 6 — ENTER DASHBOARD -->
-  <section class="scene" data-i="5">
+  <!-- SCENE 7 — ENTER DASHBOARD -->
+  <section class="scene" data-i="6">
     <div class="close-mark u-pop">
       <div class="close-sun"></div>
       <div class="close-name"><span class="pg">SolGrid</span></div>
@@ -530,9 +566,12 @@
   const role = localStorage.getItem('userRole') || 'customer';
   const isAdminRole = role === 'admin' || role === 'org_admin';
   const isEngineerRole = role === 'engineer';
+  /* The customer panel was removed — there is no dashboard left for the
+     'customer' role (and unset role defaults to it above), so send that
+     case back to the login flow instead of a dead /customer.html link. */
   const DEST = isAdminRole ? '/index.html'
     : isEngineerRole ? '/engineer.html'
-    : '/customer.html';
+    : '/login.html';
 
   /* ════════════════════════════════════════════════════
      ORCHESTRAL SYNTH — A-major string swell, hall reverb
@@ -618,7 +657,7 @@
 
     /* Per-scene volume levels — music builds through intro */
     sceneVol(idx) {
-      return [0.2, 0.28, 0.34, 0.4, 0.44, 0.5][idx] ?? 0.44;
+      return [0.2, 0.28, 0.34, 0.37, 0.4, 0.44, 0.5][idx] ?? 0.5;
     }
 
     start(sceneIdx = 0) {
@@ -671,13 +710,13 @@
     rvRole.textContent = role === 'admin' ? 'Admin Dashboard'
       : role === 'org_admin' ? 'Organization Dashboard'
       : role === 'engineer' ? 'Engineer Panel'
-      : 'Customer Portal';
+      : 'Login';
     veil.classList.add('show');
     setTimeout(() => { globalThis.location.href = DEST; }, 700);
   }
 
   /* ── Timeline ── */
-  const DUR    = [6000, 10000, 12000, 12000, 10000, 8000];
+  const DUR    = [6000, 10000, 12000, 9000, 12000, 10000, 8000];
   const scenes = [...document.querySelectorAll('.scene')];
   const segsEl = document.getElementById('segs');
   const stage  = document.getElementById('stage');
@@ -710,7 +749,6 @@
 
   function show(idx) {
     scenes.forEach((s, k) => s.classList.toggle('active', k === idx));
-    if (idx === 1) runPayScene();
     if (idx >= 0) animateCounts(scenes[idx]);
   }
 
@@ -797,23 +835,6 @@
       }
       requestAnimationFrame(step);
     });
-  }
-
-  /* ── STK push animation (scene 2) ── */
-  let payTimers = [];
-  function runPayScene() {
-    payTimers.forEach(clearTimeout); payTimers = [];
-    const pin = document.getElementById('pin');
-    const status = document.getElementById('stkStatus');
-    if (!pin) return;
-    pin.textContent = ''; status.textContent = 'Processing…'; status.classList.remove('ok');
-    ['•', '• •', '• • •', '• • • •'].forEach((s, k) =>
-      payTimers.push(setTimeout(() => { pin.textContent = s; }, 600 + k * 420))
-    );
-    payTimers.push(setTimeout(() => {
-      status.textContent = '✓ Confirmed · KES 50.00';
-      status.classList.add('ok');
-    }, 2900));
   }
 
   /* ── Auto-play on load ── */

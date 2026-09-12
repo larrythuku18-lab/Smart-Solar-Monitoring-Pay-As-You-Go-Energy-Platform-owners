@@ -163,6 +163,23 @@ async function runMigrations() {
       recorded_at       TIMESTAMPTZ   DEFAULT NOW()
     );
 
+    -- ── Appliances (owner-registered, for the appliance monitor upgrade) ───
+    -- Software-only: there is no per-appliance sub-metering hardware. An
+    -- owner logs the appliances on their circuit with an optional
+    -- rated_wattage (the nameplate draw); when absent, the server falls back
+    -- to a typical wattage for the category (see appliances.js) so heavy-
+    -- usage flagging still works without requiring the owner to know exact
+    -- numbers.
+    CREATE TABLE IF NOT EXISTS appliances (
+      id             SERIAL       PRIMARY KEY,
+      device_id      VARCHAR(64)  NOT NULL REFERENCES devices(device_id) ON DELETE CASCADE,
+      name           VARCHAR(128) NOT NULL,
+      category       VARCHAR(32)  NOT NULL DEFAULT 'other',
+      rated_wattage  NUMERIC(10,2),
+      created_at     TIMESTAMPTZ  DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_appliances_device ON appliances(device_id);
+
     -- ── Payments (M-Pesa STK Push) ─────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS payments (
       id                   SERIAL        PRIMARY KEY,
@@ -1318,6 +1335,66 @@ async function getEnergyHistory48hAllDevices() {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   APPLIANCE QUERIES (owner appliance monitor upgrade)
+══════════════════════════════════════════════════════════════════════════ */
+
+/** Average total consumption over the trailing N days — the baseline that
+ *  appliance rated wattages are compared against to flag heavy usage. Falls
+ *  back to the single latest reading when there isn't a week of history yet
+ *  (new device), and to null when there is no reading at all. */
+async function getAverageConsumption(deviceId, days = 7) {
+  const { rows } = await q(
+    `SELECT AVG(consumption_watts)::numeric(10,2) AS avg_consumption
+     FROM   energy_readings
+     WHERE  device_id  = $1
+     AND    recorded_at > NOW() - make_interval(days => $2)`,
+    [deviceId, days]
+  );
+  if (rows[0]?.avg_consumption != null) return rows[0].avg_consumption;
+  const latest = await getLatestEnergy(deviceId);
+  return latest?.consumption_watts ?? null;
+}
+
+async function createAppliance({ deviceId, name, category, ratedWattage = null }) {
+  const { rows } = await q(
+    `INSERT INTO appliances (device_id, name, category, rated_wattage)
+     VALUES ($1,$2,$3,$4) RETURNING *`,
+    [deviceId, name, category, ratedWattage]
+  );
+  return rows[0];
+}
+
+async function getAppliancesByDevice(deviceId) {
+  const { rows } = await q(
+    'SELECT * FROM appliances WHERE device_id = $1 ORDER BY created_at ASC, id ASC',
+    [deviceId]
+  );
+  return rows;
+}
+
+async function getApplianceById(id) {
+  const { rows } = await q('SELECT * FROM appliances WHERE id = $1', [id]);
+  return rows[0] ?? null;
+}
+
+/** Full replace of the editable fields — callers read-modify-write (fetch
+ *  the existing row, merge in whatever the owner changed, pass the result
+ *  here), same pattern as setDeviceCoordinates. ratedWattage may be null
+ *  (owner clearing their override back to the category default). */
+async function updateAppliance(id, { name, category, ratedWattage = null }) {
+  const { rows } = await q(
+    `UPDATE appliances SET name = $2, category = $3, rated_wattage = $4
+     WHERE id = $1 RETURNING *`,
+    [id, name, category, ratedWattage]
+  );
+  return rows[0] ?? null;
+}
+
+async function deleteAppliance(id) {
+  await q('DELETE FROM appliances WHERE id = $1', [id]);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    PAYMENT QUERIES
 ══════════════════════════════════════════════════════════════════════════ */
 
@@ -2087,6 +2164,13 @@ module.exports = {
   getEnergyDaily,
   getEnergyHistory48h,
   getEnergyHistory48hAllDevices,
+  /* appliances (owner appliance monitor upgrade) */
+  getAverageConsumption,
+  createAppliance,
+  getAppliancesByDevice,
+  getApplianceById,
+  updateAppliance,
+  deleteAppliance,
   /* payments */
   createPayment,
   completePayment,

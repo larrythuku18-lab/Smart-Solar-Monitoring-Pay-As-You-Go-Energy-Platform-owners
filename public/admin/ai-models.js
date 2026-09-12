@@ -8,11 +8,6 @@ const historyData = {
   timestamps: []
 };
 
-const paymentHistory = {
-  transactions: [],
-  userPatterns: {}
-};
-
 const MAX_HISTORY = 288;
 
 class EnergyForecaster {
@@ -106,20 +101,6 @@ class EnergyForecaster {
     return predictions;
   }
 
-  getNextPayOptimalTime() {
-    const forecast = this.forecast(24);
-    if (!forecast.length) {
-      return { bestHour: 3, expectedSurplus: 50, reason: 'Default peak window' };
-    }
-    const optimalHour = forecast.reduce((best, current) =>
-      current.surplus > best.surplus ? current : best
-    );
-    return {
-      bestHour: optimalHour.hour,
-      expectedSurplus: optimalHour.surplus,
-      reason: 'Peak solar generation window - optimal for charging'
-    };
-  }
 }
 
 class MaintenanceMonitor {
@@ -189,85 +170,6 @@ class MaintenanceMonitor {
   }
 }
 
-class FraudDetector {
-  constructor() {
-    this.suspiciousPatterns = [];
-    this.userDeviceLinks = {};
-  }
-
-  recordPayment(userId, deviceId, amount, timestamp) {
-    const transaction = { userId, deviceId, amount, timestamp, flagged: false };
-    paymentHistory.transactions.push(transaction);
-
-    if (paymentHistory.transactions.length > 1000) {
-      paymentHistory.transactions.shift();
-    }
-
-    const key = `${userId}-${deviceId}`;
-    if (!paymentHistory.userPatterns[key]) {
-      paymentHistory.userPatterns[key] = {
-        transactions: 0,
-        totalAmount: 0,
-        timestamps: [],
-        devices: new Set([deviceId])
-      };
-    }
-
-    const pattern = paymentHistory.userPatterns[key];
-    pattern.transactions++;
-    pattern.totalAmount += amount;
-    pattern.timestamps.push(timestamp);
-
-    const fraud = this.detectFraudPattern(userId, deviceId, amount, timestamp);
-    if (fraud) {
-      transaction.flagged = true;
-      this.suspiciousPatterns.push(fraud);
-    }
-
-    return fraud;
-  }
-
-  detectFraudPattern(userId, deviceId, amount, timestamp) {
-    const key = `${userId}-${deviceId}`;
-    const pattern = paymentHistory.userPatterns[key];
-    if (!pattern) return null;
-
-    const recentTx = pattern.timestamps.filter(t => timestamp - t < 5 * 60 * 1000);
-    if (recentTx.length >= 3) {
-      return {
-        type: 'rapid_fire_payments',
-        severity: 'high',
-        userId,
-        deviceId,
-        message: `${recentTx.length} payments in 5 minutes - possible fake STK push`,
-        action: 'auto_lock_relay',
-        confidence: 0.85
-      };
-    }
-
-    if (pattern.transactions > 5) {
-      const avgAmount = pattern.totalAmount / pattern.transactions;
-      if (amount > avgAmount * 5) {
-        return {
-          type: 'unusual_amount',
-          severity: 'medium',
-          userId,
-          deviceId,
-          message: `Payment of KES ${amount} is 5x normal (avg: ${avgAmount.toFixed(0)})`,
-          action: 'review',
-          confidence: 0.7
-        };
-      }
-    }
-
-    return null;
-  }
-
-  getFlags() {
-    return this.suspiciousPatterns.slice(-10);
-  }
-}
-
 class UsageOptimizer {
   constructor(forecaster) {
     this.forecaster = forecaster;
@@ -302,22 +204,12 @@ class UsageOptimizer {
       }
     }
 
-    const optimalPayTime = this.forecaster.getNextPayOptimalTime();
-    recommendations.push({
-      type: 'payment_timing',
-      priority: 'medium',
-      message: 'Best time to top-up wallet for charging',
-      optimalHour: optimalPayTime.bestHour,
-      expectedBenefit: 'Reduce charging time by 30-40%'
-    });
-
     return recommendations;
   }
 }
 
 const forecaster = new EnergyForecaster();
 const maintenanceMonitor = new MaintenanceMonitor();
-const fraudDetector = new FraudDetector();
 const optimizer = new UsageOptimizer(forecaster);
 
-export { forecaster, maintenanceMonitor, fraudDetector, optimizer };
+export { forecaster, maintenanceMonitor, optimizer };

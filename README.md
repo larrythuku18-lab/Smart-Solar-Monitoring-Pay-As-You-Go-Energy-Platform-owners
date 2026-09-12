@@ -154,7 +154,7 @@ Deep-dive technical charts for engineers and data scientists.
 - Device health by region (stacked bar), panel efficiency vs age (scatter), agent leaderboard
 
 ### 🔐 Login — `/login.html`
-Supports device ID + PIN (for field agents / ESP32 devices) and email + password (for admin, org admin, engineer, and customer web login). Demo credentials for all roles (admin / customer / engineer) are shown on the login page and seeded on every boot.
+Supports device ID + PIN (for field agents / ESP32 devices) and email + password (for admin, org admin, engineer, and customer accounts). Demo credentials for all roles (admin / customer / engineer) are shown on the login page and seeded on every boot. The `customer` role currently has no dedicated dashboard page — its API (`/api/customer/summary`, `/api/energy/*`, `/api/appliances`, `/api/pay`, etc.) is still live for a future frontend, it's just unconsumed by any page right now.
 
 ### 🏢 Org Settings — `/org-settings.html`
 Tenant profile + membership management for org admins (name, description, contact email, phone, and the member roster with role badges and wallet balances). Super-admins can drill into any org with `?orgId=`.
@@ -512,8 +512,6 @@ solar-paygo-platform/
 │   │   ├── dashboard.jsx   # Analysis Board React components + Chart.js charts (source)
 │   │   ├── org-settings.html  # Org Settings — tenant profile + membership
 │   │   └── .jsx→.js        # Compiled bundles (regenerated from .jsx with @babel/standalone)
-│   ├── customer/
-│   │   └── customer.html   # Customer "My Account" page
 │   ├── shared/
 │   │   ├── login.html      # Login page (device PIN + email/password, org_admin aware)
 │   │   ├── intro.html      # Pre-login welcome/marketing page

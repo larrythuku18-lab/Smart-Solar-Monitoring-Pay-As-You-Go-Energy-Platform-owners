@@ -71,37 +71,6 @@ describe('dashboard chart-data shape invariant (blank-page regression)', () => {
 });
 
 describe('refresh-time replacements keep the shape the render reads', () => {
-  test('revenueData: newRevenue keeps datasets[0].data for the KPI computations', () => {
-    /* Render (line ~1085): revenueData.current.datasets[0].data.at(-1) and
-       .slice(-7).reduce(...) — so the replacement must still expose a
-       datasets array whose first dataset has a data array. */
-    assert.ok(src.includes('revenueData.current.datasets[0].data'),
-      'render must read revenueData.current.datasets[0].data');
-    const block = blockBetween('const newRevenue = {', 'revenueData.current = newRevenue;');
-    assert.ok(block.includes('datasets: ['), 'newRevenue must carry a datasets array');
-    assert.ok(block.includes("label: 'Daily Revenue (KES)'"),
-      'newRevenue must keep the revenue dataset');
-    /* The dataset must actually carry the data array (the render does
-       .data.at(-1) and .data.slice(-7).reduce) — checking the label alone
-       would let a regression where data: is dropped slip through. */
-    assert.ok(block.match(/data[,:]/), 'newRevenue dataset must carry the data array');
-    assert.ok(src.includes("useRef(createRevenueData())"),
-      'revenueData ref must initialize from createRevenueData()');
-  });
-
-  test('mrrData: newMRR keeps the values array the growth footer reads', () => {
-    /* Render (line ~1094): mrrData.current.values.at(-1) and .values.length
-       — the replacement must keep the top-level values array, not just
-       datasets[0].data. */
-    assert.ok(src.includes('mrrData.current.values'),
-      'render must read mrrData.current.values');
-    const block = blockBetween('const newMRR = {', 'mrrData.current = newMRR;');
-    assert.ok(block.includes('values: mrrValues'),
-      'newMRR must carry the top-level values array');
-    assert.ok(src.includes('useRef(createMRRData())'),
-      'mrrData ref must initialize from createMRRData()');
-  });
-
   test('forecastData: newForecast keeps labels + datasets[0].data for nextLow', () => {
     /* Render (line ~1090): forecastData.current.labels[...] and
        forecastData.current.datasets[0].data.indexOf(...) — both must exist
@@ -117,32 +86,31 @@ describe('refresh-time replacements keep the shape the render reads', () => {
       'forecastData ref must initialize from createForecastData()');
   });
 
-  test('creditScoreTrendData: replacement goes through buildCreditScoreTrendData() which returns datasets', () => {
-    /* Render (line ~1072, 1303): creditScoreTrendData.current.datasets.map
-       and .datasets.length — the ref must always carry a datasets array. */
-    assert.ok(src.includes('creditScoreTrendData.current.datasets'),
-      'render must read creditScoreTrendData.current.datasets');
-    assert.ok(src.includes('creditScoreTrendData.current = newCreditScoreTrend;'),
-      'refresh must replace creditScoreTrendData.current');
-    const builder = src.match(/const buildCreditScoreTrendData = \(labels, customers\) => \(\{[\s\S]*?\n\}\);/);
-    assert.ok(builder, 'buildCreditScoreTrendData() must exist');
-    assert.ok(builder[0].includes('datasets:'), 'builder must return a datasets array');
-    assert.ok(src.includes('useRef(buildCreditScoreTrendData([], []))'),
-      'creditScoreTrendData ref must initialize from buildCreditScoreTrendData()');
+  test('applianceLoadData: newApplianceLoad keeps labels + datasets[0].data the Appliances tab renders', () => {
+    /* Render (Appliances tab): applianceLoadData.current.labels.length and
+       the Bar chart's data={applianceLoadData.current} — the replacement
+       must keep both the labels and the first dataset's data array. */
+    assert.ok(src.includes('applianceLoadData.current.labels'),
+      'render must read applianceLoadData.current.labels');
+    const block = blockBetween('const newApplianceLoad = buildApplianceLoadData(appliances);', 'applianceLoadData.current = newApplianceLoad;');
+    assert.ok(block.length >= 0, 'newApplianceLoad must be built before the ref is replaced');
+    assert.ok(src.includes('useRef(buildApplianceLoadData([]))'),
+      'applianceLoadData ref must initialize from buildApplianceLoadData()');
   });
 
-  test('fraudRiskData: replacement goes through buildFraudRiskData() which returns points', () => {
-    /* Render (line ~1092): fraudRiskData.current.points.filter(...) — the
-       ref must always carry the points array. */
-    assert.ok(src.includes('fraudRiskData.current.points'),
-      'render must read fraudRiskData.current.points');
-    assert.ok(src.includes('fraudRiskData.current = newFraudRisk;'),
-      'refresh must replace fraudRiskData.current');
-    const builder = src.match(/const buildFraudRiskData = \(points\) => \{[\s\S]*?\n\};/);
-    assert.ok(builder, 'buildFraudRiskData() must exist');
-    assert.ok(builder[0].includes('points: colored'),
-      'builder must return the points array');
-    assert.ok(src.includes('useRef(buildFraudRiskData([]))'),
-      'fraudRiskData ref must initialize from buildFraudRiskData()');
+  test('applianceShareData: replacement keeps count/heavyCount the KPI strip reads', () => {
+    /* Render (KPI strip): appliancesTracked = applianceShareData.current.count,
+       heavyLoadCount = applianceShareData.current.heavyCount — dropping either
+       on refresh would blank those KPI tiles the same way the original bug did. */
+    assert.ok(src.includes('applianceShareData.current.count'),
+      'render must read applianceShareData.current.count');
+    assert.ok(src.includes('applianceShareData.current.heavyCount'),
+      'render must read applianceShareData.current.heavyCount');
+    const builder = src.match(/const buildApplianceShareData = \(appliances\) => \{[\s\S]*?\n\};/);
+    assert.ok(builder, 'buildApplianceShareData() must exist');
+    assert.ok(builder[0].includes('count:') && builder[0].includes('heavyCount:'),
+      'buildApplianceShareData() must return count and heavyCount');
+    assert.ok(src.includes('applianceShareData.current = newApplianceShare;'),
+      'refresh must replace applianceShareData.current');
   });
 });

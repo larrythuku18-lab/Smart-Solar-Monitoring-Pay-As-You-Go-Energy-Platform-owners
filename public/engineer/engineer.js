@@ -31,7 +31,9 @@ function authFetch(url, opts = {}) {
     if (!r.ok) { localStorage.removeItem('authToken'); window.location.href = '/login.html'; return; }
     const user = await r.json();
     if (user.role !== 'engineer') {
-      window.location.href = user.role === 'admin' || user.role === 'org_admin' ? '/index.html' : '/customer.html';
+      /* No customer panel exists anymore — anything that isn't an
+         admin/org_admin (i.e. a customer) just goes back to login. */
+      window.location.href = user.role === 'admin' || user.role === 'org_admin' ? '/index.html' : '/login.html';
       return;
     }
     localStorage.setItem('userRole', 'engineer');

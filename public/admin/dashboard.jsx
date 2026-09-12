@@ -55,13 +55,6 @@ const thresholdLinePlugin = {
 Chart.register(thresholdLinePlugin);
 
 const formatKES = (value) => `KES ${Number(value).toLocaleString('en-KE')}`;
-const getDateLabels = (count, offsetDays = 0) => {
-  return Array.from({ length: count }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - offsetDays - (count - 1 - i));
-    return d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
-  });
-};
 
 /* Energy tab charts (Solar Generation, Battery State, Generation vs
    Consumption, Voltage & Current) are built from real readings fetched via
@@ -174,36 +167,6 @@ const fetchEnergyTabData = async (deviceId = 'DEMO-001') => {
   }
 };
 
-const fetchPaymentStats = async () => {
-  try {
-    const token = localStorage.getItem('authToken');
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    const res = await fetch('/api/payments/stats', { headers });
-    return res.ok ? res.json() : null;
-  } catch (err) {
-    console.warn('Payment stats fetch failed:', err.message);
-    return null;
-  }
-};
-
-const fetchPaymentTrend = async (deviceId = 'DEMO-001') => {
-  try {
-    const token = localStorage.getItem('authToken');
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    /* deviceId must match the org-scoped selection — passing DEMO-001 while
-       an org admin's selected unit belongs to their tenant would 403 (the
-       route refuses devices outside the caller's org) and silently drop
-       the revenue chart back to mock data. */
-    const res = await fetch(`/api/audit/charts?deviceId=${encodeURIComponent(deviceId)}`, { headers });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.paymentTrend || null;
-  } catch (err) {
-    console.warn('Payment trend fetch failed:', err.message);
-    return null;
-  }
-};
-
 const fetchForecast = async (deviceId = 'DEMO-001') => {
   try {
     const token = localStorage.getItem('authToken');
@@ -232,18 +195,17 @@ const fetchMaintenanceAlerts = async (deviceId = 'DEMO-001') => {
   }
 };
 
-/* /api/admin/fraud-risk is admin-only, same auth pattern as the other
-   admin-scoped fetches on this dashboard. */
-const fetchFraudRiskData = async () => {
+/* Appliances tab — reuses the same /api/appliances endpoint the admin
+   dashboard's Appliance Monitor panel calls. Software-only heavy-usage
+   estimate, no per-appliance sub-metering hardware (see appliances.js). */
+const fetchAppliancePerformance = async (deviceId = 'DEMO-001') => {
   try {
     const token = localStorage.getItem('authToken');
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    const res = await fetch('/api/admin/fraud-risk', { headers });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.points || null;
+    const res = await fetch(`/api/appliances?deviceId=${encodeURIComponent(deviceId)}`, { headers });
+    return res.ok ? res.json() : null;
   } catch (err) {
-    console.warn('Fraud risk fetch failed:', err.message);
+    console.warn('Appliance performance fetch failed:', err.message);
     return null;
   }
 };
@@ -291,96 +253,36 @@ const fetchDevices = async () => {
   }
 };
 
-const creditScoreColors = ['rgb(34, 197, 94)', 'rgb(59, 130, 246)', 'rgb(239, 68, 68)', 'rgb(147, 51, 234)', 'rgb(245, 158, 11)'];
-
-/* There's no real credit bureau score in this system — this chart shows a
-   payment-reliability score derived from actual M-Pesa payment history
-   (see getCustomerCreditScoreTrend() in db.js). Replaces the old
-   Math.random() "Customer A/B/C" mock. */
-const buildCreditScoreTrendData = (labels, customers) => ({
-  labels,
-  datasets: customers.map((customer, i) => ({
-    label: customer.name,
-    data: customer.scores,
-    borderColor: creditScoreColors[i % creditScoreColors.length],
-    tension: 0.34,
-    pointRadius: 3
-  }))
+/* Appliance load breakdown — a bar per registered appliance (effective
+   wattage, red if flagged heavy) plus a doughnut share-of-load view. Built
+   from GET /api/appliances (see appliances.js — software-only estimate,
+   owner-entered or category-typical wattage, no real per-appliance meter). */
+const buildApplianceLoadData = (appliances) => ({
+  labels: appliances.map(a => a.name),
+  datasets: [
+    {
+      label: 'Effective Wattage (W)',
+      data: appliances.map(a => a.effectiveWattage),
+      backgroundColor: appliances.map(a => a.heavy ? 'rgb(239, 68, 68)' : 'rgb(34, 197, 94)'),
+      borderRadius: 6,
+      barPercentage: 0.7,
+      categoryPercentage: 0.8
+    }
+  ]
 });
 
-/* /api/customers/credit-score-trend is admin-only (it includes customer
-   names) — must be sent with this dashboard's auth token, same as
-   /api/audit/charts in index.html. */
-const fetchCreditScoreTrendData = async () => {
-  try {
-    const token = localStorage.getItem('authToken');
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    const res = await fetch('/api/customers/credit-score-trend', { headers });
-    return res.ok ? res.json() : null;
-  } catch (err) {
-    console.warn('Credit score trend fetch failed:', err.message);
-    return null;
-  }
-};
-
-const createRevenueData = () => {
-  const labels = getDateLabels(14);
-  const data = labels.map(() => Math.round(18000 + Math.random() * 32000));
+const buildApplianceShareData = (appliances) => {
+  const total = appliances.reduce((s, a) => s + (a.effectiveWattage || 0), 0) || 1;
   return {
-    labels,
+    labels: appliances.map(a => a.name),
+    shares: appliances.map(a => ((a.effectiveWattage || 0) / total) * 100),
+    count: appliances.length,
+    heavyCount: appliances.filter(a => a.heavy).length,
     datasets: [
       {
-        label: 'Daily Revenue (KES)',
-        data,
-        backgroundColor: 'rgb(34, 197, 94)',
-        borderRadius: 6,
-        barPercentage: 0.7,
-        categoryPercentage: 0.8
-      }
-    ]
-  };
-};
-
-const createPaymentStatusData = () => {
-  const total = 892;
-  const paid = 0.68;
-  const lowCredit = 0.22;
-  const defaulted = 0.1;
-  const paidCount = Math.round(total * paid);
-  const lowCreditCount = Math.round(total * lowCredit);
-  const defaultCount = total - paidCount - lowCreditCount;
-  return {
-    labels: ['Paid', 'Low Credit', 'Defaulted'],
-    counts: [paidCount, lowCreditCount, defaultCount],
-    percentages: [paid * 100, lowCredit * 100, defaulted * 100],
-    datasets: [
-      {
-        data: [paidCount, lowCreditCount, defaultCount],
-        backgroundColor: ['rgb(34, 197, 94)', 'rgb(245, 158, 11)', 'rgb(239, 68, 68)'],
+        data: appliances.map(a => a.effectiveWattage),
+        backgroundColor: appliances.map(a => a.heavy ? 'rgb(239, 68, 68)' : 'rgb(34, 197, 94)'),
         borderWidth: 0
-      }
-    ]
-  };
-};
-
-const createCreditDistributionData = () => {
-  const labels = ['<10%', '10-25%', '25-50%', '50-75%', '>75%'];
-  return {
-    labels,
-    datasets: [
-      {
-        label: 'Customers',
-        data: [42, 88, 168, 240, 354],
-        backgroundColor: [
-          'rgb(239, 68, 68)',
-          'rgb(245, 158, 11)',
-          'rgb(245, 158, 11)',
-          'rgb(34, 197, 94)',
-          'rgb(34, 197, 94)'
-        ],
-        borderRadius: 6,
-        barPercentage: 0.7,
-        categoryPercentage: 0.85
       }
     ]
   };
@@ -442,30 +344,6 @@ const createAnomalyScoreData = () => {
   };
 };
 
-/* Real fraud-risk points from /api/admin/fraud-risk — each point is an
-   actual completed payment's amount and the FraudDetector's confidence for
-   it (0 if no rule fired). Replaces the old Math.random() mock. */
-const buildFraudRiskData = (points) => {
-  const colored = points.map((p) => ({
-    ...p,
-    color: p.flagged ? 'rgb(239, 68, 68)' : 'rgb(34, 197, 94)',
-    label: p.flagged ? 'Flagged' : 'Safe'
-  }));
-  return {
-    datasets: [
-      {
-        label: 'Fraud Risk',
-        data: colored.map((p) => ({ x: p.x, y: p.y })),
-        pointBackgroundColor: colored.map((p) => p.color),
-        pointBorderColor: colored.map((p) => p.color),
-        pointRadius: 4,
-        showLine: false
-      }
-    ],
-    points: colored
-  };
-};
-
 const createDeviceHealthData = () => {
   const labels = ['Nairobi', 'Nakuru', 'Kisumu', 'Mombasa', 'Eldoret'];
   const online = labels.map(() => 120 + Math.round(Math.random() * 54));
@@ -476,31 +354,6 @@ const createDeviceHealthData = () => {
       { label: 'Low Battery', data: lowBattery, backgroundColor: 'rgb(245, 158, 11)', stack: 'Stack 0' },
       { label: 'Offline', data: offline, backgroundColor: 'rgb(239, 68, 68)', stack: 'Stack 0' }
     ] };
-};
-
-const createMRRData = () => {
-  const labels = Array.from({ length: 12 }, (_, i) => {
-    const date = new Date();
-    /* Set the day to 1 before shifting months — otherwise a "today" of the
-       29th-31st overflows into the next month when the target month has
-       fewer days (e.g. day 29 + setMonth(Feb) rolls over to March 1st),
-       producing a duplicate month label. */
-    date.setDate(1);
-    date.setMonth(date.getMonth() - 11 + i);
-    return date.toLocaleDateString('en-GB', { month: 'short' });
-  });
-  const values = labels.map((_, i) => Math.round(160000 + i * 6500 + Math.random() * 12000));
-  return { labels, datasets: [
-      {
-        label: 'MRR (KES)',
-        data: values,
-        borderColor: 'rgb(147, 51, 234)',
-        backgroundColor: 'rgba(147, 51, 234, 0.15)',
-        fill: true,
-        tension: 0.36,
-        pointRadius: 3
-      }
-    ], values };
 };
 
 const createPanelEfficiencyData = () => {
@@ -601,11 +454,10 @@ const SolarDashboard = () => {
   const [selectedDeviceId, setSelectedDeviceId] = useState('DEMO-001');
   const [devicesList, setDevicesList] = useState([]);
   const chartRefs = useRef({});
-  /* Fleet stats are driven by the realtime SSE feed below — no simulated
-     jitter. Devices Online / Active Customers count devices that have
-     reported within the last 3 minutes; Today's Revenue is derived from the
-     real revenue chart data at render time. */
-  const [globalStats, setGlobalStats] = useState({ devicesOnline: 0, todayRevenue: 0, activeCustomers: 0 });
+  /* Devices Online is driven by the realtime SSE feed below — no simulated
+     jitter — and counts devices that have reported within the last 3
+     minutes. */
+  const [globalStats, setGlobalStats] = useState({ devicesOnline: 0 });
   const [liveEvents, setLiveEvents] = useState([]);
   const liveDeviceIds = useRef(new Map()); // deviceId -> last-seen ts (pruned every 60s)
   const selectedDeviceRef = useRef(selectedDeviceId);
@@ -638,15 +490,11 @@ const SolarDashboard = () => {
   const batteryStateData = useRef(buildBatteryStateData([], []));
   const generationVsConsumptionData = useRef(buildGenerationVsConsumptionData([], [], []));
   const voltageCurrentData = useRef(buildVoltageCurrentData([], [], []));
-  const revenueData = useRef(createRevenueData());
-  const paymentStatusData = useRef(createPaymentStatusData());
-  const creditDistributionData = useRef(createCreditDistributionData());
   const forecastData = useRef(createForecastData());
   const anomalyScoreData = useRef(createAnomalyScoreData());
-  const fraudRiskData = useRef(buildFraudRiskData([]));
-  const creditScoreTrendData = useRef(buildCreditScoreTrendData([], []));
+  const applianceLoadData = useRef(buildApplianceLoadData([]));
+  const applianceShareData = useRef({ ...buildApplianceShareData([]), avgConsumption: null });
   const deviceHealthData = useRef(createDeviceHealthData());
-  const mrrData = useRef(createMRRData());
   const panelEfficiencyData = useRef(createPanelEfficiencyData());
 
   const themeColors = {
@@ -776,99 +624,28 @@ const SolarDashboard = () => {
       });
     }
 
-    const [paymentStats, paymentTrend, forecast, maintenanceAlerts, devices] = await Promise.all([
-      fetchPaymentStats(),
-      fetchPaymentTrend(selectedDeviceId),
+    const [appliancePerf, forecast, maintenanceAlerts, devices] = await Promise.all([
+      fetchAppliancePerformance(selectedDeviceId),
       fetchForecast(selectedDeviceId),
       fetchMaintenanceAlerts(selectedDeviceId),
       fetchDevices()
     ]);
 
-    if (paymentStats) {
-      const total = paymentStats.count || 892;
-      const paid = paymentStats.cleared || paymentStats.completed || 0;
-      const pending = paymentStats.pending || 0;
-      const failed = paymentStats.failed || 0;
-      const paidCount = paid;
-      const lowCreditCount = pending;
-      const defaultCount = failed;
-      const paidPct = total > 0 ? (paidCount / total) * 100 : 68;
-      const lowCreditPct = total > 0 ? (lowCreditCount / total) * 100 : 22;
-      const defaultPct = total > 0 ? (defaultCount / total) * 100 : 10;
-      const newPaymentStatus = {
-        labels: ['Paid', 'Low Credit', 'Defaulted'],
-        counts: [paidCount, lowCreditCount, defaultCount],
-        percentages: [paidPct, lowCreditPct, defaultPct],
-        datasets: [
-          {
-            data: [paidCount, lowCreditCount, defaultCount],
-            backgroundColor: ['rgb(34, 197, 94)', 'rgb(245, 158, 11)', 'rgb(239, 68, 68)'],
-            borderWidth: 0
-          }
-        ]
-      };
-      paymentStatusData.current.counts = newPaymentStatus.counts;
-      paymentStatusData.current.datasets[0].data = newPaymentStatus.datasets[0].data;
-      paymentStatusData.current.percentages = newPaymentStatus.percentages;
-      updateChart('paymentStatus', (data) => {
-        data.datasets[0].data = newPaymentStatus.datasets[0].data;
-      });
-    }
-
-    if (paymentTrend && paymentTrend.length > 0) {
-      const labels = paymentTrend.map((t) => t.day);
-      const data = paymentTrend.map((t) => Number(t.revenue));
-      const newRevenue = {
-        labels,
-        datasets: [
-          {
-            label: 'Daily Revenue (KES)',
-            data,
-            backgroundColor: 'rgb(34, 197, 94)',
-            borderRadius: 6,
-            barPercentage: 0.7,
-            categoryPercentage: 0.8
-          }
-        ]
-      };
-      revenueData.current = newRevenue;
-      updateChart('dailyRevenue', (data) => {
-        data.labels = newRevenue.labels;
-        data.datasets[0].data = newRevenue.datasets[0].data;
+    if (appliancePerf) {
+      const appliances = appliancePerf.appliances || [];
+      const newApplianceLoad = buildApplianceLoadData(appliances);
+      applianceLoadData.current = newApplianceLoad;
+      updateChart('applianceLoad', (data) => {
+        data.labels = newApplianceLoad.labels;
+        data.datasets[0].data = newApplianceLoad.datasets[0].data;
+        data.datasets[0].backgroundColor = newApplianceLoad.datasets[0].backgroundColor;
       });
 
-      const mrrValues = [];
-      for (let i = 0; i < 12; i++) {
-        const idx = paymentTrend.length - 1 - i;
-        if (idx >= 0) mrrValues.push(paymentTrend[idx].revenue);
-        else mrrValues.push(0);
-      }
-      mrrValues.reverse();
-      const mrrLabels = Array.from({ length: 12 }, (_, i) => {
-        const date = new Date();
-        date.setDate(1);
-        date.setMonth(date.getMonth() - 11 + i);
-        return date.toLocaleDateString('en-GB', { month: 'short' });
-      });
-      const newMRR = {
-        labels: mrrLabels,
-        datasets: [
-          {
-            label: 'MRR (KES)',
-            data: mrrValues,
-            borderColor: 'rgb(147, 51, 234)',
-            backgroundColor: 'rgba(147, 51, 234, 0.15)',
-            fill: true,
-            tension: 0.36,
-            pointRadius: 3
-          }
-        ],
-        values: mrrValues
-      };
-      mrrData.current = newMRR;
-      updateChart('mrr', (data) => {
-        data.labels = newMRR.labels;
-        data.datasets[0].data = newMRR.datasets[0].data;
+      const newApplianceShare = { ...buildApplianceShareData(appliances), avgConsumption: appliancePerf.avgConsumption ?? null };
+      applianceShareData.current = newApplianceShare;
+      updateChart('applianceShare', (data) => {
+        data.datasets[0].data = newApplianceShare.datasets[0].data;
+        data.datasets[0].backgroundColor = newApplianceShare.datasets[0].backgroundColor;
       });
     }
 
@@ -987,27 +764,6 @@ const SolarDashboard = () => {
       });
     }
 
-    const creditScoreTrend = await fetchCreditScoreTrendData();
-    if (creditScoreTrend && creditScoreTrend.labels?.length) {
-      const newCreditScoreTrend = buildCreditScoreTrendData(creditScoreTrend.labels, creditScoreTrend.customers);
-      creditScoreTrendData.current = newCreditScoreTrend;
-      updateChart('creditScoreTrend', (data) => {
-        data.labels = newCreditScoreTrend.labels;
-        data.datasets = newCreditScoreTrend.datasets;
-      });
-    }
-
-    const fraudRiskPoints = await fetchFraudRiskData();
-    if (fraudRiskPoints) {
-      const newFraudRisk = buildFraudRiskData(fraudRiskPoints);
-      fraudRiskData.current = newFraudRisk;
-      updateChart('fraudRisk', (data) => {
-        data.datasets[0].data = newFraudRisk.datasets[0].data;
-        data.datasets[0].pointBackgroundColor = newFraudRisk.datasets[0].pointBackgroundColor;
-        data.datasets[0].pointBorderColor = newFraudRisk.datasets[0].pointBorderColor;
-      });
-    }
-
     const newPanelEfficiency = createPanelEfficiencyData();
     panelEfficiencyData.current.datasets[0].data = newPanelEfficiency.datasets[0].data;
     panelEfficiencyData.current.datasets[0].pointBackgroundColor = newPanelEfficiency.datasets[0].pointBackgroundColor;
@@ -1033,7 +789,7 @@ const SolarDashboard = () => {
       for (const [id, at] of liveDeviceIds.current) {
         if (at < cutoff) liveDeviceIds.current.delete(id);
       }
-      setGlobalStats(prev => ({ ...prev, devicesOnline: liveDeviceIds.current.size, activeCustomers: liveDeviceIds.current.size }));
+      setGlobalStats(prev => ({ ...prev, devicesOnline: liveDeviceIds.current.size }));
     }, 60_000);
 
     const live = (window.SolGridLive?.connect || (() => ({ close() {} })))({
@@ -1042,13 +798,13 @@ const SolarDashboard = () => {
         if (event === 'snapshot') {
           const online = Number(data.onlineCount) || 0;
           liveDeviceIds.current = new Map((data.onlineDevices || []).map(id => [id, Date.now()]));
-          setGlobalStats(prev => ({ ...prev, devicesOnline: online, activeCustomers: online }));
+          setGlobalStats(prev => ({ ...prev, devicesOnline: online }));
         } else if (event === 'heartbeat') {
           liveDeviceIds.current.set(data.deviceId, Date.now());
-          setGlobalStats(prev => ({ ...prev, devicesOnline: liveDeviceIds.current.size, activeCustomers: liveDeviceIds.current.size }));
+          setGlobalStats(prev => ({ ...prev, devicesOnline: liveDeviceIds.current.size }));
         } else if (event === 'reading') {
           liveDeviceIds.current.set(data.deviceId, Date.now());
-          setGlobalStats(prev => ({ ...prev, devicesOnline: liveDeviceIds.current.size, activeCustomers: liveDeviceIds.current.size }));
+          setGlobalStats(prev => ({ ...prev, devicesOnline: liveDeviceIds.current.size }));
           if (data.deviceId === selectedDeviceRef.current) appendLivePoint(data);
         } else if (event === 'event') {
           setLiveEvents(prev => [data, ...prev].slice(0, 8));
@@ -1156,7 +912,7 @@ const SolarDashboard = () => {
 
   const tabs = [
     { id: 'energy',     label: 'Energy' },
-    { id: 'financial',  label: 'Financial' },
+    { id: 'appliances', label: 'Appliances' },
     { id: 'ai',         label: 'AI Insights' },
     { id: 'operations', label: 'Operations' },
     ...(otaEnabled ? [{ id: 'firmware', label: 'Firmware' }] : [])
@@ -1225,27 +981,18 @@ const SolarDashboard = () => {
 
   const mkRef = (key) => (c) => { if (c) chartRefs.current[key] = c.chartInstance || c; };
 
-  const paymentLegend = paymentStatusData.current.labels.map((label, i) => {
-    const count = paymentStatusData.current.counts[i];
-    const pct   = paymentStatusData.current.percentages[i].toFixed(0);
-    const dot   = ['bg-emerald-500','bg-amber-500','bg-rose-500'][i];
+  const applianceShareDotColors = ['bg-emerald-500', 'bg-rose-500', 'bg-sky-500', 'bg-amber-500', 'bg-purple-500', 'bg-teal-500'];
+  const applianceLegend = applianceShareData.current.labels.map((label, i) => {
+    const share = applianceShareData.current.shares[i]?.toFixed(0) ?? 0;
+    const heavy = applianceShareData.current.datasets[0].backgroundColor[i] === 'rgb(239, 68, 68)';
     return (
       <div key={label} className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-        <span className={`w-2.5 h-2.5 rounded-full ${dot}`} />
+        <span className={`w-2.5 h-2.5 rounded-full ${heavy ? 'bg-rose-500' : applianceShareDotColors[i % applianceShareDotColors.length]}`} />
         <span>{label}</span>
-        <span className="font-semibold">{pct}%</span>
-        <span className="text-slate-400 text-xs">({count})</span>
+        <span className="font-semibold">{share}%</span>
       </div>
     );
   });
-
-  const creditScoreDotColors = ['bg-emerald-500', 'bg-sky-500', 'bg-rose-500', 'bg-purple-500', 'bg-amber-500'];
-  const creditLegend = creditScoreTrendData.current.datasets.map((ds, i) => (
-    <div key={ds.label} className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-      <span className={`w-2.5 h-2.5 rounded-full ${creditScoreDotColors[i % creditScoreDotColors.length]}`} />
-      <span>{ds.label}</span>
-    </div>
-  ));
 
   const latestGeneration  = solarGenerationData.current.datasets[0].data;
   const peakToday         = Math.max(...latestGeneration).toFixed(1);
@@ -1253,18 +1000,12 @@ const SolarDashboard = () => {
   const surplusToday      = (generationVsConsumptionData.current.datasets[0].data.at(-1) - generationVsConsumptionData.current.datasets[1].data.at(-1)).toFixed(1);
   const latestVoltage     = voltageCurrentData.current.datasets[0].data.at(-1)?.toFixed(1) ?? 0;
   const latestCurrent     = voltageCurrentData.current.datasets[1].data.at(-1)?.toFixed(1) ?? 0;
-  const todayRevenue      = revenueData.current.datasets[0].data.at(-1) ?? 0;
-  const mtdRevenue        = revenueData.current.datasets[0].data.slice(-7).reduce((s, v) => s + v, 0);
-  const attentionCount    = paymentStatusData.current.counts[1] + paymentStatusData.current.counts[2];
-  const lowCreditCount    = creditDistributionData.current.datasets[0].data[0] + creditDistributionData.current.datasets[0].data[1];
+  const appliancesTracked = applianceShareData.current.count ?? 0;
+  const heavyLoadCount    = applianceShareData.current.heavyCount ?? 0;
   const modelAccuracy     = 92;
   const nextLow           = forecastData.current.labels[forecastData.current.datasets[0].data.indexOf(Math.min(...forecastData.current.datasets[0].data))];
   const anomaliesCount    = anomalyScoreData.current.datasets[0].data.filter(v => v >= 2).length;
-  const flaggedCount      = fraudRiskData.current.points.filter(p => p.flagged).length;
   const deviceOffline     = deviceHealthData.current.offline.reduce((s, v) => s + v, 0);
-  const currentMRR        = mrrData.current.values.at(-1) ?? 0;
-  const growth            = currentMRR && mrrData.current.values.length > 1
-    ? (((currentMRR - mrrData.current.values.at(-2)) / mrrData.current.values.at(-2)) * 100).toFixed(1) : 0;
   const replaceCount      = panelEfficiencyData.current.points.filter(p => p.y < 75).length;
 
   const Badge = ({ label, color }) => {
@@ -1318,7 +1059,7 @@ const SolarDashboard = () => {
             </div>
             <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-50">Analysis Board</h1>
             {orgInfo && (
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Tenant-scoped view — showing only <span className="font-semibold text-amber-600 dark:text-amber-400">{orgInfo.name}</span>'s devices, payments & analytics</p>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Tenant-scoped view — showing only <span className="font-semibold text-amber-600 dark:text-amber-400">{orgInfo.name}</span>'s devices, appliances & analytics</p>
             )}
           </div>
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-5 py-3 shadow-sm">
@@ -1355,12 +1096,12 @@ const SolarDashboard = () => {
           <OnboardingState orgName={orgInfo?.name} onRefresh={loadState} />
         ) : (
           <>
-        {/* ── KPI Strip (realtime fleet stats + real revenue) ── */}
+        {/* ── KPI Strip (realtime fleet stats + appliance monitor) ── */}
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
           {[
-            { title: 'Devices Online',    value: globalStats.devicesOnline.toLocaleString(), accent: 'text-emerald-600 dark:text-emerald-400' },
-            { title: "Today's Revenue",   value: formatKES(todayRevenue),                    accent: 'text-blue-600 dark:text-blue-400'    },
-            { title: 'Active Customers',  value: globalStats.activeCustomers.toLocaleString(), accent: 'text-violet-600 dark:text-violet-400' }
+            { title: 'Devices Online',     value: globalStats.devicesOnline.toLocaleString(), accent: 'text-emerald-600 dark:text-emerald-400' },
+            { title: 'Appliances Tracked', value: appliancesTracked.toLocaleString(),          accent: 'text-blue-600 dark:text-blue-400'    },
+            { title: 'Heavy-Load Alerts',  value: heavyLoadCount.toLocaleString(),             accent: 'text-rose-600 dark:text-rose-400' }
           ].map(m => (
             <div key={m.title} className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm flex items-center justify-between gap-4">
               <div>
@@ -1449,38 +1190,38 @@ const SolarDashboard = () => {
           </div>
         )}
 
-        {/* ══ FINANCIAL TAB ══ */}
-        {activeTab === 'financial' && (
+        {/* ══ APPLIANCES TAB ══ */}
+        {activeTab === 'appliances' && (
           <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <ChartCard title="Daily Revenue" badge="14-Day" badgeColor="emerald"
-              subtitle="M-Pesa revenue trend over the last two weeks."
-              footer={<>Today: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{formatKES(todayRevenue)}</span> · MTD: <span className="font-semibold">{formatKES(mtdRevenue)}</span></>}>
-              <Bar ref={mkRef('dailyRevenue')} data={revenueData.current}
-                options={{ ...baseOptions, scales: { x: { ...baseOptions.scales.x }, y: { ...baseOptions.scales.y, ticks: { callback: v => `KES ${Math.round(v/1000)}k`, color: themeColors.text } } } }} />
-            </ChartCard>
-
-            <ChartCard title="Customer Payment Status" badge="Snapshot" badgeColor="amber"
-              subtitle="Portfolio split: paid, low-credit, and defaulted." h="320px"
-              footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{attentionCount}</span> customers need immediate attention</>}>
-              <div style={{ height: '200px' }}>
-                <Doughnut ref={mkRef('paymentStatus')} data={paymentStatusData.current}
+            <ChartCard title="Appliance Load Breakdown" badge={`${appliancesTracked} Tracked`} badgeColor="emerald"
+              subtitle="Effective wattage per registered appliance — red bars are flagged heavy."
+              footer={applianceShareData.current.avgConsumption
+                ? <>Typical total load: <span className="font-semibold text-amber-600 dark:text-amber-400">{Math.round(applianceShareData.current.avgConsumption)}W</span> (last 7 days)</>
+                : 'Not enough history yet to estimate typical load.'}>
+              {applianceLoadData.current.labels.length > 0 ? (
+                <Bar ref={mkRef('applianceLoad')} data={applianceLoadData.current}
                   options={{ ...baseOptions, plugins: { ...baseOptions.plugins, legend: { display: false } },
-                    scales: { x: { display: false }, y: { display: false } } }} />
-              </div>
-              <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">{paymentLegend}</div>
+                    scales: { x: { ...baseOptions.scales.x }, y: { ...baseOptions.scales.y, title: { display: true, text: 'Watts', color: themeColors.text } } } }} />
+              ) : (
+                <div className="flex items-center justify-center h-48 text-sm text-slate-400">No appliances registered yet — add one from the admin dashboard.</div>
+              )}
             </ChartCard>
 
-            <ChartCard title="Credit Balance Distribution" badge="Distribution" badgeColor="blue"
-              subtitle="How customer credit balances are spread across buckets."
-              footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{lowCreditCount}</span> customers below 25% — send top-up alerts</>}>
-              <Bar ref={mkRef('creditDistribution')} data={creditDistributionData.current} options={baseOptions} />
-            </ChartCard>
-
-            <ChartCard title="Monthly Recurring Revenue" badge="Growth" badgeColor="purple"
-              subtitle="MRR trend over the last 12 months."
-              footer={<>MRR: <span className="font-semibold text-purple-600 dark:text-purple-400">{formatKES(currentMRR)}</span> · Growth: <span className="font-semibold text-emerald-600 dark:text-emerald-400">+{growth}% MoM</span></>}>
-              <Line ref={mkRef('mrr')} data={mrrData.current}
-                options={{ ...baseOptions, scales: { x: { ...baseOptions.scales.x }, y: { ...baseOptions.scales.y, ticks: { callback: v => `KES ${Math.round(v/1000)}k`, color: themeColors.text } } } }} />
+            <ChartCard title="Load Share by Appliance" badge="Snapshot" badgeColor="amber"
+              subtitle="Each appliance's share of the estimated total load." h="320px"
+              footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{heavyLoadCount}</span> appliance(s) flagged heavy — driving the bill</>}>
+              {applianceShareData.current.labels.length > 0 ? (
+                <>
+                  <div style={{ height: '200px' }}>
+                    <Doughnut ref={mkRef('applianceShare')} data={applianceShareData.current}
+                      options={{ ...baseOptions, plugins: { ...baseOptions.plugins, legend: { display: false } },
+                        scales: { x: { display: false }, y: { display: false } } }} />
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">{applianceLegend}</div>
+                </>
+              ) : (
+                <div className="flex items-center justify-center h-48 text-sm text-slate-400">No appliances registered yet.</div>
+              )}
             </ChartCard>
           </div>
         )}
@@ -1501,26 +1242,6 @@ const SolarDashboard = () => {
                 options={{ ...baseOptions, plugins: { ...baseOptions.plugins, threshold: { value: 2.0, label: 'Alert threshold', color: 'rgba(239,68,68,0.8)' } }, scales: { x: { ...baseOptions.scales.x }, y: { ...baseOptions.scales.y, suggestedMax: 4 } } }} />
             </ChartCard>
 
-            <ChartCard title="Fraud Risk Scatter" badge="Risk" badgeColor="red"
-              subtitle="M-Pesa transaction risk score vs. amount — above 0.8 = flagged."
-              footer={<><span className="font-semibold text-rose-600 dark:text-rose-400">{flaggedCount}</span> transactions flagged by the Fraud Shield today</>}>
-              <Scatter ref={mkRef('fraudRisk')} data={fraudRiskData.current}
-                options={{ ...baseOptions, plugins: { ...baseOptions.plugins, threshold: { value: 0.8, label: 'Flag threshold', color: 'rgba(239,68,68,0.8)', axis: 'y' } },
-                  scales: { x: { ...baseOptions.scales.x, title: { display: true, text: 'Transaction amount (KES)', color: themeColors.text }, ticks: { callback: v => `KES ${Math.round(v/1000)}k`, color: themeColors.text } },
-                            y: { ...baseOptions.scales.y, title: { display: true, text: 'Risk score', color: themeColors.text }, suggestedMax: 1 } } }} />
-            </ChartCard>
-
-            <ChartCard title="Customer Credit Score Trend" badge="Trend" badgeColor="emerald"
-              subtitle="Top customers' payment-reliability score, derived from real M-Pesa payment history over 12 months.">
-              {creditScoreTrendData.current.datasets.length > 0 ? (
-                <>
-                  <Line ref={mkRef('creditScoreTrend')} data={creditScoreTrendData.current} options={baseOptions} />
-                  <div className="mt-3 flex flex-wrap items-center justify-center gap-4">{creditLegend}</div>
-                </>
-              ) : (
-                <div className="flex items-center justify-center h-48 text-sm text-slate-400">Not enough customer payment history yet.</div>
-              )}
-            </ChartCard>
           </div>
         )}
 

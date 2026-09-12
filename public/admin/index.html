@@ -193,16 +193,7 @@
     .tx-table td { padding: 11px 16px; border-bottom: 1px solid rgba(255,255,255,.04); vertical-align: middle; }
     .tx-table tr:last-child td { border-bottom: none; }
     .tx-table tr:hover td { background: rgba(255,255,255,.02); }
-    .tx-receipt { font-family: monospace; font-size: 10px; color: var(--teal); }
-    .tx-amount { font-weight: 700; color: var(--green); }
     .tx-device { font-size: 10px; color: var(--blue); }
-    .tx-date { font-size: 10px; color: var(--muted); }
-
-    /* ── Admin stats ── */
-    .admin-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; padding: 14px 18px; }
-    .stat-item { background: rgba(255,255,255,.03); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
-    .stat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
-    .stat-value { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-weight: 700; font-size: 13px; }
 
     /* ── Audit timeline ── */
     .timeline-item { display: flex; gap: 12px; padding: 10px 18px; border-bottom: 1px solid rgba(255,255,255,.03); }
@@ -213,13 +204,13 @@
 
     /* ── Responsive ── */
     @media (max-width: 1100px) {
-      .kpi-grid, .row2, .row3, .overview-body, .weather-cells, .nav-cards, .admin-stats { grid-template-columns: 1fr 1fr; }
+      .kpi-grid, .row2, .row3, .overview-body, .weather-cells, .nav-cards { grid-template-columns: 1fr 1fr; }
       .health-bar { grid-template-columns: 1fr 1fr; }
       .forecast-grid { grid-template-columns: repeat(3,1fr); }
     }
     @media (max-width: 640px) {
       .content { padding: 12px 12px 56px; gap: 12px; }
-      .kpi-grid, .overview-body, .nav-cards, .admin-stats { grid-template-columns: 1fr 1fr; }
+      .kpi-grid, .overview-body, .nav-cards { grid-template-columns: 1fr 1fr; }
       .row2, .row3, .health-bar { grid-template-columns: 1fr; }
       .weather-cells { grid-template-columns: 1fr 1fr; padding: 10px 12px; }
       .forecast-grid { grid-template-columns: repeat(2,1fr); }
@@ -232,7 +223,7 @@
       .tx-table th, .tx-table td { padding: 8px 10px; }
     }
     @media (max-width: 380px) {
-      .kpi-grid, .overview-body, .weather-cells, .nav-cards, .admin-stats { grid-template-columns: 1fr; }
+      .kpi-grid, .overview-body, .weather-cells, .nav-cards { grid-template-columns: 1fr; }
       .topbar-right .badge:nth-child(n+4) { display: none; }
     }
   </style>
@@ -264,8 +255,7 @@
       <span class="badge badge-amber" id="org-badge" style="display:none"></span>
       <span class="badge badge-amber" id="badge-alerts">— Alerts</span>
       <span class="badge badge-green">IoT Live</span>
-      <span class="badge badge-blue">M-Pesa Active</span>
-      <span class="badge badge-red" id="badge-fraud">Fraud Shield ON</span>
+      <span class="badge badge-blue">Appliance Monitor</span>
     </div>
   </div>
 
@@ -279,14 +269,14 @@
         <div class="kpi-delta" id="kpi-solar-d">Fetching…</div>
       </div>
       <div class="kpi green">
-        <div class="kpi-label">Active Customers</div>
-        <div class="kpi-value" style="color:var(--green)" id="kpi-customers">—</div>
-        <div class="kpi-delta" style="color:var(--green)">↑ 8 this week</div>
+        <div class="kpi-label">Appliances Tracked</div>
+        <div class="kpi-value" style="color:var(--green)" id="kpi-appliances">—</div>
+        <div class="kpi-delta" style="color:var(--green)">Across your kit</div>
       </div>
       <div class="kpi blue">
-        <div class="kpi-label">M-Pesa Revenue</div>
-        <div class="kpi-value" style="color:var(--blue)" id="kpi-revenue">—</div>
-        <div class="kpi-delta" style="color:var(--blue)">↑ 23% MTD</div>
+        <div class="kpi-label">Heavy-Load Alerts</div>
+        <div class="kpi-value" style="color:var(--blue)" id="kpi-heavy">—</div>
+        <div class="kpi-delta" style="color:var(--blue)">Flagged now</div>
       </div>
       <div class="kpi red">
         <div class="kpi-label">Devices Offline</div>
@@ -358,17 +348,38 @@
       <div style="padding:10px 18px;border-top:1px solid var(--border);color:var(--teal);font-size:10px" id="weather-message">Loading weather data…</div>
     </div>
 
-    <!-- Admin Summary Stats -->
+    <!-- Appliance Monitor (owner appliance-monitoring upgrade) -->
     <div class="panel">
       <div class="panel-head">
-        <span class="panel-title">Admin Summary</span>
-        <span class="badge badge-teal" style="font-size:9px">Live Pull</span>
+        <span class="panel-title">Appliance Monitor</span>
+        <span class="badge badge-green" style="font-size:9px">Owner Upgrade</span>
       </div>
-      <div class="admin-stats" id="admin-stats">
-        <div class="stat-item"><div class="stat-label">Total Payments</div><div class="stat-value" id="stat-total-payments" style="color:var(--green)">—</div></div>
-        <div class="stat-item"><div class="stat-label">Total Revenue</div><div class="stat-value" id="stat-total-revenue" style="color:var(--amber)">—</div></div>
-        <div class="stat-item"><div class="stat-label">Pending Payments</div><div class="stat-value" id="stat-pending" style="color:var(--amber)">—</div></div>
-        <div class="stat-item"><div class="stat-label">Failed Payments</div><div class="stat-value" id="stat-failed" style="color:var(--red)">—</div></div>
+      <div style="padding:14px 18px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <input id="appliance-name" type="text" maxlength="128" placeholder="Appliance name (e.g. Water Pump)"
+            style="flex:1;min-width:140px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--text);font-family:inherit;outline:none">
+          <select id="appliance-category"
+            style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--text);font-family:inherit;outline:none">
+            <option value="pump">Pump</option>
+            <option value="heater">Heater</option>
+            <option value="fridge">Fridge</option>
+            <option value="lighting">Lighting</option>
+            <option value="fan">Fan</option>
+            <option value="tv">TV</option>
+            <option value="other" selected>Other</option>
+          </select>
+          <input id="appliance-watts" type="number" min="1" max="49999" placeholder="Rated watts (optional)"
+            style="width:150px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--text);font-family:inherit;outline:none">
+          <button id="appliance-add-btn"
+            style="background:var(--green);color:#04231f;border:none;border-radius:8px;padding:8px 18px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">
+            + Add Appliance
+          </button>
+        </div>
+        <div id="appliance-error" style="display:none;font-size:10px;color:var(--red);margin-bottom:8px"></div>
+        <div id="appliance-baseline" style="font-size:10px;color:var(--muted);margin-bottom:10px">Loading average load…</div>
+        <div id="appliance-list" style="display:flex;flex-direction:column;gap:8px">
+          <div style="color:var(--muted);font-size:11px;padding:10px 0">Loading appliances…</div>
+        </div>
       </div>
     </div>
 
@@ -398,51 +409,7 @@
       </div>
     </div>
 
-    <!-- M-Pesa / Relay / Wallet -->
     <div class="row3">
-      <div class="panel">
-        <div class="panel-head">
-          <span class="panel-title">M-Pesa Transactions</span>
-          <span class="ai-tag">AI · Fraud Shield</span>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px 18px">
-          <div style="background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.2);border-radius:10px;padding:10px;text-align:center">
-            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:800;font-size:22px;color:var(--green)" id="tx-ok">—</div>
-            <div style="font-size:9px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px">Cleared</div>
-          </div>
-          <div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:10px;padding:10px;text-align:center">
-            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:800;font-size:22px;color:var(--amber)" id="tx-pend">—</div>
-            <div style="font-size:9px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px">Pending</div>
-          </div>
-          <div style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:10px;text-align:center">
-            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:800;font-size:22px;color:var(--red)" id="tx-block">—</div>
-            <div style="font-size:9px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px">Blocked</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-head">
-          <span class="panel-title">Relay Control</span>
-          <span class="badge badge-green" style="font-size:9px">Online</span>
-        </div>
-        <div style="padding:16px 18px">
-          <div style="color:var(--green);font-size:11px;margin-bottom:10px">All relays responsive</div>
-          <div style="font-size:10px;color:var(--muted)">Auto-lock on wallet expiry · Retry every 5 min</div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-head">
-          <span class="panel-title">Wallet Monitor</span>
-          <span class="ai-tag">AI · Optimizer</span>
-        </div>
-        <div style="padding:16px 18px">
-          <div style="color:var(--teal);font-size:11px;margin-bottom:10px">Scanning active wallets…</div>
-          <div style="font-size:10px;color:var(--muted)">Expiry check every 15 min · SMS on low balance &amp; power cut</div>
-        </div>
-      </div>
-
       <!-- Test SMS Panel -->
       <div class="panel">
         <div class="panel-head">
@@ -468,36 +435,6 @@
       </div>
     </div>
 
-    <!-- Full Transactions Table -->
-    <div class="panel" id="transactions">
-      <div class="panel-head">
-        <span class="panel-title">Recent Transactions — Full Log</span>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input id="tx-search" type="text" placeholder="Search by device or receipt…"
-            style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none;width:220px">
-          <span class="badge badge-blue" style="font-size:9px" id="tx-count">Loading…</span>
-        </div>
-      </div>
-      <div class="tx-table-wrap">
-        <table class="tx-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Device ID</th>
-              <th>Amount</th>
-              <th>Status</th>
-              <th>M-Pesa Receipt</th>
-              <th>Phone</th>
-              <th>Date & Time</th>
-            </tr>
-          </thead>
-          <tbody id="tx-body">
-            <tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading transactions…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
     <!-- Audit Timeline -->
     <div class="panel">
       <div class="panel-head">
@@ -506,93 +443,6 @@
       </div>
       <div id="timeline-list" style="max-height:280px;overflow-y:auto">
         <div style="padding:18px;color:var(--muted);font-size:11px">Loading events…</div>
-      </div>
-    </div>
-
-    <!-- Device Fleet — provisioning & key management -->
-    <div class="panel" id="device-fleet">
-      <div class="panel-head">
-        <span class="panel-title">Device Fleet</span>
-        <span class="badge badge-teal" style="font-size:9px">Provisioning</span>
-      </div>
-      <form id="device-add-form" style="display:flex;gap:8px;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--border)">
-        <input id="device-add-id" type="text" placeholder="Device ID (e.g. SOLAR-014)" aria-label="Device ID" required
-          style="flex:1;min-width:160px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
-        <input id="device-add-name" type="text" placeholder="Name (optional)" aria-label="Device name"
-          style="flex:1;min-width:160px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
-        <input id="device-add-location" type="text" placeholder="Region (e.g. Kisumu, Kenya)" aria-label="Device region"
-          style="flex:1;min-width:160px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
-        <input id="device-add-lat" type="number" step="any" placeholder="Lat (optional)" aria-label="Device latitude"
-          style="flex:1;min-width:110px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
-        <input id="device-add-lon" type="number" step="any" placeholder="Lon (optional)" aria-label="Device longitude"
-          style="flex:1;min-width:110px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
-        <button type="submit" id="device-add-btn"
-          style="background:var(--teal);color:#04231f;border:none;border-radius:8px;padding:7px 16px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">
-          + Provision Device
-        </button>
-      </form>
-      <div id="fleet-summary" style="display:none;gap:8px;flex-wrap:wrap;padding:10px 18px;border-bottom:1px solid var(--border);font-size:10px"></div>
-      <div id="device-add-result" style="display:none;padding:12px 18px;border-bottom:1px solid var(--border);font-size:11px"></div>
-      <div id="device-fleet-error" style="display:none;padding:12px 18px;border-bottom:1px solid var(--border);font-size:11px;color:var(--red)"></div>
-      <div class="tx-table-wrap">
-        <table class="tx-table">
-          <thead>
-            <tr>
-              <th>Device ID</th>
-              <th>Name</th>
-              <th>Owner</th>
-              <th>Battery</th>
-              <th>Firmware</th>
-              <th>Status</th>
-              <th>Last Seen</th>
-              <th>API Key</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="device-fleet-body">
-            <tr><td colspan="9" style="text-align:center;padding:24px;color:var(--muted)">Loading devices…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Organizations — super-admin tenant directory (create orgs, view
-         fleet/user counts, provision org admins). Hidden for non-super-admins
-         the same way the Device Fleet hides on 403. -->
-    <div class="panel" id="organizations-panel">
-      <div class="panel-head">
-        <span class="panel-title">Organizations</span>
-        <span class="badge badge-teal" style="font-size:9px">Multi-tenant</span>
-      </div>
-      <form id="org-create-form" style="display:flex;gap:8px;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--border)">
-        <input id="org-create-name" type="text" placeholder="Organization name (e.g. Acme Solar Ltd)" aria-label="Organization name" required
-          style="flex:1;min-width:200px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
-        <input id="org-create-slug" type="text" placeholder="Slug (optional — e.g. acme-solar)" aria-label="Organization slug"
-          style="flex:1;min-width:160px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);font-family:inherit;outline:none">
-        <button type="submit" id="org-create-btn"
-          style="background:var(--purple);color:#fff;border:none;border-radius:8px;padding:7px 16px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">
-          + Create Organization
-        </button>
-      </form>
-      <div id="org-result" style="display:none;padding:12px 18px;border-bottom:1px solid var(--border);font-size:11px"></div>
-      <div id="org-error" style="display:none;padding:12px 18px;border-bottom:1px solid var(--border);font-size:11px;color:var(--red)"></div>
-      <div class="tx-table-wrap">
-        <table class="tx-table">
-          <thead>
-            <tr>
-              <th>Organization</th>
-              <th>Slug</th>
-              <th>Devices</th>
-              <th>Users</th>
-              <th>Org Admins</th>
-              <th>Created</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="organizations-body">
-            <tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading organizations…</td></tr>
-          </tbody>
-        </table>
       </div>
     </div>
 
@@ -628,7 +478,7 @@
           <div style="font-size:10px;color:var(--muted)">Energy Forecast</div>
           <div style="font-size:13px;font-weight:600;color:var(--amber);margin-top:4px">92% accuracy</div>
           <div class="meter-track"><div class="meter-fill" style="width:92%;background:var(--amber)"></div></div>
-          <div style="font-size:9px;color:var(--muted)">↓ 15–20% defaults</div>
+          <div style="font-size:9px;color:var(--muted)">6-hour accuracy</div>
         </div>
         <div class="health-cell">
           <div style="font-size:10px;color:var(--muted)">Predictive Maint.</div>
@@ -637,10 +487,10 @@
           <div style="font-size:9px;color:var(--muted)">↓ 40% downtime</div>
         </div>
         <div class="health-cell">
-          <div style="font-size:10px;color:var(--muted)">Fraud Shield</div>
-          <div style="font-size:13px;font-weight:600;color:var(--red);margin-top:4px">85% blocked</div>
+          <div style="font-size:10px;color:var(--muted)">Heavy-Load Detection</div>
+          <div style="font-size:13px;font-weight:600;color:var(--red);margin-top:4px">85% flagged</div>
           <div class="meter-track"><div class="meter-fill" style="width:85%;background:var(--red)"></div></div>
-          <div style="font-size:9px;color:var(--muted)">M-Pesa protection</div>
+          <div style="font-size:9px;color:var(--muted)">Appliance-level AI</div>
         </div>
         <div class="health-cell">
           <div style="font-size:10px;color:var(--muted)">Usage Optimizer</div>
@@ -679,10 +529,9 @@
     });
   });
 
-  /* ── Admin summary / full transaction log / audit timeline ──
+  /* ── Audit timeline ──
      (merged in from the old standalone Admin Console page) ── */
   const API = '/api';
-  let allTransactions = [];
 
   const _compact = new Intl.NumberFormat('en', { notation: 'compact', maximumSignificantDigits: 3 });
   const _integer = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
@@ -691,87 +540,38 @@
     n = Number(n) || 0;
     return n >= 10000 ? _compact.format(n) : _integer.format(n);
   }
-  function fmtKES(v) {
-    const n = Number(v) || 0;
-    return `KES ${n >= 10000 ? _compact.format(n) : _integer.format(n)}`;
-  }
   function fmtDate(d) {
     if (!d) return '—';
     return new Date(d).toLocaleString('en-KE', { dateStyle: 'short', timeStyle: 'short' });
   }
 
-  function statusBadge(s) {
-    const map = {
-      completed: 'badge-green',
-      failed:    'badge-red',
-      pending:   'badge-amber',
-      simulated: 'badge-blue',
-    };
-    return `<span class="badge ${map[s] || 'badge-amber'}" style="font-size:9px">${s || 'pending'}</span>`;
-  }
-
-  function renderTransactions(list) {
-    const tbody = document.getElementById('tx-body');
-    if (!tbody) return;
-    const count = document.getElementById('tx-count');
-    if (list && list.length) {
-      tbody.innerHTML = list.map((p, i) => `
-      <tr>
-        <td style="color:var(--muted);font-size:10px">${i + 1}</td>
-        <td class="tx-device">${p.device_id || p.deviceId || '—'}</td>
-        <td class="tx-amount">${fmtKES(p.amount)}</td>
-        <td>${statusBadge(p.status)}</td>
-        <td class="tx-receipt">${p.mpesa_receipt || p.checkout_request_id || '—'}</td>
-        <td style="font-size:10px;color:var(--sub)">${p.phone_number || '—'}</td>
-        <td class="tx-date">${fmtDate(p.completed_at || p.created_at)}</td>
-      </tr>`).join('');
-      if (count) count.textContent = `${list.length} records`;
-    } else {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">No transactions found</td></tr>';
-      if (count) count.textContent = '0 records';
-    }
-  }
-
-  function filterTransactions() {
-    const q = (document.getElementById('tx-search')?.value || '').toLowerCase();
-    if (!q) { renderTransactions(allTransactions); return; }
-    renderTransactions(allTransactions.filter(p =>
-      (p.device_id || '').toLowerCase().includes(q) ||
-      (p.mpesa_receipt || '').toLowerCase().includes(q) ||
-      (p.checkout_request_id || '').toLowerCase().includes(q) ||
-      (p.phone_number || '').toLowerCase().includes(q)
-    ));
-  }
-
   /* getAuditTimeline() (db.js) UNIONs payments + maintenance_alerts under
      generic column names — category/ts/severity/detail/ref_id — since the
-     two source tables don't share a schema. This used to read e.type/
-     e.message/e.created_at/e.device_id, none of which exist on the actual
-     response, so every row silently fell back to "Event" / "—". */
+     two source tables don't share a schema. This single-user admin panel
+     has no use for payment/transaction rows (see the removed M-Pesa
+     Transactions / Recent Transactions panels above), so they're filtered
+     out here rather than changing getAuditTimeline() itself — that function
+     is shared with the Analysis Board's own audit timeline, which still
+     wants the full feed. */
   function renderTimeline(events) {
     const el = document.getElementById('timeline-list');
     if (!el) return;
-    if (!events || !events.length) { el.innerHTML = '<div style="padding:18px;color:var(--muted);font-size:11px">No events found</div>'; return; }
+    const alertEvents = (events || []).filter(e => e.category !== 'payment');
+    if (!alertEvents.length) { el.innerHTML = '<div style="padding:18px;color:var(--muted);font-size:11px">No events found</div>'; return; }
     const severityColor = {
-      completed: 'var(--green)', success: 'var(--green)',
-      failed:    'var(--red)',   high:    'var(--red)',
-      pending:   'var(--amber)', medium:  'var(--amber)',
+      failed: 'var(--red)',   high:   'var(--red)',
+      pending: 'var(--amber)', medium: 'var(--amber)',
       low: 'var(--blue)'
     };
-    el.innerHTML = events.map(e => {
-      const isPayment = e.category === 'payment';
-      const text = isPayment
-        ? `Payment ${e.severity || 'pending'} · ${fmtKES(e.detail)}`
-        : (e.detail || 'Alert').replaceAll('_', ' ');
-      return `
+    el.innerHTML = alertEvents.map(e => `
       <div class="timeline-item">
         <div class="timeline-dot" style="background:${severityColor[e.severity] || 'var(--blue)'}"></div>
         <div>
-          <div class="timeline-text">${text}</div>
+          <div class="timeline-text">${(e.detail || 'Alert').replaceAll('_', ' ')}</div>
           <div class="timeline-time">${fmtDate(e.ts)} · Device: ${e.ref_id || '—'}</div>
         </div>
-      </div>`;
-    }).join('');
+      </div>`
+    ).join('');
   }
 
   function setText(id, v) {
@@ -779,700 +579,162 @@
     if (el) el.textContent = v;
   }
 
-  function orDash(v, fmt) { return v == null ? '—' : fmt(v); }
-
-  function renderAdminStats(summary) {
-    const p = summary?.paymentStats || summary || {};
-
-    const totalPayments = p.total_payments ?? p.count;
-    const completed     = p.completed ?? p.success;
-
-    setText('stat-total-payments', orDash(totalPayments,   fmtCount));
-    setText('stat-total-revenue',  orDash(p.total_revenue, fmtKES));
-    setText('stat-pending',        orDash(p.pending,       fmtCount));
-    setText('stat-failed',         orDash(p.failed,        fmtCount));
-
-    if (totalPayments == null) return;
-    setText('tx-ok',    orDash(completed, fmtCount));
-    setText('tx-pend',  orDash(p.pending, fmtCount));
-    setText('tx-block', orDash(p.failed,  fmtCount));
-  }
-
   async function fetchAdminData() {
     try {
       const token = localStorage.getItem('authToken');
-      // /api/audit/charts and /api/payments/stats are both admin-only (revenue
-      // aggregates, customer phone numbers, M-Pesa receipt data) — must be sent
-      // with this dashboard's auth token.
+      // /api/audit/charts is admin-only (customer phone numbers, M-Pesa
+      // receipt data in its other fields) — must be sent with this
+      // dashboard's auth token.
       const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
       // Use the org-resolved device published by index.js (window.__solgridDeviceId)
       // — passing DEMO-001 would 403 for an org admin whose tenant owns a
       // different unit. Super-admins keep the platform demo device default.
       const devId = encodeURIComponent(window.__solgridDeviceId || 'DEMO-001');
-      const [chartRes, statsRes] = await Promise.all([
-        fetch(`${API}/audit/charts?deviceId=${devId}`, { headers: authHeaders }).then(r => r.ok ? r.json() : null).catch(() => null),
-        fetch(`${API}/payments/stats`, { headers: authHeaders }).then(r => r.ok ? r.json() : null).catch(() => null),
-      ]);
+      const chartRes = await fetch(`${API}/audit/charts?deviceId=${devId}`, { headers: authHeaders })
+        .then(r => r.ok ? r.json() : null).catch(() => null);
 
-      if (chartRes) {
-        allTransactions = chartRes.recentPayments || [];
-        renderTransactions(allTransactions);
-        renderTimeline(chartRes.timeline || []);
-        if (chartRes.summary) renderAdminStats(chartRes.summary);
-      }
-      if (statsRes) renderAdminStats(statsRes);
-
+      if (chartRes) renderTimeline(chartRes.timeline || []);
     } catch (e) {
       console.warn('Admin data fetch error:', e);
     }
   }
 
-  document.getElementById('tx-search')?.addEventListener('input', filterTransactions);
-
   // Kick off admin fetch after a short delay (let index.js init first)
   setTimeout(fetchAdminData, 1200);
   setInterval(fetchAdminData, 90000);
 
-  /* ── Device Fleet: provisioning & key management ──
-     GET/POST /api/admin/devices and POST /api/admin/devices/:id/rotate-key
-     existed in the backend with no UI calling them — this wires one up. */
-  function authHeaders() {
+  /* ── Appliance Monitor: owner appliance-monitoring upgrade ──
+     GET/POST/DELETE /api/appliances. There is no per-appliance sub-metering
+     hardware — the heavy/normal flag and effectiveWattage/estimatedSharePct
+     fields are a software-only estimate computed server-side (see
+     appliances.js), not a live sensor reading. */
+  async function fetchAppliances() {
     const token = localStorage.getItem('authToken');
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }
-
-  function escapeHtml(s) {
-    return String(s ?? '').replace(/[&<>"']/g, c => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
-  }
-
-  function maskKey(key) {
-    if (!key) return '—';
-    return key.length > 8 ? `${key.slice(0, 4)}••••${key.slice(-4)}` : '••••••••';
-  }
-
-  /* Below this a unit can't reliably power an evening's load; the firmware's
-     hard cutoff is 10% (CRITICAL_BATTERY_PCT), so 20% is the "act now"
-     warning band shown to operators. */
-  const LOW_BATTERY_PCT = 20;
-
-  function isLowBattery(d) {
-    return d.battery_level !== null && d.battery_level !== undefined
-      && Number(d.battery_level) < LOW_BATTERY_PCT;
-  }
-
-  function fmtBattery(d) {
-    if (d.battery_level === null || d.battery_level === undefined) {
-      return '<span style="color:var(--muted)">—</span>';
+    const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
+    const devId = encodeURIComponent(window.__solgridDeviceId || 'DEMO-001');
+    try {
+      const res = await fetch(`${API}/appliances?deviceId=${devId}`, { headers: authHeaders });
+      if (!res.ok) return;
+      renderAppliances(await res.json());
+    } catch (e) {
+      console.warn('Appliance fetch error:', e);
     }
-    const pct = Math.round(Number(d.battery_level));
-    const color = pct < LOW_BATTERY_PCT ? 'var(--red)' : (pct < 50 ? 'var(--amber)' : 'var(--green)');
-    const lowBadge = pct < LOW_BATTERY_PCT
-      ? ' <span class="badge badge-red" style="font-size:9px">LOW</span>' : '';
-    return `<span style="color:${color};font-weight:700">${pct}%</span>${lowBadge}`;
   }
 
-  function showDeviceFleetError(message) {
-    const el = document.getElementById('device-fleet-error');
-    if (!el) return;
-    if (!message) { el.style.display = 'none'; el.textContent = ''; return; }
-    el.textContent = message;
-    el.style.display = 'block';
-  }
+  function renderAppliances(data) {
+    const appliances = data.appliances || [];
 
-  function renderDeviceFleet(devices) {
-    const tbody = document.getElementById('device-fleet-body');
-    if (!tbody) return;
-    if (!devices || !devices.length) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--muted)">No devices provisioned yet</td></tr>';
+    // Top-of-page KPI cells (kpi-grid) — the only other place appliance
+    // data surfaces on this dashboard, so it's updated here rather than
+    // duplicating a fetch in index.js.
+    const kpiAppliances = document.getElementById('kpi-appliances');
+    const kpiHeavy       = document.getElementById('kpi-heavy');
+    if (kpiAppliances) kpiAppliances.textContent = String(appliances.length);
+    if (kpiHeavy)       kpiHeavy.textContent = String(appliances.filter(a => a.heavy).length);
+
+    const list = document.getElementById('appliance-list');
+    const baseline = document.getElementById('appliance-baseline');
+    if (!list || !baseline) return;
+
+    baseline.textContent = data.avgConsumption
+      ? `Typical total load: ~${Math.round(data.avgConsumption)}W (last 7 days)`
+      : 'Typical total load: not enough history yet';
+
+    if (!appliances.length) {
+      list.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:10px 0">No appliances registered yet — add one above.</div>';
       return;
     }
 
-    const deviceRow = d => {
-      const id = escapeHtml(d.device_id || d.deviceId || '—');
-      // is_active reflects an admin enable/disable flag; online/offline is
-      // derived separately from last_seen recency (see isDeviceOnline in db.js).
-      const statusClass = d.is_active === false ? 'badge-red' : (d.online ? 'badge-green' : 'badge-amber');
-      const statusText = d.is_active === false ? 'inactive' : (d.online ? 'online' : 'offline');
-      const owner = d.owner_email
-        ? `${escapeHtml(d.owner_name || '')}${d.owner_name ? '<br>' : ''}<span style="color:var(--muted)">${escapeHtml(d.owner_email)}</span>`
-        : '<span style="color:var(--muted)">unassigned</span>';
-      /* firmware_version is what the device itself reported via telemetry —
-         NULL/empty means it hasn't reported in (or runs a build older than
-         this column). Show a hint for the stale-build case via the version
-         badge below, not here. */
-      const fw = d.firmware_version
-        ? `<span class="badge badge-blue" style="font-family:monospace;font-size:9px">${escapeHtml(d.firmware_version)}</span>`
-        : '<span style="color:var(--muted)">—</span>';
+    list.innerHTML = appliances.map(a => {
+      const heavy = a.heavy;
+      const watts = `${a.isEstimatedWattage ? '~' : ''}${a.effectiveWattage}W`;
+      const share = a.estimatedSharePct != null ? ` · ~${a.estimatedSharePct}% of avg load` : '';
       return `
-      <tr>
-        <td class="tx-device">${id}</td>
-        <td style="font-size:11px;color:var(--sub)">${escapeHtml(d.name) || '—'}</td>
-        <td style="font-size:10px">${owner}</td>
-        <td style="font-size:11px">${fmtBattery(d)}</td>
-        <td style="font-size:11px">${fw}</td>
-        <td><span class="badge ${statusClass}" style="font-size:9px">${escapeHtml(statusText)}</span></td>
-        <td style="font-size:10px;color:var(--muted)">${fmtDate(d.last_seen)}</td>
-        <td style="font-family:monospace;font-size:10px;color:var(--muted)">${escapeHtml(maskKey(d.api_key))}</td>
-        <td style="white-space:nowrap">
-          <button type="button" class="device-assign-btn" data-device-id="${id}" data-owner="${escapeHtml(d.owner_email || '')}"
-              style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--green);font-size:10px;padding:4px 9px;cursor:pointer;font-family:inherit;margin-right:4px">
-              ${d.owner_email ? 'Reassign' : 'Assign'}</button>
-          <button type="button" class="device-region-btn" data-device-id="${id}" data-region="${escapeHtml((d.location || '').trim())}"
-              style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--sub);font-size:10px;padding:4px 9px;cursor:pointer;font-family:inherit;margin-right:4px">
-              Region</button>
-          <button type="button" class="device-rotate-btn" data-device-id="${id}"
-              style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--amber);font-size:10px;padding:4px 9px;cursor:pointer;font-family:inherit">
-              Rotate Key</button>
-        </td>
-      </tr>`;
-    };
-
-    /* One console, grouped by region: devices bucket under their location
-       (blank → "Unassigned region", sorted last), each group headed by a
-       count strip — N devices · online · offline · low battery. */
-    const groups = new Map();
-    for (const d of devices) {
-      const region = (d.location || '').trim() || 'Unassigned region';
-      if (!groups.has(region)) groups.set(region, []);
-      groups.get(region).push(d);
-    }
-    const regions = [...groups.keys()].sort((a, b) =>
-      a === 'Unassigned region' ? 1 : b === 'Unassigned region' ? -1 : a.localeCompare(b));
-
-    tbody.innerHTML = regions.map(region => {
-      const list   = groups.get(region);
-      const online = list.filter(d => d.online).length;
-      const low    = list.filter(isLowBattery).length;
-      const lowStr = low ? ` · <span style="color:var(--red);font-weight:700">${low} low battery</span>` : '';
-      return `
-      <tr style="background:rgba(255,255,255,.03)">
-        <td colspan="9" style="padding:8px 12px;font-size:10px;letter-spacing:.05em;text-transform:uppercase;font-weight:700;color:var(--sub)">
-          ${escapeHtml(region)}
-          <span style="color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">
-            · ${list.length} device${list.length !== 1 ? 's' : ''} · ${online} online · ${list.length - online} offline${lowStr}
-          </span>
-        </td>
-      </tr>` + list.map(deviceRow).join('');
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;
+          border:1px solid ${heavy ? 'rgba(239,68,68,.3)' : 'var(--border)'};
+          background:${heavy ? 'rgba(239,68,68,.06)' : 'rgba(255,255,255,.02)'}">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:600">${escapeHtml(a.name)}</div>
+            <div style="font-size:10px;color:var(--muted)">${escapeHtml(a.category)} · ${watts}${share}</div>
+          </div>
+          <span class="badge ${heavy ? 'badge-red' : 'badge-green'}" style="font-size:8px">${heavy ? 'Heavy' : 'Normal'}</span>
+          <button data-id="${a.id}" class="appliance-delete-btn" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;font-family:inherit">Remove</button>
+        </div>`;
     }).join('');
 
-    tbody.querySelectorAll('.device-rotate-btn').forEach(btn => {
-      btn.addEventListener('click', () => rotateDeviceKey(btn.dataset.deviceId, btn));
-    });
-    tbody.querySelectorAll('.device-assign-btn').forEach(btn => {
-      btn.addEventListener('click', () => assignDevice(btn.dataset.deviceId, btn.dataset.owner, btn));
-    });
-    tbody.querySelectorAll('.device-region-btn').forEach(btn => {
-      btn.addEventListener('click', () => setDeviceRegion(btn.dataset.deviceId, btn.dataset.region, btn));
+    list.querySelectorAll('.appliance-delete-btn').forEach(btn => {
+      btn.addEventListener('click', () => deleteAppliance(btn.dataset.id));
     });
   }
 
-  /* index.js (the dashboard's ES module) owns #kpi-offline and
-     #overview-active-devices but has no admin-only fetch of its own — it
-     falls back to hardcoded placeholder counts. renderDashboardMetrics()
-     there reads window.__deviceFleetStats when present, so setting it here
-     (plus writing the two elements directly for an immediate first paint)
-     is how real numbers replace the placeholders without duplicating
-     index.js's own 60s re-render cycle. */
-  function updateDeviceFleetStats(devices) {
-    const total = devices.length;
-    const offline = devices.filter(d => !d.online).length;
-    const lowBattery = devices.filter(isLowBattery).length;
-    window.__deviceFleetStats = { total, online: total - offline, offline, lowBattery };
-    setText('kpi-offline', fmtCount(offline));
-    setText('overview-active-devices', fmtCount(total - offline));
-
-    const summary = document.getElementById('fleet-summary');
-    if (summary) {
-      const chip = (label, value, color) =>
-        `<span style="border:1px solid var(--border);border-radius:999px;padding:3px 10px;color:${color}">
-           <strong>${value}</strong> ${label}</span>`;
-      summary.style.display = 'flex';
-      summary.innerHTML =
-        chip('devices', total, 'var(--sub)') +
-        chip('online', total - offline, 'var(--green)') +
-        chip('offline', offline, 'var(--amber)') +
-        chip('low battery', lowBattery, lowBattery ? 'var(--red)' : 'var(--muted)');
-    }
-  }
-
-  async function loadDeviceFleet() {
-    try {
-      const res = await fetch(`${API}/admin/devices`, { headers: authHeaders() });
-      if (!res.ok) {
-        // Non-admin sessions get a 403 here — that's expected, not an error to surface.
-        if (res.status === 403) {
-          document.getElementById('device-fleet')?.style.setProperty('display', 'none');
-          return;
-        }
-        throw new Error(`Failed to load devices (${res.status})`);
-      }
-      const data = await res.json();
-      const devices = data.devices || [];
-      showDeviceFleetError(null);
-      renderDeviceFleet(devices);
-      updateDeviceFleetStats(devices);
-    } catch (e) {
-      console.warn('Device fleet load error:', e);
-      showDeviceFleetError('Could not load device list — check your connection and try again.');
-    }
-  }
-
-  function showDeviceAddResult(message, isError) {
-    const el = document.getElementById('device-add-result');
+  function showApplianceError(msg) {
+    const el = document.getElementById('appliance-error');
     if (!el) return;
-    el.style.display = 'block';
-    el.style.color = isError ? 'var(--red)' : 'var(--green)';
-    el.innerHTML = message;
+    el.style.display = msg ? 'block' : 'none';
+    el.textContent = msg || '';
   }
 
-  async function provisionDevice(deviceId, name, location) {
-    const res = await fetch(`${API}/admin/devices`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ deviceId, name: name || undefined, location: location || undefined })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(data?.errors?.[0]?.msg || data?.message || data?.error || `Request failed (${res.status})`);
-    }
-    return data.device;
-  }
+  async function addAppliance() {
+    const nameInput = document.getElementById('appliance-name');
+    const categorySelect = document.getElementById('appliance-category');
+    const wattsInput = document.getElementById('appliance-watts');
+    const btn = document.getElementById('appliance-add-btn');
+    showApplianceError(null);
 
-  /* Link a device to a customer account by email. window.prompt keeps it
-     dependency-free, same UX weight as the confirm() used for key rotation:
-     enter an email to assign, clear the field to unassign, Cancel to abort. */
-  async function assignDevice(deviceId, currentOwner, triggerBtn) {
-    if (!deviceId) return;
-    const email = window.prompt(
-      `Assign "${deviceId}" to which customer?\n\nEnter the customer's account email` +
-      (currentOwner ? `, clear the field to unassign (currently: ${currentOwner})` : '') +
-      `, or Cancel.`,
-      currentOwner || ''
-    );
-    if (email === null) return; // cancelled
-
-    if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Saving…'; }
-    try {
-      const res = await fetch(`${API}/admin/devices/${encodeURIComponent(deviceId)}/assign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ email: email.trim() || null })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.message || data?.error || `Request failed (${res.status})`);
-      showDeviceAddResult(
-        data.owner
-          ? `<strong>${escapeHtml(deviceId)}</strong> assigned to ${escapeHtml(data.owner.email)}.`
-          : `<strong>${escapeHtml(deviceId)}</strong> unassigned.`,
-        false
-      );
-      await loadDeviceFleet();
-    } catch (e) {
-      showDeviceAddResult(`Failed to assign device: ${escapeHtml(e.message)}`, true);
-    } finally {
-      if (triggerBtn) { triggerBtn.disabled = false; }
-    }
-  }
-
-  /* Move a device to a (new) region — drives the fleet panel's grouping. */
-  async function setDeviceRegion(deviceId, currentRegion, triggerBtn) {
-    if (!deviceId) return;
-    const location = window.prompt(
-      `Region for "${deviceId}" (e.g. Nairobi, Kenya).\nClear the field to mark it unassigned, or Cancel.`,
-      currentRegion || ''
-    );
-    if (location === null) return; // cancelled
-
-    if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Saving…'; }
-    try {
-      const res = await fetch(`${API}/admin/devices/${encodeURIComponent(deviceId)}/location`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ location: location.trim() || null })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.message || data?.error || `Request failed (${res.status})`);
-      showDeviceAddResult(
-        `<strong>${escapeHtml(deviceId)}</strong> region set to ${escapeHtml(data.device?.location || 'unassigned')}.`,
-        false
-      );
-      await loadDeviceFleet();
-    } catch (e) {
-      showDeviceAddResult(`Failed to set region: ${escapeHtml(e.message)}`, true);
-    } finally {
-      if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = 'Region'; }
-    }
-  }
-
-  async function rotateDeviceKey(deviceId, triggerBtn) {
-    if (!deviceId) return;
-    if (!window.confirm(`Rotate the API key for "${deviceId}"? The old key will stop working immediately — re-flash the device with the new key.`)) return;
-    if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Rotating…'; }
-    try {
-      const res = await fetch(`${API}/admin/devices/${encodeURIComponent(deviceId)}/rotate-key`, {
-        method: 'POST',
-        headers: authHeaders()
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.message || data?.error || `Request failed (${res.status})`);
-      showDeviceAddResult(
-        `Key rotated for <strong>${escapeHtml(deviceId)}</strong>. New key (copy now — shown only once):<br>` +
-        `<code style="display:inline-block;margin-top:4px;background:rgba(255,255,255,.06);padding:4px 8px;border-radius:6px;font-size:11px">${escapeHtml(data.device?.api_key)}</code>`,
-        false
-      );
-      await loadDeviceFleet();
-    } catch (e) {
-      showDeviceAddResult(`Failed to rotate key: ${escapeHtml(e.message)}`, true);
-    } finally {
-      if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = 'Rotate Key'; }
-    }
-  }
-
-  document.getElementById('device-add-form')?.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const idInput = document.getElementById('device-add-id');
-    const nameInput = document.getElementById('device-add-name');
-    const locationInput = document.getElementById('device-add-location');
-    const latInput = document.getElementById('device-add-lat');
-    const lonInput = document.getElementById('device-add-lon');
-    const btn = document.getElementById('device-add-btn');
-    const deviceId = idInput.value.trim();
-    if (!deviceId) return;
-
-    btn.disabled = true;
-    btn.textContent = 'Provisioning…';
-    try {
-      const device = await provisionDevice(deviceId, nameInput.value.trim(), locationInput.value.trim());
-      /* Optional exact site coordinates for per-site weather — set right
-         after provisioning when the installer knows the precise position. */
-      const latRaw = latInput.value.trim();
-      const lonRaw = lonInput.value.trim();
-      if (latRaw || lonRaw) {
-        const lat = latRaw === '' ? null : Number(latRaw);
-        const lon = lonRaw === '' ? null : Number(lonRaw);
-        if ((latRaw && !Number.isFinite(lat)) || (lonRaw && !Number.isFinite(lon))) {
-          throw new Error('Latitude/Longitude must be numbers (or left blank)');
-        }
-        const coordRes = await fetch(`${API}/admin/devices/${encodeURIComponent(device.device_id)}/coordinates`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ lat, lon })
-        });
-        if (!coordRes.ok) {
-          const cd = await coordRes.json().catch(() => ({}));
-          throw new Error(cd?.message || cd?.error || `Coordinates save failed (${coordRes.status})`);
-        }
-      }
-      showDeviceAddResult(
-        `Provisioned <strong>${escapeHtml(device.device_id)}</strong>. API key (copy now — shown only once, flash it into the device firmware):<br>` +
-        `<code style="display:inline-block;margin-top:4px;background:rgba(255,255,255,.06);padding:4px 8px;border-radius:6px;font-size:11px">${escapeHtml(device.api_key)}</code>`,
-        false
-      );
-      idInput.value = '';
-      nameInput.value = '';
-      locationInput.value = '';
-      await loadDeviceFleet();
-    } catch (e) {
-      showDeviceAddResult(`Failed to provision device: ${escapeHtml(e.message)}`, true);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '+ Provision Device';
-    }
-  });
-
-  /* ── Test SMS ── */
-  async function updateSmsStatus() {
-    const badge = document.getElementById('sms-status-badge');
-    if (!badge) return;
+    const name = nameInput.value.trim();
+    if (!name) { showApplianceError('Appliance name is required.'); return; }
 
     const token = localStorage.getItem('authToken');
-    if (!token) {
-      badge.textContent = 'Not logged in';
-      badge.className = 'badge badge-red';
-      return;
-    }
-
-    try {
-      const res = await fetch('/api/admin/sms-status', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!res.ok) {
-        badge.textContent = 'No access';
-        badge.className = 'badge badge-red';
-        return;
-      }
-
-      const status = await res.json();
-      if (status.configured) {
-        const label = status.sandbox
-          ? `Sandbox (${status.username})`
-          : (status.username || 'Live');
-        badge.textContent = label;
-        badge.className = 'badge badge-green';
-      } else {
-        badge.textContent = 'Not configured';
-        badge.className = 'badge badge-red';
-      }
-    } catch (e) {
-      badge.textContent = 'Offline';
-      badge.className = 'badge badge-red';
-    }
-  }
-
-  document.getElementById('test-sms-btn')?.addEventListener('click', async () => {
-    const phoneInput = document.getElementById('test-sms-phone');
-    const msgInput   = document.getElementById('test-sms-message');
-    const btn        = document.getElementById('test-sms-btn');
-    const status     = document.getElementById('test-sms-status');
-    const result     = document.getElementById('test-sms-result');
-    const badge      = document.getElementById('sms-status-badge');
-
-    const phone = phoneInput?.value.trim();
-    if (!phone) {
-      if (result) {
-        result.style.display = 'block';
-        result.style.color = 'var(--red)';
-        result.style.background = 'rgba(239,68,68,.08)';
-        result.style.border = '1px solid rgba(239,68,68,.2)';
-        result.textContent = 'Please enter a phone number in international format (e.g. +254712345678)';
-      }
-      return;
-    }
+    const devId = window.__solgridDeviceId || 'DEMO-001';
+    const wattsRaw = wattsInput.value.trim();
 
     btn.disabled = true;
-    btn.textContent = 'Sending…';
-    if (status) status.textContent = 'Sending…';
-    if (result) result.style.display = 'none';
-
-    const token = localStorage.getItem('authToken');
-    const headers = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
+    btn.textContent = 'Adding…';
     try {
-      const res = await fetch('/api/admin/test-sms', {
+      const res = await fetch(`${API}/appliances`, {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
-          phone,
-          message: msgInput?.value.trim() || undefined
+          deviceId: devId,
+          name,
+          category: categorySelect.value,
+          ratedWattage: wattsRaw ? Number(wattsRaw) : null
         })
       });
       const data = await res.json();
-
-      if (res.ok) {
-        if (result) {
-          result.style.display = 'block';
-          result.style.color = 'var(--green)';
-          result.style.background = 'rgba(16,185,129,.08)';
-          result.style.border = '1px solid rgba(16,185,129,.2)';
-          result.innerHTML = `<strong>SMS sent successfully</strong> to ${escapeHtml(phone)}. Check the Africa's Talking simulator to see it.`;
-        }
-        if (badge) {
-          badge.textContent = 'Working';
-          badge.className = 'badge badge-green';
-        }
-      } else if (res.status === 400 && data.detail?.includes('not configured')) {
-        if (result) {
-          result.style.display = 'block';
-          result.style.color = 'var(--amber)';
-          result.style.background = 'rgba(245,158,11,.08)';
-          result.style.border = '1px solid rgba(245,158,11,.2)';
-          result.innerHTML = 'SMS is <strong>not configured</strong>. Set <code style="background:rgba(0,0,0,.2);padding:1px 5px;border-radius:3px">AT_USERNAME</code> and <code style="background:rgba(0,0,0,.2);padding:1px 5px;border-radius:3px">AT_API_KEY</code> in your .env file, then restart the server.';
-        }
-        if (badge) {
-          badge.textContent = 'Not configured';
-          badge.className = 'badge badge-red';
-        }
-      } else {
-        if (result) {
-          result.style.display = 'block';
-          result.style.color = 'var(--red)';
-          result.style.background = 'rgba(239,68,68,.08)';
-          result.style.border = '1px solid rgba(239,68,68,.2)';
-          result.textContent = data.detail || data.error || 'Failed to send SMS';
-        }
-      }
-    } catch (e) {
-      if (result) {
-        result.style.display = 'block';
-        result.style.color = 'var(--red)';
-        result.style.background = 'rgba(239,68,68,.08)';
-        result.style.border = '1px solid rgba(239,68,68,.2)';
-        result.textContent = 'Network error — is the server running?';
-      }
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Send Test SMS';
-      if (status) status.textContent = '';
-    }
-  });
-
-  setTimeout(updateSmsStatus, 500);
-
-  /* ── Organizations: super-admin tenant directory ──
-     GET/POST /api/admin/organizations and POST /api/admin/admins
-     (role=org_admin) exist in the backend — this wires a browser UI:
-     create a tenant, see its fleet/user/admin counts, and provision an
-     org admin scoped to that tenant. Super-admin only; the panel hides
-     itself on 403 exactly like the Device Fleet. */
-  function showOrgError(message) {
-    const el = document.getElementById('org-error');
-    if (!el) return;
-    if (!message) { el.style.display = 'none'; el.textContent = ''; return; }
-    el.textContent = message;
-    el.style.display = 'block';
-  }
-
-  function showOrgResult(message, isError) {
-    const el = document.getElementById('org-result');
-    if (!el) return;
-    el.style.display = 'block';
-    el.style.color = isError ? 'var(--red)' : 'var(--green)';
-    el.innerHTML = message;
-  }
-
-  function renderOrganizations(orgs) {
-    const tbody = document.getElementById('organizations-body');
-    if (!tbody) return;
-    if (!orgs || !orgs.length) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">No organizations yet — create the first one above.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = orgs.map(o => {
-      const id   = escapeHtml(o.name);
-      const slug = escapeHtml(o.slug || '—');
-      const isDefault = o.slug === 'default';
-      const devices = fmtCount(o.device_count);
-      const users   = fmtCount(o.user_count);
-      const admins  = fmtCount(o.admin_count);
-      const created = fmtDate(o.created_at);
-      const adminBadge = admins > 0
-        ? `<span class="badge badge-green" style="font-size:9px">${admins}</span>`
-        : `<span style="color:var(--muted)">0</span>`;
-      return `
-      <tr>
-        <td style="font-size:11px;font-weight:600">${id}${isDefault ? ' <span class="badge badge-blue" style="font-size:9px">default</span>' : ''}</td>
-        <td style="font-family:monospace;font-size:10px;color:var(--sub)">${slug}</td>
-        <td style="font-size:11px">${devices}</td>
-        <td style="font-size:11px">${users}</td>
-        <td style="font-size:11px">${adminBadge}</td>
-        <td style="font-size:10px;color:var(--muted)">${created}</td>
-        <td style="white-space:nowrap">
-          <button type="button" class="org-admin-btn" data-org-id="${o.id}" data-org-name="${escapeHtml(o.name)}"
-              style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--green);font-size:10px;padding:4px 9px;cursor:pointer;font-family:inherit">
-              + Org Admin</button>
-        </td>
-      </tr>`;
-    }).join('');
-
-    tbody.querySelectorAll('.org-admin-btn').forEach(btn => {
-      btn.addEventListener('click', () => provisionOrgAdmin(btn.dataset.orgId, btn.dataset.orgName, btn));
-    });
-  }
-
-  async function loadOrganizations() {
-    try {
-      const res = await fetch(`${API}/admin/organizations`, { headers: authHeaders() });
       if (!res.ok) {
-        // Org admins / customers get 403 — hide the panel, it's super-admin-only.
-        if (res.status === 403) {
-          document.getElementById('organizations-panel')?.style.setProperty('display', 'none');
-          return;
-        }
-        throw new Error(`Failed to load organizations (${res.status})`);
+        showApplianceError(data.errors?.[0]?.msg || data.error || 'Failed to add appliance.');
+        return;
       }
-      const data = await res.json();
-      showOrgError(null);
-      renderOrganizations(data.organizations || []);
-    } catch (e) {
-      console.warn('Organizations load error:', e);
-      showOrgError('Could not load organizations — check your connection and try again.');
-    }
-  }
-
-  async function createOrganization(name, slug) {
-    const res = await fetch(`${API}/admin/organizations`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ name, slug: slug || undefined })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(data?.errors?.[0]?.msg || data?.message || data?.error || `Request failed (${res.status})`);
-    }
-    return data.organization;
-  }
-
-  /* Provision an org admin scoped to the chosen tenant. Uses a small inline
-     form (name / email / password) rather than a prompt chain — password
-     fields in prompts get echoed by some terminals and defeat password
-     managers, so this keeps the credential out of browser chrome. */
-  function provisionOrgAdmin(orgId, orgName, triggerBtn) {
-    if (!orgId) return;
-    const name = window.prompt(`Org admin name for "${orgName}":`);
-    if (name === null) return;
-    const email = window.prompt(`Org admin email for "${orgName}":`);
-    if (email === null) return;
-    const password = window.prompt(`Set a password (min 8 chars) for ${email}:`);
-    if (password === null) return;
-    if (!name.trim() || !email.trim() || !password) return;
-
-    triggerBtn.disabled = true;
-    triggerBtn.textContent = 'Creating…';
-    (async () => {
-      try {
-        const res = await fetch(`${API}/admin/admins`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ name: name.trim(), email: email.trim(), password, role: 'org_admin', organizationId: orgId })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.errors?.[0]?.msg || data?.message || data?.error || `Request failed (${res.status})`);
-        showOrgResult(
-          `Org admin <strong>${escapeHtml(data.admin?.name || name.trim())}</strong> (${escapeHtml(data.admin?.email || email.trim())}) created for <strong>${escapeHtml(orgName)}</strong>.`,
-          false
-        );
-        await loadOrganizations();
-      } catch (e) {
-        showOrgResult(`Failed to create org admin: ${escapeHtml(e.message)}`, true);
-      } finally {
-        triggerBtn.disabled = false;
-        triggerBtn.textContent = '+ Org Admin';
-      }
-    })();
-  }
-
-  document.getElementById('org-create-form')?.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const nameInput = document.getElementById('org-create-name');
-    const slugInput = document.getElementById('org-create-slug');
-    const btn = document.getElementById('org-create-btn');
-    const name = nameInput.value.trim();
-    if (!name) return;
-
-    btn.disabled = true;
-    btn.textContent = 'Creating…';
-    try {
-      const org = await createOrganization(name, slugInput.value.trim());
-      showOrgResult(`Created <strong>${escapeHtml(org.name)}</strong> (<code style="font-family:monospace">${escapeHtml(org.slug)}</code>).`);
       nameInput.value = '';
-      slugInput.value = '';
-      showOrgError(null);
-      await loadOrganizations();
+      wattsInput.value = '';
+      await fetchAppliances();
     } catch (e) {
-      showOrgError(e.message);
+      showApplianceError('Network error — please try again.');
     } finally {
       btn.disabled = false;
-      btn.textContent = '+ Create Organization';
+      btn.textContent = '+ Add Appliance';
     }
-  });
+  }
 
-  setTimeout(loadDeviceFleet, 1200);
-  setInterval(loadDeviceFleet, 30000);
-  setTimeout(loadOrganizations, 1400);
-  setInterval(loadOrganizations, 45000);
+  async function deleteAppliance(id) {
+    const token = localStorage.getItem('authToken');
+    try {
+      await fetch(`${API}/appliances/${id}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      await fetchAppliances();
+    } catch (e) {
+      console.warn('Appliance delete error:', e);
+    }
+  }
+
+  document.getElementById('appliance-add-btn')?.addEventListener('click', addAppliance);
+
+  setTimeout(fetchAppliances, 1200);
+  setInterval(fetchAppliances, 60000);
+
 </script>
 </body>
 </html>

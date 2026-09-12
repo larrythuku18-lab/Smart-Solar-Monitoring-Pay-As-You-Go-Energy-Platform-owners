@@ -102,19 +102,13 @@
       border: 1px solid rgba(139,92,246,0.3);
       box-shadow: 0 2px 12px rgba(139,92,246,0.15);
     }
-    .role-btn.active-customer {
-      background: linear-gradient(135deg, rgba(16,185,129,0.18), rgba(20,184,166,0.12));
-      color: #6ee7b7;
-      border: 1px solid rgba(16,185,129,0.3);
-      box-shadow: 0 2px 12px rgba(16,185,129,0.15);
-    }
     .role-btn.active-engineer {
       background: linear-gradient(135deg, rgba(20,184,166,0.18), rgba(14,165,233,0.12));
       color: #5eead4;
       border: 1px solid rgba(20,184,166,0.3);
       box-shadow: 0 2px 12px rgba(20,184,166,0.15);
     }
-    .role-btn:not(.active-admin):not(.active-customer):not(.active-engineer):hover { color: var(--sub); background: rgba(255,255,255,.04); }
+    .role-btn:not(.active-admin):not(.active-engineer):hover { color: var(--sub); background: rgba(255,255,255,.04); }
 
     /* ── Role description pill ── */
     .role-desc {
@@ -128,7 +122,6 @@
       gap: 8px;
     }
     .role-desc.admin-desc    { background: rgba(139,92,246,0.07); color: #ddd6fe; border: 1px solid rgba(139,92,246,0.2); }
-    .role-desc.customer-desc { background: rgba(16,185,129,0.07);  color: #a7f3d0; border: 1px solid rgba(16,185,129,0.2); }
     .role-desc.engineer-desc { background: rgba(20,184,166,0.07);  color: #99f6e4; border: 1px solid rgba(20,184,166,0.2); }
 
     /* ── Form ── */
@@ -185,12 +178,6 @@
       box-shadow: 0 4px 20px rgba(124,58,237,0.3);
     }
     .submit-btn.admin-btn:hover:not(:disabled) { box-shadow: 0 6px 28px rgba(124,58,237,0.45); transform: translateY(-1px); }
-    .submit-btn.customer-btn {
-      background: linear-gradient(135deg, #047857, #059669);
-      color: #f0fdf4;
-      box-shadow: 0 4px 20px rgba(16,185,129,0.3);
-    }
-    .submit-btn.customer-btn:hover:not(:disabled) { box-shadow: 0 6px 28px rgba(16,185,129,0.45); transform: translateY(-1px); }
     .submit-btn.engineer-btn {
       background: linear-gradient(135deg, #0d9488, #0891b2);
       color: #f0fdfa;
@@ -386,7 +373,6 @@
       <div class="role-toggle">
         <button class="role-btn active-admin" id="btn-admin">Admin / Operator</button>
         <button class="role-btn" id="btn-engineer">Engineer</button>
-        <button class="role-btn" id="btn-customer">Customer</button>
       </div>
 
       <!-- Role description -->
@@ -396,36 +382,18 @@
 
       <!-- Form -->
       <form id="login-form" novalidate>
-        <div class="form-group" id="name-group" style="display:none">
-          <label class="form-label" for="reg-name">Full Name</label>
-          <input id="reg-name" class="form-input" type="text" autocomplete="name" placeholder="Jane Doe" required />
-        </div>
         <div class="form-group">
           <label class="form-label" id="id-label" for="identifier">Email Address</label>
           <input id="identifier" class="form-input" type="text" autocomplete="username"
                  placeholder="admin@solarpayg.com" required />
         </div>
-        <div class="form-group" id="phone-group" style="display:none">
-          <label class="form-label" for="reg-phone">Phone Number (optional)</label>
-          <input id="reg-phone" class="form-input" type="tel" autocomplete="tel" placeholder="07XXXXXXXX" />
-        </div>
         <div class="form-group">
           <label class="form-label" id="pw-label" for="password">Password</label>
           <div class="pw-wrap">
             <input id="password" class="form-input" type="password" autocomplete="current-password"
-                   placeholder="Enter password or PIN" required />
+                   placeholder="Enter password" required />
             <button type="button" class="pw-toggle" data-target="password" aria-label="Show password">
               <svg id="eye-password" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
-          </div>
-        </div>
-        <div class="form-group" id="confirm-group" style="display:none">
-          <label class="form-label" for="confirm-password">Confirm Password</label>
-          <div class="pw-wrap">
-            <input id="confirm-password" class="form-input" type="password" autocomplete="new-password"
-                   placeholder="Re-enter password" />
-            <button type="button" class="pw-toggle" data-target="confirm-password" aria-label="Show confirm password">
-              <svg id="eye-confirm-password" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
           </div>
         </div>
@@ -434,9 +402,9 @@
         </button>
       </form>
 
-      <!-- Sign up / sign in toggle (customer only) -->
+      <!-- Reused for the forgot-password "back to sign in" link -->
       <div id="auth-toggle" class="auth-toggle" style="display:none">
-        <span id="auth-toggle-text">New customer?</span> <a id="auth-toggle-link">Create an account</a>
+        <span id="auth-toggle-text">Remembered it?</span> <a id="auth-toggle-link">Back to sign in</a>
       </div>
 
       <!-- Forgot password (email+password accounts, any role) -->
@@ -461,19 +429,13 @@
 <script>
   const API = '/api';
   let activeRole = 'admin';
-  let authMode   = 'login'; // 'login' | 'signup' | 'forgot' (signup only available for customers)
+  let authMode   = 'login'; // 'login' | 'forgot'
 
   /* ── Demo credential sets ── */
   const CREDS = {
     admin: [
       { key: 'Email',    val: 'admin@solarpayg.com', cls: 'amber' },
       { key: 'Password', val: 'Admin@12345',          cls: 'amber' }
-    ],
-    customer: [
-      { key: 'Email',    val: 'customer@example.com', cls: 'green' },
-      { key: 'Password', val: 'Customer@12345',        cls: 'green' },
-      { key: 'Device ID (alt)', val: 'DEMO-001', cls: 'blue' },
-      { key: 'PIN (alt)',       val: '1234',     cls: 'blue' }
     ],
     engineer: [
       { key: 'Email',    val: 'engineer@solarpayg.com', cls: 'teal' },
@@ -497,7 +459,7 @@
           <span class="demo-key">Password</span>
           <span class="demo-val amber">${CREDS.admin[1].val}</span>
         </div>`;
-    } else if (role === 'engineer') {
+    } else {
       rows = `
         <div class="demo-row clickable" data-fill="engineer" title="Click to fill">
           <span class="demo-key">Email</span>
@@ -506,26 +468,6 @@
         <div class="demo-row clickable" data-fill="engineer" title="Click to fill">
           <span class="demo-key">Password</span>
           <span class="demo-val teal">${CREDS.engineer[1].val}</span>
-        </div>`;
-    } else {
-      rows = `
-        <div class="demo-section-label">Email &amp; password</div>
-        <div class="demo-row clickable" data-fill="customer-email" title="Click to fill">
-          <span class="demo-key">Email</span>
-          <span class="demo-val green">${CREDS.customer[0].val}</span>
-        </div>
-        <div class="demo-row clickable" data-fill="customer-email" title="Click to fill">
-          <span class="demo-key">Password</span>
-          <span class="demo-val green">${CREDS.customer[1].val}</span>
-        </div>
-        <div class="demo-section-label">Device ID &amp; PIN (alternative)</div>
-        <div class="demo-row clickable" data-fill="customer-device" title="Click to fill">
-          <span class="demo-key">Device ID</span>
-          <span class="demo-val blue">${CREDS.customer[2].val}</span>
-        </div>
-        <div class="demo-row clickable" data-fill="customer-device" title="Click to fill">
-          <span class="demo-key">PIN</span>
-          <span class="demo-val blue">${CREDS.customer[3].val}</span>
         </div>`;
     }
 
@@ -545,12 +487,6 @@
     } else if (set === 'engineer') {
       id.value = CREDS.engineer[0].val;
       fillPw(CREDS.engineer[1].val); // NOSONAR
-    } else if (set === 'customer-email') {
-      id.value = CREDS.customer[0].val;
-      fillPw(CREDS.customer[1].val); // NOSONAR
-    } else if (set === 'customer-device') {
-      id.value = CREDS.customer[2].val;
-      fillPw(CREDS.customer[3].val); // NOSONAR
     }
   }
 
@@ -559,7 +495,6 @@
     activeRole = role;
 
     const btnAdmin    = document.getElementById('btn-admin');
-    const btnCustomer = document.getElementById('btn-customer');
     const desc        = document.getElementById('role-desc');
     const descTxt     = document.getElementById('role-desc-text');
     const idLabel     = document.getElementById('id-label');
@@ -573,19 +508,16 @@
     if (role === 'admin') {
       btnAdmin.className    = 'role-btn active-admin';
       btnEngineer.className = 'role-btn';
-      btnCustomer.className = 'role-btn';
       desc.className        = 'role-desc admin-desc';
-      descTxt.textContent   = 'Full system access — dashboards, analytics, transaction management, and AI insights.';
+      descTxt.textContent   = 'Full system access — live monitoring, appliance insights, and AI analytics.';
       idLabel.textContent   = 'Email Address';
       idInput.placeholder   = 'admin@solarpayg.com';
       pwLabel.textContent   = 'Password';
       submitBtn.className   = 'submit-btn admin-btn';
       btnText.textContent   = 'Sign in as Admin';
-      document.getElementById('auth-toggle').style.display = 'none';
-    } else if (role === 'engineer') {
+    } else {
       btnAdmin.className    = 'role-btn';
       btnEngineer.className = 'role-btn active-engineer';
-      btnCustomer.className = 'role-btn';
       desc.className        = 'role-desc engineer-desc';
       descTxt.textContent   = 'Field diagnostics — fleet connectivity, panel health, and firmware/OTA status (read-only).';
       idLabel.textContent   = 'Email Address';
@@ -593,20 +525,8 @@
       pwLabel.textContent   = 'Password';
       submitBtn.className   = 'submit-btn engineer-btn';
       btnText.textContent   = 'Sign in as Engineer';
-      document.getElementById('auth-toggle').style.display = 'none';
-    } else {
-      btnAdmin.className    = 'role-btn';
-      btnEngineer.className = 'role-btn';
-      btnCustomer.className = 'role-btn active-customer';
-      desc.className        = 'role-desc customer-desc';
-      descTxt.textContent   = 'View your device, wallet balance, energy usage, and make M-Pesa payments.';
-      idLabel.textContent   = 'Device ID or Email';
-      idInput.placeholder   = 'DEMO-001 or customer@example.com';
-      pwLabel.textContent   = 'PIN or Password';
-      submitBtn.className   = 'submit-btn customer-btn';
-      btnText.textContent   = 'Sign in as Customer';
-      document.getElementById('auth-toggle').style.display = 'block';
     }
+    document.getElementById('auth-toggle').style.display = 'none';
 
     document.getElementById('identifier').value = '';
     document.getElementById('password').value   = '';
@@ -618,78 +538,45 @@
   /* ── Default submit-button label for the current role/mode ── */
   function defaultBtnText() {
     if (authMode === 'forgot') return 'Send Reset Link';
-    if (activeRole === 'admin')    return 'Sign in as Admin';
-    if (activeRole === 'engineer') return 'Sign in as Engineer';
-    return authMode === 'signup' ? 'Create Account' : 'Sign in as Customer';
+    return activeRole === 'admin' ? 'Sign in as Admin' : 'Sign in as Engineer';
   }
 
-  /* ── Switch between sign-in and sign-up (customer only) ── */
+  /* ── Switch between normal sign-in and the forgot-password form ── */
   function setAuthMode(mode) {
     authMode = mode;
 
-    const nameGroup    = document.getElementById('name-group');
-    const phoneGroup   = document.getElementById('phone-group');
-    const confirmGroup = document.getElementById('confirm-group');
     const idLabel      = document.getElementById('id-label');
     const idInput      = document.getElementById('identifier');
     const pwLabel      = document.getElementById('pw-label');
     const passwordEl   = document.getElementById('password');
-    const toggleText   = document.getElementById('auth-toggle-text');
-    const toggleLink   = document.getElementById('auth-toggle-link');
     const demoDivider  = document.getElementById('demo-divider');
     const demoBox      = document.getElementById('demo-box');
 
-    const isSignup = mode === 'signup';
     const isForgot = mode === 'forgot';
     const pwGroup  = passwordEl.closest('.form-group');
 
-    nameGroup.style.display    = isSignup ? 'block' : 'none';
-    phoneGroup.style.display   = isSignup ? 'block' : 'none';
-    confirmGroup.style.display = isSignup ? 'block' : 'none';
-    pwGroup.style.display      = isForgot ? 'none'  : 'block';
-    demoDivider.style.display  = (isSignup || isForgot) ? 'none' : 'block';
-    demoBox.style.display      = (isSignup || isForgot) ? 'none' : 'block';
-    document.getElementById('forgot-toggle').style.display = (isSignup || isForgot) ? 'none' : 'block';
+    pwGroup.style.display     = isForgot ? 'none'  : 'block';
+    demoDivider.style.display = isForgot ? 'none' : 'block';
+    demoBox.style.display     = isForgot ? 'none' : 'block';
+    document.getElementById('forgot-toggle').style.display = isForgot ? 'none' : 'block';
+    document.getElementById('auth-toggle').style.display   = isForgot ? 'block' : 'none';
 
     if (isForgot) {
-      idLabel.textContent    = 'Email Address';
-      idInput.placeholder    = 'you@example.com';
-      toggleText.textContent = 'Remembered it?';
-      toggleLink.textContent = 'Back to sign in';
-      /* The back-link must be visible in forgot mode for BOTH roles —
-         setRole() hides #auth-toggle for admins in normal login mode. */
-      document.getElementById('auth-toggle').style.display = 'block';
-    } else if (isSignup) {
-      idLabel.textContent    = 'Email Address';
-      idInput.placeholder    = 'you@example.com';
-      pwLabel.textContent    = 'Create Password';
-      passwordEl.placeholder = 'At least 8 characters';
-      toggleText.textContent = 'Already have an account?';
-      toggleLink.textContent = 'Sign in';
+      idLabel.textContent = 'Email Address';
+      idInput.placeholder = 'you@example.com';
+    } else if (activeRole === 'admin') {
+      idLabel.textContent = 'Email Address';
+      idInput.placeholder = 'admin@solarpayg.com';
+      pwLabel.textContent = 'Password';
+      passwordEl.placeholder = 'Enter password';
     } else {
-      if (activeRole === 'admin') {
-        idLabel.textContent  = 'Email Address';
-        idInput.placeholder  = 'admin@solarpayg.com';
-        pwLabel.textContent  = 'Password';
-      } else if (activeRole === 'engineer') {
-        idLabel.textContent  = 'Email Address';
-        idInput.placeholder  = 'engineer@solarpayg.com';
-        pwLabel.textContent  = 'Password';
-      } else {
-        idLabel.textContent  = 'Device ID or Email';
-        idInput.placeholder  = 'DEMO-001 or customer@example.com';
-        pwLabel.textContent  = 'PIN or Password';
-      }
-      passwordEl.placeholder = 'Enter password or PIN';
-      toggleText.textContent = 'New customer?';
-      toggleLink.textContent = 'Create an account';
-      document.getElementById('auth-toggle').style.display = activeRole === 'customer' ? 'block' : 'none';
+      idLabel.textContent = 'Email Address';
+      idInput.placeholder = 'engineer@solarpayg.com';
+      pwLabel.textContent = 'Password';
+      passwordEl.placeholder = 'Enter password';
     }
 
-    document.getElementById('reg-name').value        = '';
-    document.getElementById('reg-phone').value       = '';
-    document.getElementById('confirm-password').value = '';
-    document.getElementById('btn-text').textContent  = defaultBtnText();
+    document.getElementById('btn-text').textContent = defaultBtnText();
     clearAlert();
   }
 
@@ -758,12 +645,11 @@
     }
   }
 
-  /* ── Login / Sign up ── */
+  /* ── Login ── */
   async function handleLogin(e) {
     e.preventDefault();
     clearAlert();
 
-    if (authMode === 'signup') return handleSignup();
     if (authMode === 'forgot') return handleForgot();
 
     const identifier = document.getElementById('identifier').value.trim();
@@ -877,99 +763,6 @@
     }
   }
 
-  /* ── Sign up (customer self-registration) ── */
-  async function handleSignup() {
-    const name            = document.getElementById('reg-name').value.trim();
-    const email           = document.getElementById('identifier').value.trim();
-    const phone           = document.getElementById('reg-phone').value.trim();
-    const password        = document.getElementById('password').value;
-    const confirmPassword = document.getElementById('confirm-password').value;
-
-    if (!name) {
-      showAlert('Please enter your full name.', 'error');
-      return;
-    }
-    if (!email || !password) {
-      showAlert('Please enter an email and password.', 'error');
-      return;
-    }
-    if (password.length < 8) {
-      showAlert('Password must be at least 8 characters.', 'error');
-      return;
-    }
-    if (password !== confirmPassword) {
-      showAlert('Passwords do not match.', 'error');
-      return;
-    }
-
-    const btn     = document.getElementById('submit-btn');
-    const btnText = document.getElementById('btn-text');
-    btn.disabled  = true;
-    btnText.innerHTML = '<span class="spinner"></span> Creating account…';
-
-    const wakeTimer = setTimeout(() => {
-      btnText.innerHTML = '<span class="spinner"></span> Waking up server… this can take up to a minute';
-    }, 4000);
-
-    try {
-      const res  = await fetch(`${API}/auth/register`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name, email, password, phone })
-      });
-      clearTimeout(wakeTimer);
-      const data = await res.json().catch(() => ({}));
-      const tok  = data.token || data.accessToken;
-
-      if (!res.ok) {
-        showAlert(data.error || data.message || 'Could not create account. Please try again.', 'error');
-        btn.disabled  = false;
-        btnText.textContent = defaultBtnText();
-        return;
-      }
-
-      /* Email verification is on: the server deliberately issued NO session
-         token — the account only activates once the emailed link is clicked.
-         Switch the form back to sign-in mode (so the next submit doesn't try
-         to register the same email again) and show the confirmation prompt. */
-      if (!tok && data.emailVerified === false) {
-        const addr = String(data.user?.email || email);
-        pendingVerifyEmail = addr;
-        setAuthMode('login');
-        showVerifyCard('info',
-          `Account created! We sent a confirmation link to <b>${esc(addr)}</b>.<br>Confirm your email, then sign in with your new password.`,
-          addr);
-        btn.disabled  = false;
-        btnText.textContent = defaultBtnText();
-        return;
-      }
-
-      if (!tok) {
-        showAlert(data.error || data.message || 'Could not create account. Please try again.', 'error');
-        btn.disabled  = false;
-        btnText.textContent = defaultBtnText();
-        return;
-      }
-
-      localStorage.setItem('authToken', tok);
-      localStorage.setItem('userRole',  data.user?.role || 'customer');
-      if (data.user?.deviceId) localStorage.setItem('deviceId', data.user.deviceId);
-
-      showAlert('Account created! Redirecting…', 'success');
-
-      setTimeout(() => {
-        globalThis.location.href = '/intro.html';
-      }, 700);
-
-    } catch (err) {
-      clearTimeout(wakeTimer);
-      console.error('Sign up error:', err);
-      showAlert('Network error. Please check your connection.', 'error');
-      btn.disabled  = false;
-      btnText.textContent = defaultBtnText();
-    }
-  }
-
   /* ── Auto-redirect if already logged in ── */
   (async () => {
     const tok = localStorage.getItem('authToken');
@@ -980,11 +773,15 @@
       const user = await res.json();
       /* super-admins AND org admins land on the admin dashboard — org admins
          see only their own tenant's data (backend-enforced). Engineers land
-         on the Engineer panel. */
-      globalThis.location.href = (user.role === 'admin' || user.role === 'org_admin')
-        ? '/index.html'
-        : user.role === 'engineer' ? '/engineer.html'
-        : '/customer.html';
+         on the Engineer panel. There is no customer panel anymore, so a
+         logged-in customer token just falls through to the login form
+         below instead of redirecting anywhere (redirecting to this same
+         page would loop). */
+      if (user.role === 'admin' || user.role === 'org_admin') {
+        globalThis.location.href = '/index.html';
+      } else if (user.role === 'engineer') {
+        globalThis.location.href = '/engineer.html';
+      }
     } catch (e) {
       console.warn('Auto-redirect check failed — showing login form.', e);
     }
@@ -993,7 +790,6 @@
   /* ── Init ── */
   document.getElementById('btn-admin').addEventListener('click', () => setRole('admin'));
   document.getElementById('btn-engineer').addEventListener('click', () => setRole('engineer'));
-  document.getElementById('btn-customer').addEventListener('click', () => setRole('customer'));
   document.getElementById('login-form').addEventListener('submit', handleLogin);
   document.getElementById('demo-box').addEventListener('click', e => {
     const row = e.target.closest('[data-fill]');
@@ -1001,7 +797,7 @@
   });
   document.getElementById('auth-toggle-link').addEventListener('click', e => {
     e.preventDefault();
-    setAuthMode(authMode === 'login' ? 'signup' : 'login');
+    setAuthMode('login');
   });
   document.getElementById('forgot-link').addEventListener('click', e => {
     e.preventDefault();
@@ -1034,13 +830,11 @@
       const res  = await fetch(`${API}/demo-credentials`);
       const data = await res.json();
       if (data.adminEmail)    CREDS.admin[0].val    = data.adminEmail;
-      if (data.customerEmail) CREDS.customer[0].val = data.customerEmail;
       if (data.engineerEmail) CREDS.engineer[0].val = data.engineerEmail;
       /* If the operator overrode a demo password via env, the hardcoded
          default shown here would be wrong — display a hint instead. The
          real value is never exposed. */
       if (data.adminPasswordIsDefault === false)    CREDS.admin[1].val    = '(set by operator)';
-      if (data.customerPasswordIsDefault === false) CREDS.customer[1].val = '(set by operator)';
       if (data.engineerPasswordIsDefault === false) CREDS.engineer[1].val = '(set by operator)';
     } catch (e) { /* keep hardcoded defaults if this fails */ }
     renderDemoBox(activeRole);
